@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import type { UiEventEnvelope } from './daemon'
+import type { PromptStage, UiEventEnvelope } from './daemon'
 import { DaemonClient } from './daemon'
 
 export type ChatRole = 'user' | 'assistant' | 'system'
@@ -236,6 +236,7 @@ interface AppState {
   bashCommands: BashCommand[]
   pendingApprovals: PendingApproval[]
   clarifyingQuestions: ClarifyingQuestion[]
+  promptStageWizard: { originalPrompt: string; stages: PromptStage[] } | null
 
   // Orchestrator state
   orchestrator: OrchestratorState
@@ -258,6 +259,8 @@ interface AppState {
 
   approve: (approvalId: string, decision: PendingApprovalDecision, feedback?: string) => Promise<void>
   answerClarifyingQuestion: (questionId: string, selectedIds: string[], customText?: string) => Promise<void>
+  cancelPromptStageWizard: () => void
+  completePromptStageWizard: (details: Array<string | null>) => Promise<void>
   setDraftPrompt: (value: string) => void
   appendToDraftPrompt: (value: string) => void
   addAttachedImage: (path: string) => void
@@ -348,6 +351,7 @@ export const useAppStore = create<AppState>()(
       bashCommands: [],
       pendingApprovals: [],
       clarifyingQuestions: [],
+      promptStageWizard: null,
 
       orchestrator: {
         active: false,
@@ -910,9 +914,52 @@ export const useAppStore = create<AppState>()(
         const sessionId = get().activeSessionId
         if (!daemon) throw new Error('daemon not connected')
         if (!sessionId) throw new Error('no active session')
+        if (get().promptStageWizard) return
 
         const trimmed = prompt.trim()
         if (!trimmed) return
+
+        // Clear composer immediately (CLI parity).
+        set({ draftPrompt: '' })
+
+        // Resolve prompt stages first (CLI parity). If unavailable, fall back to running.
+        try {
+          const resp = await daemon.promptStagesResolve({ prompt: trimmed, model: get().model })
+          const stages = Array.isArray(resp?.stages) ? resp.stages : []
+          if (stages.length === 0) {
+            set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+            await get().completePromptStageWizard([])
+            return
+          }
+          set({ promptStageWizard: { originalPrompt: trimmed, stages } })
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.warn('[store] prompt_stages.resolve failed; falling back to direct run:', msg)
+          set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+          await get().completePromptStageWizard([])
+        }
+      },
+
+      cancelPromptStageWizard: () => set({ promptStageWizard: null }),
+
+      completePromptStageWizard: async (details) => {
+        const daemon = get().daemon
+        const sessionId = get().activeSessionId
+        if (!daemon) throw new Error('daemon not connected')
+        if (!sessionId) throw new Error('no active session')
+
+        const wiz = get().promptStageWizard
+        const trimmed = wiz?.originalPrompt ?? ''
+        if (!trimmed) return
+
+        let promptForAgent = trimmed
+        if (wiz && wiz.stages.length > 0) {
+          const lines = wiz.stages.map((s, i) => {
+            const v = details[i] ?? null
+            return `  ${s.name}: ${v ?? '(skipped)'}`
+          })
+          promptForAgent = `LLM detail:\n${lines.join('\n')}\n\n${trimmed}`
+        }
 
         const userMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -923,21 +970,33 @@ export const useAppStore = create<AppState>()(
         set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
 
         const imagePaths = get().attachedImages
-        set({ currentRunStatus: 'queued', modifiedFilesByPath: {}, pendingApprovals: [], clarifyingQuestions: [], attachedImages: [] })
-        const res = await daemon.runStart({
-          prompt: trimmed,
-          sessionId,
-          model: get().model,
-          mode: get().mode,
-          workMode: get().workMode,
-          prMode: get().prMode,
-          teamConfigName: get().teamConfigName,
-          autoApprove: get().autoApprove,
-          mdapK: get().mdapK,
-          imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+        set({
+          promptStageWizard: null,
+          draftPrompt: '',
+          currentRunStatus: 'queued',
+          modifiedFilesByPath: {},
+          pendingApprovals: [],
+          clarifyingQuestions: [],
+          attachedImages: [],
         })
-
-        set({ currentRunId: res.runId, currentRunStatus: 'running' })
+        try {
+          const res = await daemon.runStart({
+            prompt: promptForAgent,
+            sessionId,
+            model: get().model,
+            mode: get().mode,
+            workMode: get().workMode,
+            prMode: get().prMode,
+            teamConfigName: get().teamConfigName,
+            autoApprove: get().autoApprove,
+            mdapK: get().mdapK,
+            imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
+          })
+          set({ currentRunId: res.runId, currentRunStatus: 'running' })
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'run.start failed'
+          set({ currentRunStatus: 'failed', error: msg })
+        }
       },
 
       cancelRun: async () => {

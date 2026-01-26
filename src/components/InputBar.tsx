@@ -115,6 +115,7 @@ export function InputBar() {
     modeItems,
     modelItems,
     daemon,
+    promptStageWizard,
     attachedImages,
     addAttachedImage,
     removeAttachedImage,
@@ -127,7 +128,11 @@ export function InputBar() {
   const modeDropdownRef = useRef<HTMLDivElement>(null)
   const modelDropdownRef = useRef<HTMLDivElement>(null)
 
-  const busy = currentRunStatus === 'running' || currentRunStatus === 'queued' || currentRunStatus === 'awaiting_approval'
+  const busy =
+    currentRunStatus === 'running' ||
+    currentRunStatus === 'queued' ||
+    currentRunStatus === 'awaiting_approval' ||
+    Boolean(promptStageWizard)
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -169,7 +174,6 @@ export function InputBar() {
   const handleSend = () => {
     const prompt = draftPrompt.trim()
     if (!prompt || busy) return
-    setDraftPrompt('')
     void sendPrompt(prompt)
   }
 

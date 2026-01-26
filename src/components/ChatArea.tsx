@@ -3,10 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Badge } from './ui/badge'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
 import { AgentLogView } from './AgentLogView'
-import { ClarifyingQuestionsList } from './ClarifyingQuestions'
 import { TypewriterTitle } from './TypewriterTitle'
 import { useAppStore } from '../lib/store'
-import type { ClarifyingQuestionData } from './ClarifyingQuestions'
 
 export function ChatArea() {
   const {
@@ -16,8 +14,6 @@ export function ChatArea() {
     daemon,
     mode,
     model,
-    clarifyingQuestions,
-    answerClarifyingQuestion,
   } = useAppStore()
 
   const session = useMemo(
@@ -66,20 +62,7 @@ export function ChatArea() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [session?.messages.length, lastContent, agentEvents.length, clarifyingQuestions.length])
-
-  // Convert store clarifying questions to component format
-  const clarifyingQuestionsData: ClarifyingQuestionData[] = clarifyingQuestions.map((q) => ({
-    id: q.id,
-    question: q.question,
-    options: q.options.map((o) => ({
-      id: o.id,
-      label: o.label,
-      description: o.description,
-    })),
-    allowMultiple: q.allowMultiple,
-    allowCustom: q.allowCustom,
-  }))
+  }, [session?.messages.length, lastContent, agentEvents.length])
 
   // Format model name for display
   const modelDisplay = model?.replace('claude-', '').replace('-20', ' ').replace(/(\d)/, ' $1') || 'Opus 4.5'
@@ -92,7 +75,7 @@ export function ChatArea() {
           <div className="text-xs text-black/45">Streaming · Diff · Approvals · Logs</div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="hidden items-center rounded-full border border-black/10 bg-white/70 p-1 shadow-sm sm:inline-flex">
+          <div className="inline-flex items-center rounded-full border border-black/10 bg-white/70 p-1 shadow-sm">
             {modeChoices.map((m) => {
               const active = mode === m.token
               return (
@@ -201,16 +184,6 @@ export function ChatArea() {
             {/* Agent activity log - show when there are events */}
             {agentEvents.length > 0 && (
               <AgentLogView />
-            )}
-
-            {/* Clarifying Questions - show when there are questions */}
-            {clarifyingQuestionsData.length > 0 && (
-              <ClarifyingQuestionsList
-                questions={clarifyingQuestionsData}
-                onAnswer={(qId, selectedIds, customText) => {
-                  void answerClarifyingQuestion(qId, selectedIds, customText)
-                }}
-              />
             )}
 
             {/* Loading indicator when waiting for first response */}

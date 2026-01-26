@@ -110,12 +110,17 @@ export function HomeScreen() {
     sendPrompt,
     currentRunStatus,
     appendToDraftPrompt,
+    promptStageWizard,
   } = useAppStore()
 
   const [showPathInput, setShowPathInput] = useState(false)
   const pathInputRef = useRef<HTMLInputElement>(null)
 
-  const busy = currentRunStatus === 'running' || currentRunStatus === 'queued' || currentRunStatus === 'awaiting_approval'
+  const busy =
+    currentRunStatus === 'running' ||
+    currentRunStatus === 'queued' ||
+    currentRunStatus === 'awaiting_approval' ||
+    Boolean(promptStageWizard)
   const folderLabel = useMemo(() => baseName(projectPath), [projectPath])
   const models = modelItems.length ? modelItems : [{ label: model, token: model, desc: '' }]
   const modeChoices = useMemo(
@@ -129,7 +134,6 @@ export function HomeScreen() {
   const handleSubmit = () => {
     const prompt = draftPrompt.trim()
     if (!prompt || busy) return
-    setDraftPrompt('')
     void sendPrompt(prompt)
   }
 

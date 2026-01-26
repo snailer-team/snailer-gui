@@ -8,6 +8,8 @@ import { ApprovalBar } from './components/ApprovalBar'
 import { RightPanel } from './components/RightPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { HomeScreen } from './components/HomeScreen'
+import { PromptStageWizard } from './components/PromptStageWizard'
+import { ClarifyingPromptPanel } from './components/ClarifyingPromptPanel'
 import { useAppStore } from './lib/store'
 
 export default function App() {
@@ -65,23 +67,29 @@ export default function App() {
         </div>
 
         {/* Main Content */}
-        <main className={['flex-1 overflow-hidden', showSplitRightPanel ? 'flex' : ''].join(' ')}>
+        <main className="flex-1 overflow-hidden flex">
           {viewMode === 'code' ? (
             <div className="h-full w-full p-6">
               <RightPanel />
             </div>
           ) : (
             <>
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
                 {showHome ? (
                   <HomeScreen />
                 ) : (
-                  <div className="flex h-full flex-col">
-                    <div className="flex-1 overflow-hidden">
+                  <div className="flex-1 min-h-0 flex flex-col">
+                    <div className="flex-1 min-h-0 overflow-hidden">
                       <ChatArea />
                     </div>
                     <div className="flex-shrink-0 border-t border-black/5 bg-white/50">
                       <ApprovalBar />
+                      <div className="px-4 pt-4">
+                        <PromptStageWizard />
+                      </div>
+                      <div className="px-4 pt-4">
+                        <ClarifyingPromptPanel />
+                      </div>
                       <div className="p-4">
                         <InputBar />
                       </div>

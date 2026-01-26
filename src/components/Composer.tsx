@@ -23,9 +23,14 @@ export function Composer() {
     setDraftPrompt,
     sendPrompt,
     currentRunStatus,
+    promptStageWizard,
   } = useAppStore()
 
-  const busy = currentRunStatus === 'running' || currentRunStatus === 'queued' || currentRunStatus === 'awaiting_approval'
+  const busy =
+    currentRunStatus === 'running' ||
+    currentRunStatus === 'queued' ||
+    currentRunStatus === 'awaiting_approval' ||
+    Boolean(promptStageWizard)
 
   const folderLabel = useMemo(() => baseName(projectPath), [projectPath])
   const models = modelItems.length ? modelItems : [{ label: model, token: model, desc: '' }]
@@ -82,7 +87,6 @@ export function Composer() {
                 if (busy) return
                 const prompt = draftPrompt.trim()
                 if (!prompt) return
-                setDraftPrompt('')
                 void sendPrompt(prompt)
               }
             }}
@@ -98,7 +102,6 @@ export function Composer() {
               onClick={() => {
                 const prompt = draftPrompt.trim()
                 if (!prompt) return
-                setDraftPrompt('')
                 void sendPrompt(prompt)
               }}
               className="h-12 w-12 rounded-2xl shadow-sm"

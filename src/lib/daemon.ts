@@ -42,6 +42,19 @@ export type UiEventEnvelope = {
   event: UiEvent
 }
 
+export type PromptStageOption = {
+  title: string
+  description: string
+  detail: string
+  requiresInput?: boolean
+}
+
+export type PromptStage = {
+  name: string
+  question: string
+  options: PromptStageOption[]
+}
+
 type StatusHandler = (status: ConnectionStatus) => void
 type NotificationHandler = (method: string, params: unknown) => void
 
@@ -334,5 +347,12 @@ export class DaemonClient {
     decision: 'allow_once' | 'allow_always' | 'reject' | 'cancel'
   }): Promise<{ status: 'ok' }> {
     return this.request('loop_guard.respond', params)
+  }
+
+  async promptStagesResolve(params: {
+    prompt: string
+    model?: string
+  }): Promise<{ stages: PromptStage[] }> {
+    return this.request('prompt_stages.resolve', params)
   }
 }
