@@ -265,15 +265,14 @@ export function RightPanel() {
         </TabsList>
 
         {isOrchestratorMode && (
-          <TabsContent value="agents" className="flex-1 min-h-0">
-            <div className="h-[calc(100vh-120px)]">
-              <OrchestratorPanel />
-            </div>
+          <TabsContent value="agents" className="flex-1 min-h-0 overflow-hidden">
+            <OrchestratorPanel />
           </TabsContent>
         )}
 
-        <TabsContent value="files" className="flex-1 min-h-0">
-          <div className="flex items-center gap-2">
+        <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex items-center gap-2">
             <input
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -305,47 +304,48 @@ export function RightPanel() {
             >
               새로고침
             </Button>
-          </div>
-          <ScrollArea className="mt-3 h-[calc(100vh-260px)]">
-            <ScrollAreaViewport className="h-full">
-              <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm">
-                <TreeNode
-                  node={fileTree}
-                  level={0}
-                  onPickFile={(absPath, relPath) => {
-                    setSelectedAbsFile(absPath)
-                    setSelectedRelFile(relPath)
-                  }}
-                />
-              </div>
-            </ScrollAreaViewport>
-            <ScrollBar />
-          </ScrollArea>
-          <div className="mt-3 rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <div className="truncate text-xs font-medium text-[color:var(--color-text-secondary)]">
-                {selectedRelFile ? selectedRelFile : '파일을 선택하면 미리보기를 표시합니다.'}
-              </div>
-              {selectedRelFile ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => void navigator.clipboard.writeText(`@${selectedRelFile}`)}
-                >
-                  @복사
-                </Button>
-              ) : null}
             </div>
-            <pre className="mt-2 max-h-[140px] overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
-              {selectedRelFile ? filePreview : ' '}
-            </pre>
-          </div>
-          <div className="mt-2 text-xs text-[color:var(--color-text-muted)]">
-            드래그해서 입력창에 드롭하면 <span className="font-mono">@path</span> 형태로 삽입됩니다.
+            <ScrollArea className="mt-3 flex-1 min-h-0">
+              <ScrollAreaViewport className="h-full">
+                <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm">
+                  <TreeNode
+                    node={fileTree}
+                    level={0}
+                    onPickFile={(absPath, relPath) => {
+                      setSelectedAbsFile(absPath)
+                      setSelectedRelFile(relPath)
+                    }}
+                  />
+                </div>
+              </ScrollAreaViewport>
+              <ScrollBar />
+            </ScrollArea>
+            <div className="mt-3 rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-2">
+                <div className="truncate text-xs font-medium text-[color:var(--color-text-secondary)]">
+                  {selectedRelFile ? selectedRelFile : '파일을 선택하면 미리보기를 표시합니다.'}
+                </div>
+                {selectedRelFile ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void navigator.clipboard.writeText(`@${selectedRelFile}`)}
+                  >
+                    @복사
+                  </Button>
+                ) : null}
+              </div>
+              <pre className="mt-2 max-h-[160px] overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
+                {selectedRelFile ? filePreview : ' '}
+              </pre>
+            </div>
+            <div className="mt-2 text-xs text-[color:var(--color-text-muted)]">
+              드래그해서 입력창에 드롭하면 <span className="font-mono">@path</span> 형태로 삽입됩니다.
+            </div>
           </div>
         </TabsContent>
 
-        <TabsContent value="diffs" className="flex-1 min-h-0">
+        <TabsContent value="diffs" className="flex-1 min-h-0 overflow-hidden">
           <div className="grid grid-rows-[auto_1fr] gap-3 h-full min-h-0">
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm">
@@ -409,11 +409,11 @@ export function RightPanel() {
           </div>
         </TabsContent>
 
-        <TabsContent value="logs" className="flex-1 min-h-0">
+        <TabsContent value="logs" className="flex-1 min-h-0 overflow-hidden">
           <div className="grid grid-cols-[1fr_1fr] gap-2 h-full min-h-0">
-            <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm min-h-0">
+            <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm min-h-0 flex flex-col">
               <div className="px-2 py-1 text-xs font-medium text-[color:var(--color-text-secondary)]">Bash</div>
-              <ScrollArea className="h-[calc(100vh-180px)]">
+              <ScrollArea className="flex-1 min-h-0">
                 <ScrollAreaViewport className="h-full">
                   <div className="space-y-1 p-1">
                     {bashCommands.length === 0 ? (
@@ -443,17 +443,17 @@ export function RightPanel() {
               </ScrollArea>
             </div>
 
-            <div className="rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm min-h-0">
+            <div className="rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm min-h-0 flex flex-col">
               <div className="text-xs font-medium text-[color:var(--color-text-secondary)]">Output</div>
-              <pre className="mt-2 h-[calc(100vh-220px)] overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
+              <pre className="mt-2 flex-1 min-h-0 overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
                 {logText || '명령을 선택하면 stdout 로그를 로드합니다.'}
               </pre>
             </div>
           </div>
         </TabsContent>
 
-        <TabsContent value="approvals" className="flex-1 min-h-0">
-          <ScrollArea className="h-[calc(100vh-120px)]">
+        <TabsContent value="approvals" className="flex-1 min-h-0 overflow-hidden">
+          <ScrollArea className="h-full">
             <ScrollAreaViewport className="h-full">
               <div className="space-y-3">
                 {pendingApprovals.length === 0 ? (
@@ -469,12 +469,14 @@ export function RightPanel() {
           </ScrollArea>
         </TabsContent>
 
-        <TabsContent value="raw" className="flex-1 min-h-0">
-          <div className="h-[calc(100vh-120px)]">
-            <TerminalPanel />
-          </div>
-          <div className="mt-2 text-xs text-[color:var(--color-text-muted)]">
-            GUI가 렌더링하는 메시지를 터미널 형태로 그대로 보여주는 “백업 뷰”입니다.
+        <TabsContent value="raw" className="flex-1 min-h-0 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex-1 min-h-0">
+              <TerminalPanel />
+            </div>
+            <div className="mt-2 text-xs text-[color:var(--color-text-muted)]">
+              GUI가 렌더링하는 메시지를 터미널 형태로 그대로 보여주는 “백업 뷰”입니다.
+            </div>
           </div>
         </TabsContent>
       </Tabs>

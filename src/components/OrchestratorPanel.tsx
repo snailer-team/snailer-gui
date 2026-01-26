@@ -313,6 +313,35 @@ function VerifyStatusPanel() {
           </div>
         ))}
       </div>
+
+      {(verifyStatus.lintOutput || verifyStatus.buildOutput || verifyStatus.testOutput) && (
+        <div className="mt-3 space-y-2">
+          {verifyStatus.lintOutput ? (
+            <details className="rounded-lg border border-black/5 bg-white/70 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-gray-700">Lint output</summary>
+              <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words text-xs text-gray-700">
+                {verifyStatus.lintOutput}
+              </pre>
+            </details>
+          ) : null}
+          {verifyStatus.buildOutput ? (
+            <details className="rounded-lg border border-black/5 bg-white/70 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-gray-700">Build output</summary>
+              <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words text-xs text-gray-700">
+                {verifyStatus.buildOutput}
+              </pre>
+            </details>
+          ) : null}
+          {verifyStatus.testOutput ? (
+            <details className="rounded-lg border border-black/5 bg-white/70 px-3 py-2">
+              <summary className="cursor-pointer text-xs font-medium text-gray-700">Test output</summary>
+              <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap break-words text-xs text-gray-700">
+                {verifyStatus.testOutput}
+              </pre>
+            </details>
+          ) : null}
+        </div>
+      )}
     </div>
   )
 }
@@ -390,7 +419,7 @@ function TaskList() {
 }
 
 function ContractInfo() {
-  const { contract } = useAppStore((s) => s.orchestrator)
+  const { contract, contractStatus } = useAppStore((s) => s.orchestrator)
 
   if (!contract) return null
 
@@ -398,6 +427,12 @@ function ContractInfo() {
     <div className="rounded-xl border border-black/5 bg-white/60 p-3">
       <div className="text-xs font-semibold text-gray-700 mb-2">Contract</div>
       <div className="space-y-2 text-xs">
+        {contractStatus ? (
+          <div className="flex justify-between">
+            <span className="text-gray-500">Status</span>
+            <span className="text-gray-700 font-medium">{contractStatus}</span>
+          </div>
+        ) : null}
         <div className="flex justify-between">
           <span className="text-gray-500">Project</span>
           <span className="text-gray-700 font-medium">{contract.projectType}</span>
@@ -438,6 +473,106 @@ function ContractInfo() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function ConnectionsPanel() {
+  const { mcpServers, lspClients } = useAppStore((s) => s.orchestrator)
+  if (mcpServers.length === 0 && lspClients.length === 0) return null
+
+  return (
+    <div className="rounded-xl border border-black/5 bg-white/60 p-3">
+      <div className="text-xs font-semibold text-gray-700 mb-2">Connections</div>
+
+      {mcpServers.length > 0 ? (
+        <div className="mb-3">
+          <div className="text-xs text-gray-500 mb-1">MCP</div>
+          <div className="space-y-1.5">
+            {mcpServers.slice(0, 8).map((s) => (
+              <div key={s.name} className="flex items-center justify-between text-xs">
+                <div className="min-w-0">
+                  <span className="truncate text-gray-700">{s.name}</span>
+                  {s.version ? <span className="ml-2 text-gray-400 font-mono">{s.version}</span> : null}
+                </div>
+                <span className={s.connected ? 'text-green-600' : 'text-gray-400'}>{s.connected ? 'on' : 'off'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {lspClients.length > 0 ? (
+        <div>
+          <div className="text-xs text-gray-500 mb-1">LSP</div>
+          <div className="space-y-1.5">
+            {lspClients.slice(0, 10).map((c) => (
+              <div key={`${c.name}:${c.language}`} className="flex items-center justify-between text-xs">
+                <div className="min-w-0">
+                  <span className="truncate text-gray-700">{c.name}</span>
+                  <span className="ml-2 text-gray-400 font-mono">{c.language}</span>
+                </div>
+                <span className={c.active ? 'text-green-600' : 'text-gray-400'}>{c.active ? 'on' : 'off'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SkillsPanel() {
+  const skillsState = useAppStore((s) => s.orchestrator.skills)
+  if (!skillsState || skillsState.skills.length === 0) return null
+
+  return (
+    <div className="rounded-xl border border-black/5 bg-white/60 p-3">
+      <div className="text-xs font-semibold text-gray-700 mb-2">Skills</div>
+      <div className="text-xs text-gray-500">
+        {skillsState.projectType ? `Detected: ${skillsState.projectType}` : 'Injected skills'}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {skillsState.skills.slice(0, 12).map((s) => (
+          <span
+            key={`${s.id}:${s.version}`}
+            className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-xs"
+            title={`${s.name} ${s.version} (${s.triggerType})`}
+          >
+            {s.name || s.id}
+          </span>
+        ))}
+        {skillsState.skills.length > 12 ? (
+          <span className="px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 text-xs">
+            +{skillsState.skills.length - 12}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function DynamicAgentsPanel() {
+  const dynamicAgents = useAppStore((s) => s.orchestrator.dynamicAgents)
+  if (dynamicAgents.length === 0) return null
+
+  return (
+    <div className="rounded-xl border border-black/5 bg-white/60 p-3">
+      <div className="text-xs font-semibold text-gray-700 mb-2">Dynamic Agents</div>
+      <div className="space-y-1.5 text-xs">
+        {dynamicAgents.slice(0, 10).map((a) => (
+          <div key={a.agentId} className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-gray-700">{a.agentType}</div>
+              {a.reason ? <div className="truncate text-gray-400">{a.reason}</div> : null}
+            </div>
+            <div className="shrink-0 text-gray-500">
+              {a.status}
+              {a.durationSecs ? ` · ${a.durationSecs}s` : ''}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -513,6 +648,11 @@ export function OrchestratorPanel() {
 
           {/* Contract */}
           <ContractInfo />
+
+          {/* Connections / Skills */}
+          <ConnectionsPanel />
+          <SkillsPanel />
+          <DynamicAgentsPanel />
         </div>
       </ScrollAreaViewport>
       <ScrollBar />

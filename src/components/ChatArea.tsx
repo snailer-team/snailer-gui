@@ -121,7 +121,7 @@ export function ChatArea() {
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <ScrollAreaViewport className="h-full">
           <div className="mx-auto w-full max-w-4xl px-6 py-6 space-y-4">
             {!session ? (

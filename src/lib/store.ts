@@ -157,6 +157,8 @@ export interface VerifyStatus {
   testOutput?: string
 }
 
+type VerifyStepKey = 'lint' | 'build' | 'test'
+
 export interface OrchestratorContract {
   projectType: string
   entrypoints: string[]
@@ -166,6 +168,38 @@ export interface OrchestratorContract {
   buildCmd?: string
   testCmd?: string
   definitionOfDone: string[]
+}
+
+export interface MCPServerState {
+  name: string
+  version: string
+  connected: boolean
+}
+
+export interface LSPClientState {
+  name: string
+  language: string
+  active: boolean
+}
+
+export interface InjectedSkill {
+  id: string
+  name: string
+  version: string
+  triggerType: string
+}
+
+export interface SkillsState {
+  projectType: string
+  skills: InjectedSkill[]
+}
+
+export interface DynamicAgentState {
+  agentId: string
+  agentType: string
+  status: string
+  reason?: string
+  durationSecs?: number
 }
 
 export interface OrchestratorTask {
@@ -183,7 +217,12 @@ export interface OrchestratorState {
   agents: Partial<Record<TeamRole, AgentCardState>>
   contextBudget: ContextBudget
   verifyStatus: VerifyStatus
+  contractStatus?: string
   contract?: OrchestratorContract
+  mcpServers: MCPServerState[]
+  lspClients: LSPClientState[]
+  skills?: SkillsState
+  dynamicAgents: DynamicAgentState[]
   tasks: OrchestratorTask[]
 }
 
@@ -374,6 +413,11 @@ export const useAppStore = create<AppState>()(
           build: 'idle',
           test: 'idle',
         },
+        contractStatus: undefined,
+        mcpServers: [],
+        lspClients: [],
+        skills: undefined,
+        dynamicAgents: [],
         tasks: [],
       },
 
@@ -509,6 +553,12 @@ export const useAppStore = create<AppState>()(
                 preset: p.preset ?? 'ShipFast',
                 maxParallel: p.maxParallel ?? 3,
                 agents: {},
+                contractStatus: undefined,
+                contract: undefined,
+                mcpServers: [],
+                lspClients: [],
+                skills: undefined,
+                dynamicAgents: [],
                 tasks: [],
               },
             }))
@@ -604,11 +654,21 @@ export const useAppStore = create<AppState>()(
           }
 
           if (method === 'orchestrator.contract_changed') {
-            const p = params as OrchestratorContract
+            const p = params as Record<string, unknown>
+            const contract: OrchestratorContract = {
+              projectType: String(p.projectType ?? ''),
+              entrypoints: Array.isArray(p.entrypoints) ? (p.entrypoints as string[]) : [],
+              mustEdit: Array.isArray(p.mustEdit) ? (p.mustEdit as string[]) : [],
+              forbiddenTargets: Array.isArray(p.forbiddenTargets) ? (p.forbiddenTargets as string[]) : [],
+              allowedGlobs: Array.isArray(p.allowedGlobs) ? (p.allowedGlobs as string[]) : [],
+              buildCmd: typeof p.buildCmd === 'string' ? (p.buildCmd as string) : undefined,
+              testCmd: typeof p.testCmd === 'string' ? (p.testCmd as string) : undefined,
+              definitionOfDone: Array.isArray(p.definitionOfDone) ? (p.definitionOfDone as string[]) : [],
+            }
             set((st) => ({
               orchestrator: {
                 ...st.orchestrator,
-                contract: p,
+                contract: contract,
               },
             }))
             return
@@ -655,6 +715,385 @@ export const useAppStore = create<AppState>()(
           const { event, runId } = env
           const activeSessionId = get().activeSessionId
           if (!activeSessionId) return
+
+          const normalizeRole = (v: unknown): TeamRole | null => {
+            const s = String(v ?? '').trim()
+            if (!s) return null
+            return s as TeamRole
+          }
+
+          const normalizeVerifyStep = (v: unknown): VerifyStepKey | null => {
+            const s = String(v ?? '').toLowerCase().trim()
+            if (s === 'lint') return 'lint'
+            if (s === 'build') return 'build'
+            if (s === 'test') return 'test'
+            return null
+          }
+
+          const normalizeVerifyStatus = (v: unknown): VerifyStatus['lint'] => {
+            const s = String(v ?? '').toLowerCase().trim()
+            if (s === 'running') return 'running'
+            if (s === 'passed') return 'passed'
+            if (s === 'failed') return 'failed'
+            if (s === 'skipped') return 'skipped'
+            // timeout → failed for UI purposes
+            if (s === 'timeout') return 'failed'
+            return 'idle'
+          }
+
+          const upsertMcpServer = (servers: MCPServerState[], next: MCPServerState) => {
+            const idx = servers.findIndex((s) => s.name === next.name)
+            if (idx < 0) return [...servers, next]
+            return servers.map((s, i) => (i === idx ? { ...s, ...next } : s))
+          }
+
+          const upsertLspClient = (clients: LSPClientState[], next: LSPClientState) => {
+            const idx = clients.findIndex((c) => c.name === next.name && c.language === next.language)
+            if (idx < 0) return [...clients, next]
+            return clients.map((c, i) => (i === idx ? { ...c, ...next } : c))
+          }
+
+          if (event.type === 'TaskTitleChanged') {
+            const title = String(event.data.title ?? '').trim()
+            if (!title) return
+            set((st) => ({
+              sessions: st.sessions.map((s) => (s.id === activeSessionId ? { ...s, name: title } : s)),
+            }))
+            return
+          }
+
+          if (event.type === 'SessionStarted') {
+            const preset = String(event.data.preset ?? 'ShipFast')
+            const maxParallel = Number(event.data.maxParallel ?? 3)
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                active: true,
+                preset,
+                maxParallel,
+                agents: {},
+                contractStatus: undefined,
+                contract: undefined,
+                mcpServers: [],
+                lspClients: [],
+                skills: undefined,
+                dynamicAgents: [],
+                tasks: [],
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'SessionEnded') {
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                active: false,
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'AgentRegistered') {
+            const role = normalizeRole(event.data.role)
+            if (!role) return
+            const model = String(event.data.model ?? '')
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                agents: {
+                  ...st.orchestrator.agents,
+                  [role]: {
+                    role,
+                    model,
+                    status: 'idle',
+                    current: '',
+                    inputTokens: 0,
+                    outputTokens: 0,
+                    cost: 0,
+                  },
+                },
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'TaskStatusChanged') {
+            const id = String(event.data.taskId ?? '').trim()
+            const title = String(event.data.title ?? '').trim()
+            const role = normalizeRole(event.data.role)
+            const rawStatus = String(event.data.status ?? '').trim()
+            if (!id) return
+            const statusMap: Record<string, OrchestratorTask['status']> = {
+              Queued: 'queued',
+              Running: 'running',
+              NeedsReview: 'needs_review',
+              Completed: 'verified',
+              Failed: 'failed',
+            }
+            const status = statusMap[rawStatus] ?? 'queued'
+            const task: OrchestratorTask = {
+              id,
+              title: title || id,
+              status,
+              assignedTo: role ?? undefined,
+            }
+            set((st) => {
+              const existingIdx = st.orchestrator.tasks.findIndex((t) => t.id === task.id)
+              const tasks =
+                existingIdx >= 0
+                  ? st.orchestrator.tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t))
+                  : [...st.orchestrator.tasks, task]
+              return { orchestrator: { ...st.orchestrator, tasks } }
+            })
+            return
+          }
+
+          if (event.type === 'TokenUsageUpdated') {
+            const role = normalizeRole(event.data.role)
+            if (!role) return
+            const inputTokens = Number(event.data.inputTokens ?? 0)
+            const outputTokens = Number(event.data.outputTokens ?? 0)
+            const cost = Number(event.data.cost ?? 0)
+            const tokensSaved = Number(event.data.tokensSaved ?? 0)
+            set((st) => {
+              const existing = st.orchestrator.agents[role]
+              const existingInput = existing?.inputTokens ?? 0
+              const existingOutput = existing?.outputTokens ?? 0
+              const existingCost = existing?.cost ?? 0
+              return {
+                orchestrator: {
+                  ...st.orchestrator,
+                  agents: {
+                    ...st.orchestrator.agents,
+                    [role]: {
+                      role,
+                      model: existing?.model ?? '',
+                      status: existing?.status ?? 'idle',
+                      current: existing?.current ?? '',
+                      progress: existing?.progress,
+                      startedAt: existing?.startedAt,
+                      inputTokens,
+                      outputTokens,
+                      cost,
+                    },
+                  },
+                  contextBudget: {
+                    ...st.orchestrator.contextBudget,
+                    inputTokens: st.orchestrator.contextBudget.inputTokens + (inputTokens - existingInput),
+                    outputTokens: st.orchestrator.contextBudget.outputTokens + (outputTokens - existingOutput),
+                    totalCost: st.orchestrator.contextBudget.totalCost + (cost - existingCost),
+                    tokensSaved: st.orchestrator.contextBudget.tokensSaved + tokensSaved,
+                  },
+                },
+              }
+            })
+            return
+          }
+
+          if (event.type === 'ContextWindowUpdated') {
+            const usedTokens = Number(event.data.usedTokens ?? 0)
+            const maxTokens = Number(event.data.maxTokens ?? 0)
+            if (!maxTokens) return
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                contextBudget: {
+                  ...st.orchestrator.contextBudget,
+                  windowUsedTokens: usedTokens,
+                  windowMaxTokens: maxTokens,
+                },
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'VerifyJobStarted') {
+            const step = normalizeVerifyStep(event.data.step)
+            if (!step) return
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                verifyStatus: {
+                  ...st.orchestrator.verifyStatus,
+                  [step]: 'running',
+                },
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'VerifyJobFinished' || event.type === 'VerifyStepCompleted') {
+            const step = normalizeVerifyStep(event.data.step)
+            if (!step) return
+            const status = normalizeVerifyStatus(event.data.status)
+            const durationSecs = Number(event.data.durationSecs ?? 0)
+            const lastLine = String(event.data.lastLine ?? '').trim()
+            const tail = Array.isArray(event.data.tail) ? (event.data.tail as string[]) : []
+            const output = tail.length > 0 ? tail.join('\n') : lastLine
+
+            set((st) => {
+              const next: VerifyStatus = { ...st.orchestrator.verifyStatus, [step]: status }
+              const durationMs = durationSecs ? durationSecs * 1000 : undefined
+              if (step === 'lint') {
+                next.lintDuration = durationMs ?? next.lintDuration
+                if (output) next.lintOutput = output
+              }
+              if (step === 'build') {
+                next.buildDuration = durationMs ?? next.buildDuration
+                if (output) next.buildOutput = output
+              }
+              if (step === 'test') {
+                next.testDuration = durationMs ?? next.testDuration
+                if (output) next.testOutput = output
+              }
+              return {
+                orchestrator: {
+                  ...st.orchestrator,
+                  verifyStatus: next,
+                },
+              }
+            })
+            return
+          }
+
+          if (event.type === 'ContractChanged') {
+            const status = String(event.data.status ?? '').trim()
+            const projectType = String(event.data.projectType ?? '').trim()
+            const entrypoints = (event.data.entrypoints as string[]) ?? []
+            const mustEdit = (event.data.mustEdit as string[]) ?? []
+            const forbiddenTargets = (event.data.forbiddenTargets as string[]) ?? []
+            const allowedGlobs = (event.data.allowedGlobs as string[]) ?? []
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                contractStatus: status || st.orchestrator.contractStatus,
+                contract: {
+                  projectType: projectType || st.orchestrator.contract?.projectType || '',
+                  entrypoints,
+                  mustEdit,
+                  forbiddenTargets,
+                  allowedGlobs,
+                  definitionOfDone: st.orchestrator.contract?.definitionOfDone ?? [],
+                },
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'MCPServerChanged') {
+            const serversRaw = Array.isArray(event.data.servers) ? (event.data.servers as Array<Record<string, unknown>>) : []
+            if (serversRaw.length === 0) return
+            set((st) => {
+              let next = st.orchestrator.mcpServers
+              for (const srv of serversRaw) {
+                const name = String(srv.name ?? '').trim()
+                if (!name) continue
+                next = upsertMcpServer(next, {
+                  name,
+                  version: String(srv.version ?? ''),
+                  connected: Boolean(srv.connected),
+                })
+              }
+              return { orchestrator: { ...st.orchestrator, mcpServers: next } }
+            })
+            return
+          }
+
+          if (event.type === 'LSPClientChanged') {
+            const clientsRaw = Array.isArray(event.data.clients) ? (event.data.clients as Array<Record<string, unknown>>) : []
+            if (clientsRaw.length === 0) return
+            set((st) => {
+              let next = st.orchestrator.lspClients
+              for (const cli of clientsRaw) {
+                const name = String(cli.name ?? '').trim()
+                const language = String(cli.language ?? '').trim()
+                if (!name || !language) continue
+                next = upsertLspClient(next, {
+                  name,
+                  language,
+                  active: Boolean(cli.active),
+                })
+              }
+              return { orchestrator: { ...st.orchestrator, lspClients: next } }
+            })
+            return
+          }
+
+          if (event.type === 'SkillsInjected') {
+            const projectType = String(event.data.projectType ?? '').trim()
+            const skillsRaw = Array.isArray(event.data.skills) ? (event.data.skills as Array<Record<string, unknown>>) : []
+            const skills: InjectedSkill[] = skillsRaw
+              .map((s) => ({
+                id: String(s.id ?? '').trim(),
+                name: String(s.name ?? '').trim(),
+                version: String(s.version ?? '').trim(),
+                triggerType: String(s.triggerType ?? '').trim(),
+              }))
+              .filter((s) => Boolean(s.id || s.name))
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                skills: { projectType, skills },
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'DynamicAgentHired') {
+            const agentId = String(event.data.agentId ?? '').trim()
+            if (!agentId) return
+            const agentType = String(event.data.agentType ?? '').trim()
+            const reason = String(event.data.reason ?? '').trim()
+            set((st) => {
+              const existingIdx = st.orchestrator.dynamicAgents.findIndex((a) => a.agentId === agentId)
+              const next: DynamicAgentState = { agentId, agentType, status: 'hired', reason }
+              const dynamicAgents =
+                existingIdx >= 0
+                  ? st.orchestrator.dynamicAgents.map((a) => (a.agentId === agentId ? { ...a, ...next } : a))
+                  : [...st.orchestrator.dynamicAgents, next]
+              return { orchestrator: { ...st.orchestrator, dynamicAgents } }
+            })
+            return
+          }
+
+          if (event.type === 'DynamicAgentStatusChanged') {
+            const agentId = String(event.data.agentId ?? '').trim()
+            if (!agentId) return
+            const status = String(event.data.status ?? '').trim()
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                dynamicAgents: st.orchestrator.dynamicAgents.map((a) => (a.agentId === agentId ? { ...a, status } : a)),
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'DynamicAgentFired') {
+            const agentId = String(event.data.agentId ?? '').trim()
+            if (!agentId) return
+            const durationSecs = Number(event.data.durationSecs ?? 0)
+            set((st) => ({
+              orchestrator: {
+                ...st.orchestrator,
+                dynamicAgents: st.orchestrator.dynamicAgents.map((a) =>
+                  a.agentId === agentId ? { ...a, status: 'fired', durationSecs } : a,
+                ),
+              },
+            }))
+            return
+          }
+
+          if (event.type === 'ExecutionModeSwitch') {
+            const target = String(event.data.targetMode ?? event.data.mode ?? '').toLowerCase().trim()
+            if (!target) return
+            const nextMode =
+              target.includes('classic') ? 'classic' : target.includes('orchestrator') ? 'team-orchestrator' : null
+            if (!nextMode) return
+            set({ mode: nextMode })
+            return
+          }
 
           if (event.type === 'OutputLine') {
             const stream = String(event.data.stream ?? 'main')
@@ -980,6 +1419,20 @@ export const useAppStore = create<AppState>()(
           attachedImages: [],
         })
         try {
+          // Ensure daemon session settings match GUI state.
+          // `run.start` uses daemon session settings (not per-call params) for mode/model/workMode/prMode/teamConfigName.
+          try {
+            await daemon.settingsSet({
+              model: get().model,
+              mode: get().mode,
+              workMode: get().workMode,
+              prMode: get().prMode,
+              teamConfigName: get().teamConfigName,
+            })
+          } catch (e) {
+            console.warn('[store] settings.set failed before run.start:', e)
+          }
+
           const res = await daemon.runStart({
             prompt: promptForAgent,
             sessionId,

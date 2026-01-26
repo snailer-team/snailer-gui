@@ -13,13 +13,30 @@ import { ClarifyingPromptPanel } from './components/ClarifyingPromptPanel'
 import { useAppStore } from './lib/store'
 
 export default function App() {
-  const { connect, connectionStatus, error, clearError, lastToast, viewMode, sessions, activeSessionId, mode } =
-    useAppStore()
+  const {
+    connect,
+    connectionStatus,
+    error,
+    clearError,
+    lastToast,
+    viewMode,
+    sessions,
+    activeSessionId,
+    mode,
+    promptStageWizard,
+    clarifyingQuestions,
+    pendingApprovals,
+  } = useAppStore()
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   )
-  const showHome = viewMode === 'chat' && (!activeSession || activeSession.messages.length === 0)
+  const showHome =
+    viewMode === 'chat' &&
+    (!activeSession || activeSession.messages.length === 0) &&
+    !promptStageWizard &&
+    clarifyingQuestions.length === 0 &&
+    pendingApprovals.length === 0
   const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
   const showSplitRightPanel = viewMode === 'chat' && isOrchestratorMode
 

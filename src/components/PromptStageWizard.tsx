@@ -95,16 +95,17 @@ export function PromptStageWizard() {
   const stages = wizard.stages
   const isSummary = step >= stages.length
   const totalSteps = stages.length + 1
-  const stage = stages[step]
+  const stage = isSummary ? null : stages[step]
 
-  const canNext = useMemo(() => {
+  const canNext = (() => {
     if (isSummary) return true
+    if (!stage) return false
     if (selectedIdx == null) return false
     if (needsInput(stage, selectedIdx)) return Boolean(customText.trim())
     return true
-  }, [customText, isSummary, selectedIdx, stage])
+  })()
 
-  const title = isSummary ? 'Confirm' : stage.question
+  const title = isSummary ? 'Confirm' : stage?.question ?? 'Clarify'
 
   const submitLabel = step === stages.length - 1 ? 'Next' : 'Next'
 
@@ -130,11 +131,11 @@ export function PromptStageWizard() {
 
           {!isSummary ? (
             <div className="mt-4 space-y-2">
-              {stage.options.map((opt, idx) => {
+              {stage!.options.map((opt, idx) => {
                 const selected = selectedIdx === idx
                 return (
                   <button
-                    key={`${stage.name}:${idx}`}
+                    key={`${stage!.name}:${idx}`}
                     onClick={() => {
                       setSelectedIdx(idx)
                       if (!opt.requiresInput) setCustomText('')
@@ -160,7 +161,7 @@ export function PromptStageWizard() {
                 )
               })}
 
-              {selectedIdx != null && needsInput(stage, selectedIdx) ? (
+              {selectedIdx != null && needsInput(stage!, selectedIdx) ? (
                 <div className="mt-3">
                   <input
                     value={customText}
@@ -232,7 +233,7 @@ export function PromptStageWizard() {
               disabled={!canNext}
               onClick={() => {
                 if (selectedIdx == null) return
-                const opt = stage.options[selectedIdx]
+                const opt = stage!.options[selectedIdx]
                 const v = opt.requiresInput ? customText.trim() : opt.detail
                 const next = answers.slice()
                 next[step] = v || null
@@ -260,4 +261,3 @@ export function PromptStageWizard() {
     </div>
   )
 }
-

@@ -246,10 +246,9 @@ export function ClarifyingQuestion({
 interface ClarifyingQuestionsListProps {
   questions: ClarifyingQuestionData[]
   onAnswer: (questionId: string, selectedIds: string[], customText?: string) => void
-  onSkipAll?: () => void
 }
 
-export function ClarifyingQuestionsList({ questions, onAnswer, onSkipAll: _onSkipAll }: ClarifyingQuestionsListProps) {
+export function ClarifyingQuestionsList({ questions, onAnswer }: ClarifyingQuestionsListProps) {
   const [currentIndex, setCurrentIndex] = useState(0)
 
   if (questions.length === 0) return null
