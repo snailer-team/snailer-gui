@@ -156,7 +156,9 @@ export function InputBar() {
   }, [draftPrompt])
 
   // Format mode/model display
-  const modeDisplay = modeItems.find((m) => m.token === mode)?.label || 'Agent'
+  const modeDisplayRaw = modeItems.find((m) => m.token === mode)?.label || 'Agent'
+  const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
+  const modeDisplay = isOrchestratorMode ? 'Orchestrator' : modeDisplayRaw
   const modelDisplay = model
     ?.replace('claude-', '')
     .replace('-20', ' ')

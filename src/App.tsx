@@ -11,12 +11,15 @@ import { HomeScreen } from './components/HomeScreen'
 import { useAppStore } from './lib/store'
 
 export default function App() {
-  const { connect, connectionStatus, error, clearError, lastToast, viewMode, sessions, activeSessionId } = useAppStore()
+  const { connect, connectionStatus, error, clearError, lastToast, viewMode, sessions, activeSessionId, mode } =
+    useAppStore()
   const activeSession = useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   )
   const showHome = viewMode === 'chat' && (!activeSession || activeSession.messages.length === 0)
+  const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
+  const showSplitRightPanel = viewMode === 'chat' && isOrchestratorMode
 
   // Auto-connect on mount
   useEffect(() => {
@@ -62,25 +65,37 @@ export default function App() {
         </div>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-hidden">
+        <main className={['flex-1 overflow-hidden', showSplitRightPanel ? 'flex' : ''].join(' ')}>
           {viewMode === 'code' ? (
-            <div className="h-full p-6">
+            <div className="h-full w-full p-6">
               <RightPanel />
             </div>
-          ) : showHome ? (
-            <HomeScreen />
           ) : (
-            <div className="flex h-full flex-col">
+            <>
               <div className="flex-1 overflow-hidden">
-                <ChatArea />
+                {showHome ? (
+                  <HomeScreen />
+                ) : (
+                  <div className="flex h-full flex-col">
+                    <div className="flex-1 overflow-hidden">
+                      <ChatArea />
+                    </div>
+                    <div className="flex-shrink-0 border-t border-black/5 bg-white/50">
+                      <ApprovalBar />
+                      <div className="p-4">
+                        <InputBar />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="flex-shrink-0 border-t border-black/5 bg-white/50">
-                <ApprovalBar />
-                <div className="p-4">
-                  <InputBar />
+
+              {showSplitRightPanel ? (
+                <div className="h-full w-[420px] flex-shrink-0 border-l border-black/5 bg-white/30 p-4">
+                  <RightPanel />
                 </div>
-              </div>
-            </div>
+              ) : null}
+            </>
           )}
         </main>
       </div>
