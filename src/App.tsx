@@ -1,0 +1,89 @@
+import { useEffect, useMemo } from 'react'
+import { Toaster, toast } from 'sonner'
+
+import { Sidebar } from './components/Sidebar'
+import { ChatArea } from './components/ChatArea'
+import { InputBar } from './components/InputBar'
+import { ApprovalBar } from './components/ApprovalBar'
+import { RightPanel } from './components/RightPanel'
+import { CommandPalette } from './components/CommandPalette'
+import { HomeScreen } from './components/HomeScreen'
+import { useAppStore } from './lib/store'
+
+export default function App() {
+  const { connect, connectionStatus, error, clearError, lastToast, viewMode, sessions, activeSessionId } = useAppStore()
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  )
+  const showHome = viewMode === 'chat' && (!activeSession || activeSession.messages.length === 0)
+
+  // Auto-connect on mount
+  useEffect(() => {
+    if (connectionStatus === 'disconnected') {
+      console.log('[App] Auto-connecting to daemon...')
+      void connect()
+    }
+  }, []) // Only run once on mount
+
+  useEffect(() => {
+    if (!lastToast) return
+    toast(lastToast.title, { description: lastToast.message })
+  }, [lastToast])
+
+  return (
+    <div className="h-screen w-screen overflow-hidden bg-[#FAF9F6]">
+      <Toaster position="top-right" richColors />
+      <CommandPalette />
+
+      {error && (
+        <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2">
+          <div className="rounded-2xl border border-red-200 bg-white px-5 py-3 shadow-lg">
+            <div className="flex items-center gap-4">
+              <div className="text-sm">
+                <span className="font-semibold text-red-600">오류: </span>
+                <span className="text-gray-600">{error}</span>
+              </div>
+              <button
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100"
+                onClick={clearError}
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex h-full">
+        {/* Sidebar */}
+        <div className="w-[300px] flex-shrink-0 border-r border-black/5 bg-[#F5F3EE]">
+          <Sidebar />
+        </div>
+
+        {/* Main Content */}
+        <main className="flex-1 overflow-hidden">
+          {viewMode === 'code' ? (
+            <div className="h-full p-6">
+              <RightPanel />
+            </div>
+          ) : showHome ? (
+            <HomeScreen />
+          ) : (
+            <div className="flex h-full flex-col">
+              <div className="flex-1 overflow-hidden">
+                <ChatArea />
+              </div>
+              <div className="flex-shrink-0 border-t border-black/5 bg-white/50">
+                <ApprovalBar />
+                <div className="p-4">
+                  <InputBar />
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  )
+}
