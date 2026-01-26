@@ -119,6 +119,37 @@ body {
   outline-offset: 2px;
 }
 
+/* Vertical dots loader (minimal, Grok-like) */
+@keyframes snailer-vdot-pulse {
+  0% {
+    opacity: 0.18;
+    transform: translateY(0) scale(0.95);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.05);
+  }
+  70% {
+    opacity: 0.18;
+    transform: translateY(0) scale(0.95);
+  }
+  100% {
+    opacity: 0.18;
+    transform: translateY(0) scale(0.95);
+  }
+}
+
+.snailer-vdot {
+  animation: snailer-vdot-pulse 900ms ease-in-out infinite;
+  opacity: 0.18;
+}
+.snailer-vdot-2 {
+  animation-delay: 140ms;
+}
+.snailer-vdot-3 {
+  animation-delay: 280ms;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

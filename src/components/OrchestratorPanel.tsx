@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useAppStore } from '../lib/store'
 import type { AgentCardState, AgentStatus, TeamRole, VerifyStatus } from '../lib/store'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
+import { VerticalDotsLoader } from './ui/VerticalDotsLoader'
 
 // ==================== Helper Functions ====================
 
@@ -284,6 +285,8 @@ function ContextBudgetBar() {
 
 function VerifyStatusPanel() {
   const { verifyStatus } = useAppStore((s) => s.orchestrator)
+  const currentRunStatus = useAppStore((s) => s.currentRunStatus)
+  const orchestratorActive = useAppStore((s) => s.orchestrator.active)
 
   const steps = [
     { label: 'Lint', status: verifyStatus.lint, duration: verifyStatus.lintDuration },
@@ -291,20 +294,29 @@ function VerifyStatusPanel() {
     { label: 'Test', status: verifyStatus.test, duration: verifyStatus.testDuration },
   ]
 
+  const anyRunning = steps.some((s) => s.status === 'running')
+  const allIdle = steps.every((s) => s.status === 'idle')
+  const runActive = currentRunStatus === 'running' || currentRunStatus === 'queued' || currentRunStatus === 'awaiting_approval'
+  const showHeaderSpinner = anyRunning || (orchestratorActive && runActive && allIdle)
+
   return (
     <div className="rounded-xl border border-black/5 bg-white/60 p-3">
-      <div className="text-xs font-semibold text-gray-700 mb-2">Verify Pipeline</div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-gray-700">Verify Pipeline</div>
+        {showHeaderSpinner ? (
+          <div className="flex items-center gap-2">
+            <VerticalDotsLoader size="sm" label={anyRunning ? 'Verify running' : 'Verify waiting'} />
+            <span className="text-[11px] text-gray-500">{anyRunning ? 'running' : 'waiting'}</span>
+          </div>
+        ) : null}
+      </div>
       <div className="space-y-1.5">
         {steps.map((step) => (
           <div key={step.label} className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className={`text-sm ${getVerifyStatusColor(step.status)}`}>
-                {step.status === 'running' ? (
-                  <span className="inline-block animate-pulse">{getVerifyStatusIcon(step.status)}</span>
-                ) : (
-                  getVerifyStatusIcon(step.status)
-                )}
-              </span>
+              {step.status === 'running' ? <VerticalDotsLoader size="sm" /> : (
+                <span className={`text-sm ${getVerifyStatusColor(step.status)}`}>{getVerifyStatusIcon(step.status)}</span>
+              )}
               <span className="text-sm text-gray-700">{step.label}</span>
             </div>
             {step.duration !== undefined && (

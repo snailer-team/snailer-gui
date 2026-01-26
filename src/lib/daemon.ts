@@ -321,11 +321,30 @@ export class DaemonClient {
   }
 
   async bashLogGet(params: {
-    commandId: string
-    offset?: number
-    limit?: number
-    stream?: 'stdout' | 'stderr'
-  }): Promise<{ text: string; nextOffset: number; eof: boolean }> {
+    runId?: string
+    commandId?: string
+  }): Promise<
+    | {
+        commands: Array<{
+          commandId: string
+          cmd: string[]
+          cwd: string
+          exitCode: number | null
+          durationMs: number
+          summary: string
+        }>
+      }
+    | {
+        commandId: string
+        cmd: string[]
+        cwd: string
+        exitCode: number | null
+        durationMs: number
+        summary: string
+        stdout: string
+        stderr: string
+      }
+  > {
     return this.request('bash_log.get', params)
   }
 

@@ -97,7 +97,7 @@ function TreeNode({
 }
 
 export function RightPanel() {
-  const { projectPath, modifiedFilesByPath, bashCommands, daemon, pendingApprovals, mode } = useAppStore()
+  const { projectPath, modifiedFilesByPath, bashCommands, daemon, pendingApprovals, mode, currentRunId } = useAppStore()
   const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
   const [clockMs, setClockMs] = useState(() => Date.now())
   const [files, setFiles] = useState<FileNode[]>([])
@@ -168,13 +168,17 @@ export function RightPanel() {
     if (!daemon || !selectedCmd) return
     void (async () => {
       try {
-        const res = await daemon.bashLogGet({ commandId: selectedCmd, offset: 0, limit: 8000, stream: 'stdout' })
-        setLogText(res.text)
+        const res = await daemon.bashLogGet({ runId: currentRunId ?? '__manual__', commandId: selectedCmd })
+        const stdout = 'stdout' in res ? res.stdout : ''
+        const stderr = 'stderr' in res ? res.stderr : ''
+        const text =
+          stderr && stdout ? `# stdout\n${stdout}\n\n# stderr\n${stderr}` : stdout || (stderr ? `# stderr\n${stderr}` : '')
+        setLogText(text)
       } catch (e) {
         setLogText(e instanceof Error ? e.message : 'failed to load logs')
       }
     })()
-  }, [daemon, selectedCmd])
+  }, [daemon, selectedCmd, currentRunId])
 
   const renderApproval = (a: PendingApproval) => (
     <div key={a.approvalId} className="rounded-2xl border border-black/10 bg-white/70 p-3 shadow-sm">

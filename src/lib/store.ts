@@ -552,14 +552,9 @@ export const useAppStore = create<AppState>()(
                 active: true,
                 preset: p.preset ?? 'ShipFast',
                 maxParallel: p.maxParallel ?? 3,
-                agents: {},
-                contractStatus: undefined,
-                contract: undefined,
-                mcpServers: [],
-                lspClients: [],
-                skills: undefined,
-                dynamicAgents: [],
-                tasks: [],
+                // NOTE: don't clear `agents` here; message ordering between
+                // `orchestrator.*` notifications and `ui.event` can otherwise wipe
+                // already-registered roles, leaving only 1 agent visible.
               },
             }))
             return
@@ -771,14 +766,7 @@ export const useAppStore = create<AppState>()(
                 active: true,
                 preset,
                 maxParallel,
-                agents: {},
-                contractStatus: undefined,
-                contract: undefined,
-                mcpServers: [],
-                lspClients: [],
-                skills: undefined,
-                dynamicAgents: [],
-                tasks: [],
+                // Don't clear `agents` here for the same reason as above.
               },
             }))
             return
@@ -1417,6 +1405,31 @@ export const useAppStore = create<AppState>()(
           pendingApprovals: [],
           clarifyingQuestions: [],
           attachedImages: [],
+          orchestrator: {
+            ...get().orchestrator,
+            active: false,
+            agents: {},
+            tasks: [],
+            contractStatus: undefined,
+            contract: undefined,
+            mcpServers: [],
+            lspClients: [],
+            skills: undefined,
+            dynamicAgents: [],
+            verifyStatus: {
+              lint: 'idle',
+              build: 'idle',
+              test: 'idle',
+            },
+            contextBudget: {
+              ...get().orchestrator.contextBudget,
+              inputTokens: 0,
+              outputTokens: 0,
+              totalCost: 0,
+              windowUsedTokens: 0,
+              tokensSaved: 0,
+            },
+          },
         })
         try {
           // Ensure daemon session settings match GUI state.
