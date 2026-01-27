@@ -5,7 +5,7 @@ import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
 import { useAppStore } from '../lib/store'
 import { authService } from '../lib/authService'
 import { LoginModal } from './LoginModal'
-import { IconChatBubble, IconCode, IconSliders, IconSparkle, IconUser, IconLogOut } from './icons'
+import { IconChatBubble, IconSettings, IconSparkle, IconUser, IconLogOut } from './icons'
 
 function baseName(p: string) {
   const cleaned = (p || '').replace(/\/$/, '')
@@ -42,12 +42,12 @@ function SegmentedToggle() {
       <button
         className={[
           'inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition',
-          viewMode === 'code' ? 'bg-white shadow-sm' : 'hover:bg-white/60',
+          viewMode !== 'chat' ? 'bg-white shadow-sm' : 'hover:bg-white/60',
         ].join(' ')}
-        onClick={() => setViewMode('code')}
-        title="Code"
+        onClick={() => setViewMode('settings')}
+        title="Settings"
       >
-        <IconCode className="h-5 w-5 text-black/70" />
+        <IconSettings className="h-5 w-5 text-black/70" />
       </button>
     </div>
   )
@@ -131,11 +131,8 @@ export function Sidebar() {
       </div>
 
 
-      <div className="mt-6 flex items-center justify-between px-4 shrink-0">
+      <div className="mt-6 flex items-center px-4 shrink-0">
         <div className="text-sm font-semibold tracking-tight text-black/80">Sessions</div>
-        <button className="rounded-xl p-2 hover:bg-black/5" title="Filter / Settings">
-          <IconSliders className="h-5 w-5 text-black/55" />
-        </button>
       </div>
 
       <ScrollArea className="mt-2 flex-1 min-h-0 px-2">
@@ -225,8 +222,8 @@ export function Sidebar() {
 
       <div className="px-4 pb-4 shrink-0">
         <Button
-          variant="primary"
-          className="w-full rounded-2xl relative z-10"
+          variant="default"
+          className="w-full rounded-2xl relative z-10 bg-black text-white hover:bg-black/90 shadow-sm"
           disabled={!daemon || !projectPath}
           onClick={() => {
             console.log('[Sidebar] Button clicked, sessions before:', sessions.length)

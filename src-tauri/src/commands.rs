@@ -155,6 +155,111 @@ pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, Stri
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
 }
 
+fn format_env_value(value: &str) -> String {
+    // Keep simple values unquoted; quote when whitespace or comment char could break parsing.
+    let needs_quotes = value.chars().any(|c| c.is_whitespace() || c == '#');
+    if !needs_quotes {
+        return value.to_string();
+    }
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{}\"", escaped)
+}
+
+/// Upsert a single key into `<projectPath>/.env` (creates the file if missing).
+#[tauri::command]
+pub async fn env_upsert_key(project_path: String, env_var: String, value: String) -> Result<String, String> {
+    let root = PathBuf::from(project_path);
+    if !root.is_dir() {
+        return Err("projectPath is not a directory".to_string());
+    }
+    if env_var.trim().is_empty() {
+        return Err("envVar is empty".to_string());
+    }
+
+    let env_path = root.join(".env");
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = existing.split('\n').map(|s| s.trim_end_matches('\r').to_string()).collect();
+
+    let mut updated = false;
+    for line in lines.iter_mut() {
+        let raw = line.clone();
+        let trimmed_start = raw.trim_start();
+        if trimmed_start.starts_with('#') || trimmed_start.is_empty() {
+            continue;
+        }
+
+        let (export_prefix, rest) = if let Some(after) = trimmed_start.strip_prefix("export ") {
+            ("export ", after.trim_start())
+        } else {
+            ("", trimmed_start)
+        };
+
+        if let Some(after_key) = rest.strip_prefix(env_var.as_str()) {
+            let after_key = after_key.trim_start();
+            if after_key.starts_with('=') {
+                let indent_len = raw.len().saturating_sub(trimmed_start.len());
+                let indent = &raw[..indent_len];
+                *line = format!(
+                    "{}{}{}={}",
+                    indent,
+                    export_prefix,
+                    env_var.trim(),
+                    format_env_value(value.trim())
+                );
+                updated = true;
+                break;
+            }
+        }
+    }
+
+    if !updated {
+        if !lines.is_empty() && lines.last().is_some_and(|l| !l.is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(format!("{}={}", env_var.trim(), format_env_value(value.trim())));
+    }
+
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&env_path, out).map_err(|e| format!("write failed: {}", e))?;
+
+    Ok(env_path.to_string_lossy().to_string())
+}
+
+/// Ensure a line exists in `<projectPath>/.gitignore` (creates the file if missing).
+#[tauri::command]
+pub async fn gitignore_ensure_line(project_path: String, line: String) -> Result<String, String> {
+    let root = PathBuf::from(project_path);
+    if !root.is_dir() {
+        return Err("projectPath is not a directory".to_string());
+    }
+    let needle = line.trim();
+    if needle.is_empty() {
+        return Err("line is empty".to_string());
+    }
+
+    let path = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let has = existing
+        .lines()
+        .map(|l| l.trim())
+        .any(|l| !l.is_empty() && l == needle);
+
+    if !has {
+        let mut out = existing;
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(needle);
+        out.push('\n');
+        std::fs::write(&path, out).map_err(|e| format!("write failed: {}", e))?;
+    }
+
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Opens a native folder picker dialog
 #[tauri::command]
 pub async fn pick_folder() -> Result<Option<String>, String> {

@@ -10,6 +10,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { HomeScreen } from './components/HomeScreen'
 import { PromptStageWizard } from './components/PromptStageWizard'
 import { ClarifyingPromptPanel } from './components/ClarifyingPromptPanel'
+import { SettingsView } from './components/SettingsView'
 import { useAppStore } from './lib/store'
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
     [sessions, activeSessionId],
   )
+  const isSettingsView = viewMode !== 'chat'
   const showHome =
     viewMode === 'chat' &&
     (!activeSession || activeSession.messages.length === 0) &&
@@ -85,9 +87,9 @@ export default function App() {
 
         {/* Main Content */}
         <main className="flex-1 overflow-hidden flex">
-          {viewMode === 'code' ? (
-            <div className="h-full w-full p-6">
-              <RightPanel />
+          {isSettingsView ? (
+            <div className="h-full w-full overflow-hidden">
+              <SettingsView />
             </div>
           ) : (
             <>

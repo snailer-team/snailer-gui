@@ -17,6 +17,8 @@ pub fn run() {
       commands::engine_start,
       commands::fs_list_tree,
       commands::fs_read_text,
+      commands::env_upsert_key,
+      commands::gitignore_ensure_line,
       commands::pick_folder,
       commands::auth_start_device_login,
       commands::auth_poll_device_token,

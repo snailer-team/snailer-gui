@@ -266,7 +266,9 @@ interface AppState {
   sessions: SessionView[]
   activeSessionId: string | null
 
-  viewMode: 'chat' | 'code'
+  // NOTE: `code` is kept for backward-compat with older persisted state.
+  // It is now treated the same as `settings`.
+  viewMode: 'chat' | 'settings' | 'code'
 
   currentRunId: string | null
   currentRunStatus: RunStatus
@@ -292,7 +294,7 @@ interface AppState {
   createSession: (name?: string) => Promise<string>
   deleteSession: (sessionId: string) => Promise<void>
   selectSession: (sessionId: string) => void
-  setViewMode: (mode: 'chat' | 'code') => void
+  setViewMode: (mode: 'chat' | 'settings') => void
   sendPrompt: (prompt: string) => Promise<void>
   cancelRun: () => Promise<void>
 

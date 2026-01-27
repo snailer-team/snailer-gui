@@ -25,6 +25,25 @@ export function IconCode({ className }: { className?: string }) {
   )
 }
 
+export function IconSettings({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none">
+      <path
+        d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+      />
+      <path
+        d="M19.4 15a7.9 7.9 0 0 0 .1-1l2-1.2-2-3.4-2.3.7a7.6 7.6 0 0 0-1.7-1L15 5h-6L8.5 8.1a7.6 7.6 0 0 0-1.7 1L4.5 8.4 2.5 11.8l2 1.2a7.9 7.9 0 0 0 0 2l-2 1.2 2 3.4 2.3-.7a7.6 7.6 0 0 0 1.7 1L9 19h6l.5-3.1a7.6 7.6 0 0 0 1.7-1l2.3.7 2-3.4-2-1.2Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export function IconFolder({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none">
@@ -192,4 +211,3 @@ export function IconEdit({ className }: { className?: string }) {
     </svg>
   )
 }
-
