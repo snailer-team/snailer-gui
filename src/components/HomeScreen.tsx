@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../lib/store'
 import { IconFolder, IconChevronDown, IconSend } from './icons'
@@ -79,22 +79,6 @@ function baseName(p: string) {
   return parts[parts.length - 1] || cleaned || 'Select folder'
 }
 
-function SuggestionCard({ title, tag, onClick }: { title: string; tag: string; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="group rounded-2xl border border-black/5 bg-white p-4 text-left transition-all hover:border-black/10 hover:shadow-md"
-    >
-      <div className="text-[15px] font-medium text-gray-800">{title}</div>
-      <div className="mt-2">
-        <span className="inline-block rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-500">
-          {tag}
-        </span>
-      </div>
-    </button>
-  )
-}
-
 export function HomeScreen() {
   const {
     daemon,
@@ -109,12 +93,13 @@ export function HomeScreen() {
     setDraftPrompt,
     sendPrompt,
     currentRunStatus,
-    appendToDraftPrompt,
     promptStageWizard,
   } = useAppStore()
 
   const [showPathInput, setShowPathInput] = useState(false)
+  const [showModelDropdown, setShowModelDropdown] = useState(false)
   const pathInputRef = useRef<HTMLInputElement>(null)
+  const modelDropdownRef = useRef<HTMLDivElement | null>(null)
 
   const busy =
     currentRunStatus === 'running' ||
@@ -123,6 +108,7 @@ export function HomeScreen() {
     Boolean(promptStageWizard)
   const folderLabel = useMemo(() => baseName(projectPath), [projectPath])
   const models = modelItems.length ? modelItems : [{ label: model, token: model, desc: '' }]
+  const selectedModelLabel = useMemo(() => models.find((m) => m.token === model)?.label || model, [models, model])
   const modeChoices = useMemo(
     () => [
       { label: 'Classic', token: 'classic' },
@@ -160,6 +146,24 @@ export function HomeScreen() {
       void setProjectPath(projectPathDraft.trim())
       setShowPathInput(false)
     }
+  }
+
+  useEffect(() => {
+    if (!showModelDropdown) return
+    const onDown = (e: MouseEvent) => {
+      const el = modelDropdownRef.current
+      if (!el) return
+      if (e.target instanceof Node && el.contains(e.target)) return
+      setShowModelDropdown(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
+  }, [showModelDropdown])
+
+  const handleModelSelect = async (token: string) => {
+    useAppStore.setState({ model: token })
+    await daemon?.settingsSet({ model: token })
+    setShowModelDropdown(false)
   }
 
   return (
@@ -200,40 +204,60 @@ export function HomeScreen() {
           </div>
 
           {/* Main Card */}
-          <div className="rounded-3xl border border-black/5 bg-white p-6 shadow-lg">
-            {/* Top Row - Folder & Environment */}
+          <div className="rounded-3xl border border-black/10 bg-white/75 p-6 shadow-soft backdrop-blur-sm">
+            {/* Top Row - Folder & Model */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <button
-                className="flex items-center gap-2 rounded-full border border-black/10 bg-gray-50 px-4 py-2 text-sm font-medium transition hover:bg-gray-100"
+                className="flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium transition hover:bg-white"
                 onClick={handleFolderClick}
                 title={projectPath || 'Select folder'}
               >
-                <IconFolder className="h-4 w-4 text-gray-500" />
-                <span className="max-w-[180px] truncate">{folderLabel}</span>
-                <IconChevronDown className="h-3 w-3 text-gray-400" />
+                <IconFolder className="h-4 w-4 text-black/60" />
+                <span className="max-w-[200px] truncate text-black/85">{folderLabel}</span>
+                <IconChevronDown className="h-3 w-3 text-black/40" />
               </button>
 
-              <div className="flex items-center gap-2 rounded-full border border-black/10 bg-gray-50 px-4 py-2 text-sm">
-                <span className="text-gray-500">Environment</span>
-                <span className="font-medium text-gray-800">Local</span>
-              </div>
-
-              <div className="ml-auto">
-                <select
-                  value={model}
-                  onChange={async (e) => {
-                    const next = e.target.value
-                    useAppStore.setState({ model: next })
-                    await daemon?.settingsSet({ model: next })
+              <div className="ml-auto relative" ref={modelDropdownRef}>
+                <button
+                  type="button"
+                  disabled={!daemon || busy}
+                  onClick={() => setShowModelDropdown((v) => !v)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setShowModelDropdown(false)
                   }}
-                  className="rounded-full border border-black/10 bg-gray-50 px-4 py-2 text-sm font-medium outline-none transition hover:bg-gray-100"
+                  className={[
+                    'inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium text-black/80 outline-none transition hover:bg-white focus:ring-2 focus:ring-black/10',
+                    !daemon || busy ? 'cursor-not-allowed opacity-60' : '',
+                  ].join(' ')}
+                  title="Model"
                 >
-                  {models.map((m) => (
-                    <option key={m.token} value={m.token}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
+                  <span className="max-w-[260px] truncate">{selectedModelLabel}</span>
+                  <IconChevronDown className="h-4 w-4 text-black/40" />
+                </button>
+
+                {showModelDropdown ? (
+                  <div className="absolute right-0 z-50 mt-2 w-[320px] overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                    <div className="max-h-[360px] overflow-auto py-1">
+                      {models.map((m) => {
+                        const active = m.token === model
+                        return (
+                          <button
+                            key={m.token}
+                            type="button"
+                            className={[
+                              'flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-black/80 transition',
+                              active ? 'bg-black/5 font-semibold' : 'hover:bg-black/5',
+                            ].join(' ')}
+                            onClick={() => void handleModelSelect(m.token)}
+                          >
+                            <span className="w-4 text-black/60">{active ? '✓' : ''}</span>
+                            <span className="min-w-0 flex-1 truncate">{m.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -250,7 +274,7 @@ export function HomeScreen() {
                   }
                 }}
                 placeholder="Find and fix TODOs in the codebase..."
-                className="min-h-[140px] w-full resize-none rounded-2xl border border-black/10 bg-gray-50 px-5 py-4 text-[15px] leading-relaxed outline-none transition placeholder:text-gray-400 focus:border-pastelBlue focus:bg-white focus:ring-2 focus:ring-pastelBlue/30"
+                className="min-h-[140px] w-full resize-none rounded-2xl border border-black/10 bg-white/70 px-5 py-4 text-[15px] leading-relaxed outline-none transition placeholder:text-black/30 focus:border-black/20 focus:bg-white focus:ring-2 focus:ring-black/10 disabled:bg-black/5"
               />
               <div className="absolute bottom-4 right-4">
                 <Button
@@ -258,10 +282,10 @@ export function HomeScreen() {
                   size="icon"
                   disabled={busy || !draftPrompt.trim()}
                   onClick={handleSubmit}
-                  className="h-10 w-10 rounded-xl bg-pastelBlue hover:bg-pastelBlue/80"
+                  className="h-10 w-10 rounded-xl bg-black text-white hover:bg-black/90"
                   title="Send (Enter)"
                 >
-                  <IconSend className="h-5 w-5 text-gray-700" />
+                  <IconSend className="h-5 w-5 text-white" />
                 </Button>
               </div>
             </div>
@@ -283,7 +307,7 @@ export function HomeScreen() {
                     }
                   }}
                   placeholder="/path/to/project"
-                  className="flex-1 rounded-xl border border-black/10 bg-gray-50 px-4 py-2.5 font-mono text-sm outline-none transition placeholder:text-gray-400 focus:border-pastelBlue focus:ring-2 focus:ring-pastelBlue/30"
+                  className="flex-1 rounded-xl border border-black/10 bg-white/70 px-4 py-2.5 font-mono text-sm outline-none transition placeholder:text-black/35 focus:border-black/20 focus:ring-2 focus:ring-black/10"
                 />
                 <Button
                   variant="default"
@@ -332,25 +356,6 @@ export function HomeScreen() {
                 'Disconnected'
               )}
             </div>
-          </div>
-
-          {/* Suggestions */}
-          <div className="mt-6 grid grid-cols-3 gap-3">
-            <SuggestionCard
-              title="Create/Update CLAUDE.md"
-              tag="CLAUDE.md"
-              onClick={() => appendToDraftPrompt('Create or update my CLAUDE.md file.\n')}
-            />
-            <SuggestionCard
-              title="Find and Fix TODOs"
-              tag="TODO"
-              onClick={() => appendToDraftPrompt('Search for a TODO comment and fix it.\n')}
-            />
-            <SuggestionCard
-              title="Improve Tests"
-              tag="tests"
-              onClick={() => appendToDraftPrompt('Recommend areas to improve our tests.\n')}
-            />
           </div>
         </div>
       </div>

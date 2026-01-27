@@ -82,6 +82,12 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Ensure native select menus match app typography (WebKit/Tauri) */
+.snailer-select,
+.snailer-select option {
+  font-family: var(--font-sans);
+}
+
 /* Claude-like dotted canvas */
 .snailer-canvas {
   background-color: #fbfaf7;
