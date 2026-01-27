@@ -680,7 +680,10 @@ export function SettingsView() {
 
               <div className="rounded-2xl border border-black/5 bg-white/60 p-4">
                 <div className="text-sm font-semibold text-black/80">/budget · /cost</div>
-                <div className="mt-1 text-xs text-black/50">Session totals (from live agent events)</div>
+                <div className="mt-1 text-xs text-black/50">
+                  Session totals are from the current GUI run. Monthly totals are shared across CLI/GUI via{' '}
+                  <span className="font-mono">~/.snailer/budget_state.json</span>.
+                </div>
                 <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3 text-sm">
                   <div className="flex items-center justify-between">
                     <div className="text-black/60">Input / Output</div>
@@ -703,7 +706,7 @@ export function SettingsView() {
                     <div>
                       <div className="text-sm font-semibold text-black/80">Monthly budget</div>
                       <div className="mt-1 text-xs text-black/50">
-                        Tune main-model monthly limit like CLI <span className="font-mono">/budget</span>
+                        Tune monthly limits like CLI <span className="font-mono">/budget</span>
                       </div>
                     </div>
                     <Button variant="ghost" size="sm" disabled={budgetLoading} onClick={() => void refreshBudget()}>
@@ -722,26 +725,58 @@ export function SettingsView() {
                           '—'
                         )}
                       </div>
-                      <div className="font-mono text-black/80">
-                        ${budgetStatus?.mainSpentUsd?.toFixed?.(2) ?? '—'} / ${budgetStatus?.mainLimitUsd?.toFixed?.(2) ?? '—'}
+                      <div className="font-mono text-black/70">
+                        Total ${budgetStatus ? (budgetStatus.mainSpentUsd + budgetStatus.minimaxSpentUsd).toFixed(2) : '—'} / $
+                        {budgetStatus ? (budgetStatus.mainLimitUsd + budgetStatus.minimaxLimitUsd).toFixed(2) : '—'}
                       </div>
                     </div>
 
-                    <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-black/5">
-                      <div
-                        className="h-full rounded-full bg-black/60"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(
-                              0,
-                              budgetStatus && budgetStatus.mainLimitUsd > 0
-                                ? (budgetStatus.mainSpentUsd / budgetStatus.mainLimitUsd) * 100
-                                : 0,
-                            ),
-                          )}%`,
-                        }}
-                      />
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="text-black/55">Main models</div>
+                        <div className="font-mono text-black/70">
+                          ${budgetStatus?.mainSpentUsd?.toFixed?.(2) ?? '—'} / ${budgetStatus?.mainLimitUsd?.toFixed?.(2) ?? '—'}
+                        </div>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-black/5">
+                        <div
+                          className="h-full rounded-full bg-black/60"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.max(
+                                0,
+                                budgetStatus && budgetStatus.mainLimitUsd > 0
+                                  ? (budgetStatus.mainSpentUsd / budgetStatus.mainLimitUsd) * 100
+                                  : 0,
+                              ),
+                            )}%`,
+                          }}
+                        />
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between text-xs">
+                        <div className="text-black/55">MiniMax / Kimi</div>
+                        <div className="font-mono text-black/70">
+                          ${budgetStatus?.minimaxSpentUsd?.toFixed?.(2) ?? '—'} / ${budgetStatus?.minimaxLimitUsd?.toFixed?.(2) ?? '—'}
+                        </div>
+                      </div>
+                      <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-black/5">
+                        <div
+                          className="h-full rounded-full bg-black/40"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.max(
+                                0,
+                                budgetStatus && budgetStatus.minimaxLimitUsd > 0
+                                  ? (budgetStatus.minimaxSpentUsd / budgetStatus.minimaxLimitUsd) * 100
+                                  : 0,
+                              ),
+                            )}%`,
+                          }}
+                        />
+                      </div>
                     </div>
 
                     <div className="mt-3 flex items-center gap-2">
