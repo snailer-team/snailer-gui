@@ -36,6 +36,99 @@ fn default_project_path() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
+fn home_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return PathBuf::from(home);
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn snailer_home_dir() -> PathBuf {
+    home_dir().join(".snailer")
+}
+
+fn gui_settings_path() -> PathBuf {
+    snailer_home_dir().join("gui_settings.json")
+}
+
+fn read_gui_settings_env_file() -> Option<String> {
+    let path = gui_settings_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return None;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return None;
+    };
+    v.get("snailerEnvFile")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn write_gui_settings_env_file(value: Option<&str>) -> Result<(), String> {
+    let path = gui_settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+    let mut obj = serde_json::Map::new();
+    if let Some(v) = value {
+        obj.insert("snailerEnvFile".to_string(), serde_json::Value::String(v.to_string()));
+    } else {
+        obj.insert("snailerEnvFile".to_string(), serde_json::Value::Null);
+    }
+    let text = serde_json::Value::Object(obj).to_string();
+    std::fs::write(&path, text).map_err(|e| format!("write failed: {}", e))?;
+    Ok(())
+}
+
+fn shared_env_path() -> Result<PathBuf, String> {
+    let dir = snailer_home_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {}", e))?;
+    Ok(dir.join(".env"))
+}
+
+fn ensure_shared_env_selected() -> Result<PathBuf, String> {
+    let p = shared_env_path()?;
+    if !p.exists() {
+        std::fs::write(&p, b"").map_err(|e| format!("write failed: {}", e))?;
+    }
+    std::env::set_var("SNAILER_ENV_FILE", &p);
+    write_gui_settings_env_file(Some(&p.to_string_lossy()))?;
+    Ok(p)
+}
+
+/// Return the default shared `.env` path used by the GUI: `~/.snailer/.env`.
+#[tauri::command]
+pub async fn env_global_path() -> Result<String, String> {
+    Ok(shared_env_path()?.to_string_lossy().to_string())
+}
+
+/// Get the currently configured `SNAILER_ENV_FILE` for this GUI (persisted under `~/.snailer/gui_settings.json`).
+#[tauri::command]
+pub async fn snailer_env_file_get() -> Result<Option<String>, String> {
+    Ok(read_gui_settings_env_file())
+}
+
+/// Set (or clear) the `SNAILER_ENV_FILE` used by Snailer when launched from this GUI.
+/// Also sets the process env var immediately so subsequent calls can observe it.
+#[tauri::command]
+pub async fn snailer_env_file_set(path: Option<String>) -> Result<Option<String>, String> {
+    match path.as_deref() {
+        Some(p) if !p.trim().is_empty() => {
+            std::env::set_var("SNAILER_ENV_FILE", p);
+            write_gui_settings_env_file(Some(p))?;
+            Ok(Some(p.to_string()))
+        }
+        _ => {
+            std::env::remove_var("SNAILER_ENV_FILE");
+            write_gui_settings_env_file(None)?;
+            Ok(None)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn engine_start() -> Result<EngineStartResponse, String> {
     let mut guard = engine_state()
@@ -49,6 +142,9 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
             default_project_path: default_project_path().to_string_lossy().to_string(),
         });
     }
+
+    // Shared-only: always use `~/.snailer/.env` so API keys are reusable across workspaces.
+    let _ = ensure_shared_env_selected();
 
     let port = find_free_port().map_err(|e| format!("failed to pick free port: {}", e))?;
     let token = uuid::Uuid::new_v4().to_string();
@@ -155,6 +251,225 @@ pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, Stri
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvFindResponse {
+    pub found: bool,
+    pub demonstrate_order: Vec<String>,
+    pub selected_path: Option<String>,
+    pub all_found_paths: Vec<String>,
+}
+
+fn find_env_in_ancestors(mut dir: PathBuf) -> Option<PathBuf> {
+    loop {
+        let p = dir.join(".env");
+        if p.is_file() {
+            return Some(p);
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            return None;
+        }
+    }
+}
+
+/// Locate which `.env` the CLI/daemon would *likely* load.
+/// Mirrors the ordering used by `snailer`:
+/// 1) `SNAILER_ENV_FILE` (if set)
+/// 2) `<projectPath>/.env`
+/// 3) `.env` in project path ancestors (so selecting a subfolder still finds the repo root `.env`)
+/// 4) `.env` in current working directory ancestors
+/// 5) `.env` in executable path ancestors
+#[tauri::command]
+pub async fn env_find(project_path: String) -> Result<EnvFindResponse, String> {
+    let mut demonstrate_order = Vec::new();
+    let mut all_found_paths: Vec<String> = Vec::new();
+
+    // 1) SNAILER_ENV_FILE
+    if let Ok(custom) = std::env::var("SNAILER_ENV_FILE") {
+        demonstrate_order.push(format!("SNAILER_ENV_FILE={}", custom));
+        let p = PathBuf::from(custom);
+        if p.is_file() {
+            let s = p.to_string_lossy().to_string();
+            all_found_paths.push(s.clone());
+            return Ok(EnvFindResponse {
+                found: true,
+                demonstrate_order,
+                selected_path: Some(s.clone()),
+                all_found_paths,
+            });
+        }
+    } else {
+        demonstrate_order.push("SNAILER_ENV_FILE=<unset>".to_string());
+    }
+
+    // 2) projectPath/.env
+    if !project_path.trim().is_empty() {
+        let root = PathBuf::from(project_path);
+        demonstrate_order.push(format!("projectPath/.env={}", root.join(".env").display()));
+        let p = root.join(".env");
+        if p.is_file() {
+            let s = p.to_string_lossy().to_string();
+            all_found_paths.push(s.clone());
+            return Ok(EnvFindResponse {
+                found: true,
+                demonstrate_order,
+                selected_path: Some(s.clone()),
+                all_found_paths,
+            });
+        }
+
+        // 3) projectPath ancestors (matches dotenv behavior when running in a subdir)
+        demonstrate_order.push(format!("projectPath ancestors from {}", root.display()));
+        if let Some(p) = find_env_in_ancestors(root) {
+            let s = p.to_string_lossy().to_string();
+            all_found_paths.push(s.clone());
+            return Ok(EnvFindResponse {
+                found: true,
+                demonstrate_order,
+                selected_path: Some(s.clone()),
+                all_found_paths,
+            });
+        }
+    }
+
+    // 4) current working directory ancestors
+    if let Ok(cwd) = std::env::current_dir() {
+        demonstrate_order.push(format!("cwd ancestors from {}", cwd.display()));
+        if let Some(p) = find_env_in_ancestors(cwd) {
+            let s = p.to_string_lossy().to_string();
+            all_found_paths.push(s.clone());
+            return Ok(EnvFindResponse {
+                found: true,
+                demonstrate_order,
+                selected_path: Some(s.clone()),
+                all_found_paths,
+            });
+        }
+    } else {
+        demonstrate_order.push("cwd=<unavailable>".to_string());
+    }
+
+    // 5) executable path ancestors
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            demonstrate_order.push(format!("exe ancestors from {}", dir.display()));
+            if let Some(p) = find_env_in_ancestors(dir.to_path_buf()) {
+                let s = p.to_string_lossy().to_string();
+                all_found_paths.push(s.clone());
+                return Ok(EnvFindResponse {
+                    found: true,
+                    demonstrate_order,
+                    selected_path: Some(s.clone()),
+                    all_found_paths,
+                });
+            }
+        } else {
+            demonstrate_order.push("exe parent=<unavailable>".to_string());
+        }
+    } else {
+        demonstrate_order.push("exe=<unavailable>".to_string());
+    }
+
+    Ok(EnvFindResponse {
+        found: false,
+        demonstrate_order,
+        selected_path: None,
+        all_found_paths,
+    })
+}
+
+/// Ensure `<projectPath>/.env` exists (creates an empty file if missing).
+#[tauri::command]
+pub async fn env_ensure_file(project_path: String) -> Result<String, String> {
+    let root = PathBuf::from(project_path);
+    if !root.is_dir() {
+        return Err("projectPath is not a directory".to_string());
+    }
+    let env_path = root.join(".env");
+    if env_path.exists() {
+        return Ok(env_path.to_string_lossy().to_string());
+    }
+    std::fs::write(&env_path, b"").map_err(|e| format!("write failed: {}", e))?;
+    Ok(env_path.to_string_lossy().to_string())
+}
+
+/// Ensure an `.env` file exists at an explicit path (creates an empty file if missing).
+#[tauri::command]
+pub async fn env_ensure_file_at_path(path: String) -> Result<String, String> {
+    let env_path = PathBuf::from(path);
+    let parent = env_path
+        .parent()
+        .ok_or_else(|| "env path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    if env_path.exists() {
+        return Ok(env_path.to_string_lossy().to_string());
+    }
+    std::fs::write(&env_path, b"").map_err(|e| format!("write failed: {}", e))?;
+    Ok(env_path.to_string_lossy().to_string())
+}
+
+// ============================================================================
+// Budget Commands (Starter plan tuning)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BudgetStatusResponse {
+    pub plan: String,
+    pub is_starter: bool,
+    pub env_main_override: Option<f32>,
+    pub main_limit_usd: f32,
+    pub main_spent_usd: f32,
+    pub minimax_limit_usd: f32,
+    pub minimax_spent_usd: f32,
+    pub month: u32,
+    pub year: i32,
+}
+
+#[tauri::command]
+pub async fn budget_get_status() -> Result<BudgetStatusResponse, String> {
+    use chrono::Datelike;
+    use snailer::analytics::budget_monitor::BudgetMonitor;
+
+    let plan = std::env::var("SNAILER_PLAN").unwrap_or_else(|_| "starter".to_string());
+    let is_starter = plan.to_lowercase() == "starter";
+    let env_main_override = std::env::var("SNAILER_BUDGET_MAIN")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok());
+
+    let monitor = BudgetMonitor::from_env();
+    let stats = monitor.stats();
+    let now = chrono::Utc::now();
+
+    Ok(BudgetStatusResponse {
+        plan,
+        is_starter,
+        env_main_override,
+        main_limit_usd: stats.main_limit,
+        main_spent_usd: stats.main_spent,
+        minimax_limit_usd: monitor.minimax_limit(),
+        minimax_spent_usd: monitor.minimax_spent(),
+        month: now.month(),
+        year: now.year(),
+    })
+}
+
+#[tauri::command]
+pub async fn budget_set_main_limit(main_limit_usd: f32) -> Result<BudgetStatusResponse, String> {
+    use snailer::analytics::budget_monitor::BudgetMonitor;
+
+    if !main_limit_usd.is_finite() || main_limit_usd < 0.0 {
+        return Err("mainLimitUsd must be a non-negative number".to_string());
+    }
+
+    BudgetMonitor::update_persisted_main_limit(main_limit_usd);
+
+    // Return refreshed snapshot
+    budget_get_status().await
+}
+
 fn format_env_value(value: &str) -> String {
     // Keep simple values unquoted; quote when whitespace or comment char could break parsing.
     let needs_quotes = value.chars().any(|c| c.is_whitespace() || c == '#');
@@ -179,6 +494,74 @@ pub async fn env_upsert_key(project_path: String, env_var: String, value: String
     let env_path = root.join(".env");
     let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
     let mut lines: Vec<String> = existing.split('\n').map(|s| s.trim_end_matches('\r').to_string()).collect();
+
+    let mut updated = false;
+    for line in lines.iter_mut() {
+        let raw = line.clone();
+        let trimmed_start = raw.trim_start();
+        if trimmed_start.starts_with('#') || trimmed_start.is_empty() {
+            continue;
+        }
+
+        let (export_prefix, rest) = if let Some(after) = trimmed_start.strip_prefix("export ") {
+            ("export ", after.trim_start())
+        } else {
+            ("", trimmed_start)
+        };
+
+        if let Some(after_key) = rest.strip_prefix(env_var.as_str()) {
+            let after_key = after_key.trim_start();
+            if after_key.starts_with('=') {
+                let indent_len = raw.len().saturating_sub(trimmed_start.len());
+                let indent = &raw[..indent_len];
+                *line = format!(
+                    "{}{}{}={}",
+                    indent,
+                    export_prefix,
+                    env_var.trim(),
+                    format_env_value(value.trim())
+                );
+                updated = true;
+                break;
+            }
+        }
+    }
+
+    if !updated {
+        if !lines.is_empty() && lines.last().is_some_and(|l| !l.is_empty()) {
+            lines.push(String::new());
+        }
+        lines.push(format!("{}={}", env_var.trim(), format_env_value(value.trim())));
+    }
+
+    let mut out = lines.join("\n");
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&env_path, out).map_err(|e| format!("write failed: {}", e))?;
+
+    Ok(env_path.to_string_lossy().to_string())
+}
+
+/// Upsert a single key into an explicit `.env` path (creates the file if missing).
+#[tauri::command]
+pub async fn env_upsert_key_at_path(path: String, env_var: String, value: String) -> Result<String, String> {
+    let env_path = PathBuf::from(path);
+    if env_var.trim().is_empty() {
+        return Err("envVar is empty".to_string());
+    }
+    let parent = env_path
+        .parent()
+        .ok_or_else(|| "env path has no parent directory".to_string())?;
+    if !parent.is_dir() {
+        return Err("env path parent is not a directory".to_string());
+    }
+
+    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
+    let mut lines: Vec<String> = existing
+        .split('\n')
+        .map(|s| s.trim_end_matches('\r').to_string())
+        .collect();
 
     let mut updated = false;
     for line in lines.iter_mut() {
@@ -485,6 +868,11 @@ pub async fn auth_logout() -> Result<(), String> {
     // Clear UserAuth
     let ua = snailer::user_auth::UserAuth::default();
     ua.save().map_err(|e| format!("Failed to clear auth: {}", e))?;
+
+    // Clear account config (matches CLI `/account` → Logout behavior)
+    if let Err(e) = snailer::account_config::clear_config() {
+        log::warn!("Failed to clear account config: {e:?}");
+    }
 
     // Clear device code state
     if let Ok(mut guard) = auth_state().lock() {
