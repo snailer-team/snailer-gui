@@ -42,11 +42,44 @@ fn home_dir() -> PathBuf {
             return PathBuf::from(home);
         }
     }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            if !home.trim().is_empty() {
+                return PathBuf::from(home);
+            }
+        }
+    }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn snailer_home_dir() -> PathBuf {
     home_dir().join(".snailer")
+}
+
+fn snailer_cli_prefix_dir() -> PathBuf {
+    snailer_home_dir().join("npm_cli")
+}
+
+fn snailer_cli_bin_path(prefix: &Path) -> PathBuf {
+    let base = prefix.join("node_modules").join(".bin");
+    #[cfg(target_os = "windows")]
+    {
+        return base.join("snailer.cmd");
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        return base.join("snailer");
+    }
+}
+
+fn snailer_cli_is_installed(prefix: &Path) -> bool {
+    let pkg = prefix
+        .join("node_modules")
+        .join("@felixaihub")
+        .join("snailer")
+        .join("package.json");
+    pkg.is_file() && snailer_cli_bin_path(prefix).is_file()
 }
 
 fn gui_settings_path() -> PathBuf {
@@ -127,6 +160,83 @@ pub async fn snailer_env_file_set(path: Option<String>) -> Result<Option<String>
             Ok(None)
         }
     }
+}
+
+/// Ensure the Snailer npm CLI (`@felixaihub/snailer`) is installed for this user.
+///
+/// Installs into `~/.snailer/npm_cli` (not global) and returns the resolved CLI binary path.
+#[tauri::command]
+pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        if let Ok(ok) = std::process::Command::new("snailer")
+            .arg("--version")
+            .output()
+        {
+            if ok.status.success() {
+                return Ok("snailer".to_string());
+            }
+        }
+
+        let prefix = snailer_cli_prefix_dir();
+        if snailer_cli_is_installed(&prefix) {
+            return Ok(snailer_cli_bin_path(&prefix).to_string_lossy().to_string());
+        }
+
+        std::fs::create_dir_all(&prefix).map_err(|e| format!("Failed to create install dir: {}", e))?;
+
+        let npm_check = std::process::Command::new("npm")
+            .arg("--version")
+            .output()
+            .map_err(|_| "npm not found. Please install Node.js (which includes npm) and try again.".to_string())?;
+        if !npm_check.status.success() {
+            return Err("npm is installed but not working. Please reinstall Node.js/npm and try again.".to_string());
+        }
+
+        let out = std::process::Command::new("npm")
+            .current_dir(&prefix)
+            .env("npm_config_update_notifier", "false")
+            .args([
+                "install",
+                "--no-fund",
+                "--no-audit",
+                "--silent",
+                "@felixaihub/snailer",
+            ])
+            .output()
+            .map_err(|e| format!("Failed to run npm install: {}", e))?;
+
+        if !out.status.success() {
+            let mut msg = String::new();
+            if !out.stdout.is_empty() {
+                msg.push_str(&String::from_utf8_lossy(&out.stdout));
+            }
+            if !out.stderr.is_empty() {
+                if !msg.is_empty() {
+                    msg.push('\n');
+                }
+                msg.push_str(&String::from_utf8_lossy(&out.stderr));
+            }
+            let trimmed = msg.trim();
+            let clipped = if trimmed.len() > 4000 {
+                format!("{}...", &trimmed[..4000])
+            } else {
+                trimmed.to_string()
+            };
+            return Err(if clipped.is_empty() {
+                "npm install failed (no output).".to_string()
+            } else {
+                format!("npm install failed:\n{}", clipped)
+            });
+        }
+
+        if !snailer_cli_is_installed(&prefix) {
+            return Err("npm install reported success, but Snailer CLI was not found after install.".to_string());
+        }
+
+        Ok(snailer_cli_bin_path(&prefix).to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("Install task failed: {}", e))?
 }
 
 #[tauri::command]

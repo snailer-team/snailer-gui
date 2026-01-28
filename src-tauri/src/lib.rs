@@ -27,6 +27,7 @@ pub fn run() {
       commands::env_global_path,
       commands::snailer_env_file_get,
       commands::snailer_env_file_set,
+      commands::snailer_cli_ensure_installed,
       commands::gitignore_ensure_line,
       commands::pick_folder,
       commands::auth_start_device_login,
