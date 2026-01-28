@@ -1,0 +1,145 @@
+name: Release (macOS DMG)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-dmg:
+    runs-on: macos-14
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm -s lint
+
+      - name: Test
+        run: pnpm -s test
+
+      - name: Build (web)
+        run: pnpm -s build
+
+      - name: Validate signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          need() { if [[ -z "${!1:-}" ]]; then echo "Missing secret: $1"; missing=1; fi }
+          need APPLE_CERTIFICATE
+          need APPLE_CERTIFICATE_PASSWORD
+          need APPLE_SIGNING_IDENTITY
+          need APPLE_TEAM_ID
+          need APPLE_ID
+          need APPLE_PASSWORD
+          if [[ "$missing" -ne 0 ]]; then
+            echo ""
+            echo "Set the above in GitHub repo secrets to enable code signing + notarization."
+            exit 1
+          fi
+
+      - name: Import Developer ID certificate (p12)
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          KEYCHAIN_PATH="$RUNNER_TEMP/snailer-signing.keychain-db"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -t 21600 -u "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+
+          # Allow codesign to access the key non-interactively.
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+      - name: Build Tauri (universal)
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Locate DMG
+        id: dmg
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="$(ls -1 src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)"
+          echo "dmg_path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "Found DMG: $DMG"
+
+      - name: Sign DMG
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.dmg_path }}"
+          /usr/bin/codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$DMG"
+          /usr/bin/codesign --verify --verbose "$DMG"
+
+      - name: Notarize + staple
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.dmg_path }}"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          spctl --assess --type open --context context:primary-signature -vv "$DMG"
+
+      - name: Checksums
+        id: sums
+        shell: bash
+        run: |
+          set -euo pipefail
+          DMG="${{ steps.dmg.outputs.dmg_path }}"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          echo "sha_path=$DMG.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.dmg.outputs.dmg_path }}
+            ${{ steps.sums.outputs.sha_path }}
+

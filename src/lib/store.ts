@@ -1188,10 +1188,19 @@ export const useAppStore = create<AppState>()(
 
           try {
             const slash = await client.slashList()
+            const modelItems = (() => {
+              const items = [...slash.modelItems]
+              if (!items.some((m) => m.token === 'kimi-k2.5')) {
+                const kimiIdx = items.findIndex((m) => m.token.startsWith('kimi-'))
+                const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
+                items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
+              }
+              return items
+            })()
             set({
               slashItems: slash.slashItems,
               modeItems: slash.modeItems,
-              modelItems: slash.modelItems,
+              modelItems,
             })
           } catch (e) {
             // Backward-compat: older daemon may not implement slash.list.
@@ -1206,6 +1215,7 @@ export const useAppStore = create<AppState>()(
                 ],
                 modelItems: [
                   { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
+                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
                   { label: 'gpt-5', token: 'gpt-5', desc: '' },
                 ],
               })

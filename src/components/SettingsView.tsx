@@ -551,7 +551,7 @@ export function SettingsView() {
                   </div>
                   <div className="text-xs text-black/45 mt-1">
                     No API key is needed for <span className="font-mono">minimax-m2</span> and{' '}
-                    <span className="font-mono">kimi-k2</span>.
+                    <span className="font-mono">kimi-k2</span>/<span className="font-mono">kimi-k2.5</span>.
                   </div>
                   <div className="text-xs text-black/45 mt-1">{keyPolicy.requirementHint}</div>
                 </div>

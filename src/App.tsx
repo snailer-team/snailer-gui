@@ -44,11 +44,15 @@ export default function App() {
 
   // Auto-connect on mount
   useEffect(() => {
+    const hasTauri =
+      typeof window !== 'undefined' &&
+      Boolean((window as unknown as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke)
+    if (!hasTauri) return
     if (connectionStatus === 'disconnected') {
       console.log('[App] Auto-connecting to daemon...')
       void connect()
     }
-  }, []) // Only run once on mount
+  }, [connect, connectionStatus])
 
   useEffect(() => {
     if (!lastToast) return
