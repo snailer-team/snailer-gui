@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../lib/store'
 import type { AgentEvent } from '../lib/store'
 
@@ -14,12 +14,12 @@ function DiffLine({ line, lineNum }: DiffLineProps) {
   return (
     <div className={[
       'flex font-mono text-xs leading-5',
-      isAdded ? 'bg-green-900/30 text-green-400' : '',
-      isRemoved ? 'bg-red-900/30 text-red-400' : '',
-      !isAdded && !isRemoved ? 'text-gray-400' : '',
+      isAdded ? 'bg-emerald-50 text-emerald-900' : '',
+      isRemoved ? 'bg-rose-50 text-rose-900' : '',
+      !isAdded && !isRemoved ? 'text-black/70' : '',
     ].join(' ')}>
-      <span className="w-10 shrink-0 pr-2 text-right text-gray-500 select-none">{lineNum}</span>
-      <span className="w-4 shrink-0 text-center select-none">
+      <span className="w-10 shrink-0 pr-2 text-right text-black/35 select-none">{lineNum}</span>
+      <span className="w-4 shrink-0 text-center select-none text-black/40">
         {isAdded ? '+' : isRemoved ? '-' : ' '}
       </span>
       <span className="flex-1 whitespace-pre-wrap break-all">{line.slice(1) || line}</span>
@@ -39,8 +39,8 @@ function CollapsibleDiff({ patch, maxLines = 15 }: CollapsibleDiffProps) {
   const hiddenCount = lines.length - maxLines
 
   return (
-    <div className="rounded-lg bg-gray-900 overflow-hidden my-2">
-      <div className="max-h-[300px] overflow-auto p-2">
+    <div className="my-2 overflow-hidden rounded-xl border border-black/10 bg-transparent">
+      <div className="max-h-[300px] overflow-auto bg-transparent p-2">
         {visibleLines.map((line, i) => (
           <DiffLine key={i} line={line} lineNum={i + 1} />
         ))}
@@ -48,7 +48,7 @@ function CollapsibleDiff({ patch, maxLines = 15 }: CollapsibleDiffProps) {
       {!expanded && hiddenCount > 0 && (
         <button
           onClick={() => setExpanded(true)}
-          className="w-full py-2 text-center text-xs text-gray-400 hover:text-gray-300 bg-gray-800/50 transition-colors"
+          className="w-full bg-transparent py-2 text-center text-xs text-black/60 transition-colors hover:text-black/75"
         >
           Show full diff ({hiddenCount} more lines)
         </button>
@@ -75,12 +75,12 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
 
     // Bullet color
     const bulletColor = isBash
-      ? 'bg-amber-500'
+      ? 'bg-amber-500/80'
       : isEdit || isCreate
-        ? 'bg-green-500'
+        ? 'bg-emerald-500/80'
         : isSearch
-          ? 'bg-blue-500'
-          : 'bg-gray-400'
+          ? 'bg-sky-500/80'
+          : 'bg-black/35'
 
     // Label
     const label = isBash ? 'Bash' : isEdit ? 'Edit' : isCreate ? 'Create' : isSearch ? 'Search' : 'Read'
@@ -106,31 +106,33 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${bulletColor}`} />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-gray-200">{label}</span>
+            <span className="text-sm font-semibold text-black/80">{label}</span>
             {fileName && (
-              <code className="text-sm font-mono text-amber-400">{fileName}</code>
+              <code className="rounded-md bg-black/5 px-1.5 py-0.5 text-sm font-mono text-black/70">
+                {fileName}
+              </code>
             )}
             {resultText && !isBash && (
-              <span className="text-xs text-gray-500">{resultText}</span>
+              <span className="text-xs text-black/45">{resultText}</span>
             )}
           </div>
           {/* Bash command and output */}
           {isBash && note && (
-            <div className="mt-1 font-mono text-sm text-gray-300">
-              <div className="text-amber-400">{note}</div>
+            <div className="mt-1 font-mono text-sm text-black/70">
+              <div className="text-amber-700">{note}</div>
             </div>
           )}
           {/* Show output for bash if available */}
           {isBash && preview && preview.length > 0 && (
-            <div className="mt-1 pl-3 border-l border-gray-700 font-mono text-xs text-gray-400">
+            <div className="mt-1 border-l border-black/10 pl-3 font-mono text-xs text-black/60">
               {preview.slice(0, 5).map((line, i) => (
                 <div key={i} className="flex">
-                  <span className="text-gray-600 mr-2">└</span>
+                  <span className="mr-2 text-black/35">└</span>
                   <span>{line}</span>
                 </div>
               ))}
               {preview.length > 5 && (
-                <div className="text-gray-600">... +{preview.length - 5} lines</div>
+                <div className="text-black/40">... +{preview.length - 5} lines</div>
               )}
             </div>
           )}
@@ -146,7 +148,7 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
   // Start/Done/Fail events
   if (type === 'Start' || type === 'Done' || type === 'Fail') {
     const bulletColor = type === 'Done' ? 'bg-green-500' : type === 'Fail' ? 'bg-red-500' : 'bg-blue-500'
-    const textColor = type === 'Done' ? 'text-green-400' : type === 'Fail' ? 'text-red-400' : 'text-blue-400'
+    const textColor = type === 'Done' ? 'text-emerald-700' : type === 'Fail' ? 'text-rose-700' : 'text-sky-700'
 
     return (
       <div className="flex items-start gap-2 py-2">
@@ -156,7 +158,7 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
             {type === 'Done' ? 'Done!' : type === 'Fail' ? 'Failed' : phase || 'Starting'}
           </span>
           {message && (
-            <span className="text-sm text-gray-300 ml-1">{message}</span>
+            <span className="ml-1 text-sm text-black/65">{message}</span>
           )}
         </div>
       </div>
@@ -166,14 +168,21 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
   // StatusLine - thinking indicator
   if (type === 'StatusLine' && line) {
     return (
-      <div className="flex items-center gap-2 py-1 text-sm text-gray-400 italic">
-        <span className="text-gray-500">Thought for</span>
-        <span className="text-gray-300">{line}</span>
+      <div className="flex items-center gap-2 py-1 text-sm text-black/55 italic">
+        <span className="text-black/45">Thought for</span>
+        <span className="text-black/65">{line}</span>
       </div>
     )
   }
 
   return null
+}
+
+function isRenderableAgentEvent(event: AgentEvent): boolean {
+  if (event.type === 'FileOp') return Boolean(event.op)
+  if (event.type === 'Start' || event.type === 'Done' || event.type === 'Fail') return true
+  if (event.type === 'StatusLine') return Boolean(event.line)
+  return false
 }
 
 export function AgentLogView({ runId }: { runId?: string } = {}) {
@@ -182,14 +191,18 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
   const currentRunStatus = useAppStore((s) => s.currentRunStatus)
   const currentRunId = useAppStore((s) => s.currentRunId)
   const modifiedFilesByPath = useAppStore((s) => s.modifiedFilesByPath)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const bottomRef = useRef<HTMLDivElement | null>(null)
+  const stickToBottomRef = useRef(true)
 
   // Get agentEvents from the active session
   const session = sessions.find((s) => s.id === activeSessionId)
   const agentEvents = (session?.agentEvents ?? []).filter((e) => (runId ? e.runId === runId : true))
+  const visibleEvents = useMemo(() => agentEvents.filter(isRenderableAgentEvent), [agentEvents])
 
   // Process events into display items with diff patches
   const displayItems = useMemo(() => {
-    return agentEvents.map((event) => {
+    return visibleEvents.map((event) => {
       // For FileOp events with a path, try to get the diff from modifiedFilesByPath
       let diffPatch: string | undefined
       if (event.type === 'FileOp' && event.path) {
@@ -204,28 +217,46 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
         diffPatch,
       }
     })
-  }, [agentEvents, modifiedFilesByPath])
-
-  if (displayItems.length === 0) return null
+  }, [visibleEvents, modifiedFilesByPath])
+  const hasItems = displayItems.length > 0
 
   const isRunning =
     (currentRunStatus === 'running' || currentRunStatus === 'queued') && (!runId || runId === currentRunId)
 
+  useEffect(() => {
+    if (!stickToBottomRef.current) return
+    bottomRef.current?.scrollIntoView({ block: 'end' })
+  }, [displayItems.length, isRunning])
+
+  const onScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickToBottomRef.current = distance < 80
+  }
+
+  if (!hasItems) return null
+
   return (
-    <div className="rounded-xl bg-gray-900/95 text-gray-100 overflow-hidden shadow-lg">
+    <div className="rounded-2xl border border-black/10 bg-transparent text-black/80">
       {/* Content */}
-      <div className="px-4 py-3 max-h-[500px] overflow-auto space-y-0.5">
+      <div
+        ref={scrollRef}
+        onScroll={onScroll}
+        className="max-h-[420px] overflow-auto px-4 py-3 space-y-0.5"
+      >
         {displayItems.map(({ id, event, diffPatch }) => (
           <AgentLogItem key={id} event={event} diffPatch={diffPatch} />
         ))}
 
         {/* Working indicator */}
         {isRunning && (
-          <div className="flex items-center gap-2 py-2 text-sm text-gray-400">
-            <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-            <span>Working...</span>
+          <div className="flex items-center gap-2 py-2 text-sm text-black/55">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500/80" />
+            <span>Working…</span>
           </div>
         )}
+        <div ref={bottomRef} />
       </div>
     </div>
   )

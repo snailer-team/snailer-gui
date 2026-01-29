@@ -25,7 +25,13 @@ export function ChatArea() {
   const runIdsWithEvents = useMemo(() => {
     const out = new Set<string>()
     for (const e of session?.agentEvents ?? []) {
-      if (e.runId) out.add(e.runId)
+      const renderable =
+        (e.type === 'FileOp' && Boolean(e.op)) ||
+        e.type === 'Start' ||
+        e.type === 'Done' ||
+        e.type === 'Fail' ||
+        (e.type === 'StatusLine' && Boolean(e.line))
+      if (renderable && e.runId) out.add(e.runId)
     }
     return out
   }, [session?.agentEvents])
