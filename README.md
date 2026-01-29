@@ -17,7 +17,7 @@ Snailer GUI is a **macOS desktop app** (Tauri v2 + React) for running Snailer se
 ## Architecture (high level)
 - **Frontend**: React + Zustand + Tailwind (`src/`)
 - **Desktop shell**: Tauri v2 (`src-tauri/`)
-- **Local engine**: Snailer daemon (Rust) is started by the Tauri sidecar and communicates over `ws://127.0.0.1:<port>`
+- **Local engine**: Tauri launches the **npm-installed** Snailer CLI daemon (`snailer daemon …`) and communicates over `ws://127.0.0.1:<port>`
 
 ## Install (macOS)
 Download the latest **DMG** from GitHub Releases and drag **Snailer.app** into **Applications**.
@@ -70,15 +70,13 @@ Notes:
 
 ## Security & privacy
 ### Does the app ship server URLs / API info?
-Yes — like most desktop clients, the repository and the compiled app include **default service endpoints** used for login / key provisioning / upgrade links. Examples include:
-- Default auth/gRPC address: `https://snailer.ai:443` (override via `SNAILER_AUTH_ADDR` / `SNAILER_GRPC_ADDR`)
-- Some storage/service defaults (e.g., Supabase URL) exist in the Rust core; environment overrides are available in parts of the stack.
+Yes — like most desktop clients, the repository and the compiled app include some **service URLs** (e.g. upgrade links). In addition, the app can **download Node.js** (when needed) and run `npm install` to install the Snailer engine locally.
 
 What it does **not** ship:
 - Your `.env` keys (they live on your machine under `~/.snailer/.env`)
-- Your account token (stored locally; never committed)
+- Your account token / refresh token (stored in OS keychain; never committed)
 
-If you intend to run against self-hosted services, look for the environment overrides in the Rust core and Tauri commands and wire them in your deployment.
+If you intend to run against self-hosted services, configure the auth server address via `SNAILER_AUTH_ADDR` or `~/.snailer/gui_settings.json` (`authAddr`).
 
 ### Reporting security issues
 Email: `team@snailer.ai`
