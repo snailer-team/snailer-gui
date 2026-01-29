@@ -132,6 +132,44 @@ export function InputBar() {
   const modeDropdownRef = useRef<HTMLDivElement>(null)
   const modelDropdownRef = useRef<HTMLDivElement>(null)
 
+  const extractDroppedFiles = (dt: DataTransfer | null): File[] => {
+    if (!dt) return []
+    const out: File[] = []
+    const seen = new Set<string>()
+
+    // Prefer DataTransferItemList when available (some WebViews don't populate dt.files reliably)
+    const items = Array.from(dt.items ?? [])
+    for (const it of items) {
+      if (it.kind !== 'file') continue
+      const f = it.getAsFile()
+      if (!f) continue
+      const key = `${f.name}:${f.size}:${f.lastModified}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(f)
+    }
+
+    // Fallback to dt.files
+    const files = Array.from(dt.files ?? [])
+    for (const f of files) {
+      const key = `${f.name}:${f.size}:${f.lastModified}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(f)
+    }
+
+    return out
+  }
+
+  const hasDroppedFiles = (dt: DataTransfer | null): boolean => {
+    if (!dt) return false
+    if ((dt.files?.length ?? 0) > 0) return true
+    if (Array.from(dt.items ?? []).some((x) => x.kind === 'file')) return true
+    // Some platforms only expose types
+    if (Array.from(dt.types ?? []).some((t) => t.toLowerCase() === 'files')) return true
+    return false
+  }
+
   const busy =
     currentRunStatus === 'running' ||
     currentRunStatus === 'queued' ||
@@ -245,9 +283,11 @@ export function InputBar() {
       const path = await invoke<string>(
         'attachment_save_image',
         {
-          name: file.name || 'image',
-          mime: file.type || 'image/*',
-          dataBase64,
+          req: {
+            name: file.name || 'image',
+            mime: file.type || 'image/*',
+            dataBase64,
+          },
         } as unknown as Record<string, unknown>,
       )
 
@@ -294,8 +334,8 @@ export function InputBar() {
     removeAttachedImage(id)
   }
 
-  const onDropFiles = (files: FileList) => {
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+  const onDropFiles = (files: File[]) => {
+    const list = files.filter((f) => f.type.startsWith('image/'))
     if (list.length === 0) return
     const remaining = 10 - attachedImages.length
     if (remaining <= 0) {
@@ -331,11 +371,11 @@ export function InputBar() {
       <div className="mx-auto w-full max-w-4xl">
         {/* Attached images preview */}
         {attachedImages.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {attachedImages.map((img) => (
               <div
                 key={img.id}
-                className="group relative flex items-center gap-2 rounded-xl border border-black/10 bg-white/60 px-2 py-2 text-sm shadow-sm"
+                className="group relative flex shrink-0 items-center gap-2 rounded-xl border border-black/10 bg-white/60 px-2 py-2 text-sm shadow-sm"
               >
                 {img.previewUrl ? (
                   <img
@@ -373,7 +413,10 @@ export function InputBar() {
           ].join(' ')}
           onDragEnter={(e) => {
             if (busy) return
-            if (e.dataTransfer?.types?.includes('Files')) setDragActive(true)
+            if (hasDroppedFiles(e.dataTransfer)) {
+              e.preventDefault()
+              setDragActive(true)
+            }
           }}
           onDragLeave={(e) => {
             if (e.currentTarget.contains(e.relatedTarget as Node)) return
@@ -381,21 +424,18 @@ export function InputBar() {
           }}
           onDragOver={(e) => {
             if (busy) return
-            if (e.dataTransfer?.types?.includes('Files')) {
-              e.preventDefault()
-              e.dataTransfer.dropEffect = 'copy'
-              setDragActive(true)
-            }
+            if (!hasDroppedFiles(e.dataTransfer)) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+            setDragActive(true)
           }}
           onDrop={(e) => {
             if (busy) return
-            const files = e.dataTransfer.files
-            if (files && files.length > 0) {
-              e.preventDefault()
-              setDragActive(false)
-              onDropFiles(files)
-              return
-            }
+            if (!hasDroppedFiles(e.dataTransfer)) return
+            e.preventDefault()
+            e.stopPropagation()
+            setDragActive(false)
+            onDropFiles(extractDroppedFiles(e.dataTransfer))
             setDragActive(false)
           }}
         >
@@ -421,7 +461,15 @@ export function InputBar() {
                 }
               }}
               onDrop={(e) => {
-                // Handle dropped text (file drop is handled by the card container)
+                // Handle dropped files (images) and dropped text
+                if (hasDroppedFiles(e.dataTransfer)) {
+                  if (busy) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setDragActive(false)
+                  onDropFiles(extractDroppedFiles(e.dataTransfer))
+                  return
+                }
                 const text = e.dataTransfer.getData('text/plain')
                 if (!text) return
                 e.preventDefault()

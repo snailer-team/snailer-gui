@@ -39,6 +39,15 @@ type BudgetStatus = {
   year: number
 }
 
+type SnailerCliStatus = {
+  installed: boolean
+  cliPath?: string | null
+  npmAvailable: boolean
+  usingBundledNode: boolean
+  bundledNodePath?: string | null
+  prefixDir: string
+}
+
 type Provider = {
   id: string
   label: string
@@ -159,6 +168,10 @@ export function SettingsView() {
   const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
   const [budgetLoading, setBudgetLoading] = useState(false)
   const [budgetDraftUsd, setBudgetDraftUsd] = useState<string>('')
+
+  const [cliStatus, setCliStatus] = useState<SnailerCliStatus | null>(null)
+  const [cliLoading, setCliLoading] = useState(false)
+  const [cliInstalling, setCliInstalling] = useState(false)
 
   const [envStatus, setEnvStatus] = useState<EnvStatus>({ exists: false, path: null, keysPresent: new Set() })
   const [envLoading, setEnvLoading] = useState(false)
@@ -346,6 +359,32 @@ export function SettingsView() {
     }
   }
 
+  const refreshCliStatus = async () => {
+    setCliLoading(true)
+    try {
+      const res = await invoke<SnailerCliStatus>('snailer_cli_status')
+      setCliStatus(res)
+    } catch (e) {
+      setCliStatus(null)
+      toast('Failed to check Snailer CLI', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setCliLoading(false)
+    }
+  }
+
+  const installCli = async () => {
+    setCliInstalling(true)
+    try {
+      await invoke<string>('snailer_cli_ensure_installed')
+      toast('Snailer CLI installed')
+      await refreshCliStatus()
+    } catch (e) {
+      toast('Failed to install Snailer CLI', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setCliInstalling(false)
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       const auth = await authService.refresh()
@@ -356,6 +395,7 @@ export function SettingsView() {
       await refreshEnvFileConfig()
       await refreshEnv()
       await refreshBudget()
+      await refreshCliStatus()
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [daemon, projectPath])
@@ -545,6 +585,59 @@ export function SettingsView() {
               ) : null}
             </div>
 
+            {/* Snailer CLI */}
+            <div className="rounded-2xl border border-black/5 bg-white/60 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-black/80">Snailer CLI</div>
+                  <div className="text-xs text-black/50 mt-1">Required to run the engine (installed per-user under ~/.snailer)</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" disabled={cliLoading || cliInstalling} onClick={() => void refreshCliStatus()}>
+                    {cliLoading ? 'Checking…' : 'Refresh'}
+                  </Button>
+                  <Button size="sm" disabled={cliInstalling} onClick={() => void installCli()}>
+                    {cliInstalling ? 'Installing…' : cliStatus?.installed ? 'Repair' : 'Install'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-black/60">Status</div>
+                  <div className={cliStatus?.installed ? 'text-green-700 font-medium' : 'text-black/50'}>
+                    {cliStatus ? (cliStatus.installed ? 'installed' : 'not installed') : '—'}
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="text-black/60">CLI path</div>
+                  <div className="font-mono text-black/80 truncate max-w-[60%]">{cliStatus?.cliPath || '—'}</div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="text-black/60">Install dir</div>
+                  <div className="font-mono text-black/70 truncate max-w-[60%]">{cliStatus?.prefixDir || '—'}</div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="text-black/60">npm available</div>
+                  <div className={cliStatus?.npmAvailable ? 'text-black/80' : 'text-black/50'}>
+                    {cliStatus ? (cliStatus.npmAvailable ? 'yes' : 'no') : '—'}
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center justify-between">
+                  <div className="text-black/60">Bundled Node</div>
+                  <div className="font-mono text-black/70 truncate max-w-[60%]">
+                    {cliStatus?.bundledNodePath ? (cliStatus.usingBundledNode ? `active · ${cliStatus.bundledNodePath}` : cliStatus.bundledNodePath) : '—'}
+                  </div>
+                </div>
+              </div>
+
+              {cliStatus && !cliStatus.npmAvailable ? (
+                <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  npm is not available yet. Click Install to auto-download Node.js and install the CLI.
+                </div>
+              ) : null}
+            </div>
+
             {/* /start-with-api-key */}
             <div className="rounded-2xl border border-black/5 bg-white/60 p-4">
               <div className="flex items-center justify-between">
@@ -682,16 +775,12 @@ export function SettingsView() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-black/5 bg-white/60 p-4">
-                <div className="text-sm font-semibold text-black/80">/budget · /cost</div>
-                <div className="mt-1 text-xs text-black/50">
-                  Session totals are from the current GUI run. Monthly totals are shared across CLI/GUI via{' '}
-                  <span className="font-mono">~/.snailer/budget_state.json</span>.
-                </div>
-                <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <div className="text-black/60">Input / Output</div>
-                    <div className="font-mono text-black/80">
+	              <div className="rounded-2xl border border-black/5 bg-white/60 p-4">
+	                <div className="text-sm font-semibold text-black/80">/budget · /cost</div>
+	                <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3 text-sm">
+	                  <div className="flex items-center justify-between">
+	                    <div className="text-black/60">Input / Output</div>
+	                    <div className="font-mono text-black/80">
                       {contextBudget.inputTokens.toLocaleString()} / {contextBudget.outputTokens.toLocaleString()}
                     </div>
                   </div>
@@ -718,22 +807,18 @@ export function SettingsView() {
                     </Button>
                   </div>
 
-                  <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="text-black/60">
-                        {budgetStatus ? (
-                          <>
-                            {budgetStatus.year}-{String(budgetStatus.month).padStart(2, '0')}
-                          </>
-                        ) : (
-                          '—'
-                        )}
-                      </div>
-                      <div className="font-mono text-black/70">
-                        Total ${budgetStatus ? (budgetStatus.mainSpentUsd + budgetStatus.minimaxSpentUsd).toFixed(2) : '—'} / $
-                        {budgetStatus ? (budgetStatus.mainLimitUsd + budgetStatus.minimaxLimitUsd).toFixed(2) : '—'}
-                      </div>
-                    </div>
+	                  <div className="mt-3 rounded-xl border border-black/5 bg-white/70 p-3">
+	                    <div className="flex items-center justify-between text-sm">
+	                      <div className="text-black/60">
+	                        {budgetStatus ? (
+	                          <>
+	                            {budgetStatus.year}-{String(budgetStatus.month).padStart(2, '0')}
+	                          </>
+	                        ) : (
+	                          '—'
+	                        )}
+	                      </div>
+	                    </div>
 
                     <div className="mt-3">
                       <div className="flex items-center justify-between text-xs">
@@ -759,12 +844,12 @@ export function SettingsView() {
                         />
                       </div>
 
-                      <div className="mt-3 flex items-center justify-between text-xs">
-                        <div className="text-black/55">MiniMax / Kimi</div>
-                        <div className="font-mono text-black/70">
-                          ${budgetStatus?.minimaxSpentUsd?.toFixed?.(2) ?? '—'} / ${budgetStatus?.minimaxLimitUsd?.toFixed?.(2) ?? '—'}
-                        </div>
-                      </div>
+	                      <div className="mt-3 flex items-center justify-between text-xs">
+	                        <div className="text-black/55">MiniMax / Kimi</div>
+	                        <div className="font-mono text-black/70">
+	                          ${budgetStatus?.minimaxSpentUsd?.toFixed?.(2) ?? '—'} / limited budget
+	                        </div>
+	                      </div>
                       <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-black/5">
                         <div
                           className="h-full rounded-full bg-black/40"

@@ -5,8 +5,6 @@ import { persist } from 'zustand/middleware'
 import type { PromptStage, UiEventEnvelope } from './daemon'
 import { DaemonClient } from './daemon'
 
-let snailerCliEnsurePromise: Promise<void> | null = null
-
 export type ChatRole = 'user' | 'assistant' | 'system'
 
 export interface ChatMessage {
@@ -444,30 +442,25 @@ export const useAppStore = create<AppState>()(
       connect: async () => {
         if (get().connectionStatus === 'connected') return
         set({ connectionStatus: 'starting', error: null })
-
-        if (!snailerCliEnsurePromise) {
-          snailerCliEnsurePromise = (async () => {
-            try {
-              await invoke<string>('snailer_cli_ensure_installed')
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e)
-              const clipped = msg.length > 500 ? `${msg.slice(0, 500)}…` : msg
-              set({
-                lastToast: {
-                  title: 'Snailer CLI 설치 실패',
-                  message: clipped,
-                },
-              })
-              snailerCliEnsurePromise = null
-            }
-          })()
-        }
-        void snailerCliEnsurePromise
-
-        const started = (await invoke('engine_start')) as {
-          url: string
-          token: string
-          default_project_path: string
+        let started: { url: string; token: string; default_project_path: string }
+        try {
+          started = (await invoke('engine_start')) as {
+            url: string
+            token: string
+            default_project_path: string
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          const clipped = msg.length > 800 ? `${msg.slice(0, 800)}…` : msg
+          set({
+            connectionStatus: 'error',
+            error: msg,
+            lastToast: {
+              title: 'Snailer 실행 실패',
+              message: clipped,
+            },
+          })
+          return
         }
 
         const persistedProject = get().projectPath?.trim()

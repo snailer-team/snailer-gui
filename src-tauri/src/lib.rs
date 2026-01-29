@@ -1,4 +1,5 @@
 mod commands;
+mod auth_pb;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +13,11 @@ pub fn run() {
         )?;
       }
       Ok(())
+    })
+    .on_window_event(|_window, event| {
+      if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+        commands::engine_kill();
+      }
     })
     .invoke_handler(tauri::generate_handler![
       commands::engine_start,
@@ -28,6 +34,7 @@ pub fn run() {
       commands::snailer_env_file_get,
       commands::snailer_env_file_set,
       commands::snailer_cli_ensure_installed,
+      commands::snailer_cli_status,
       commands::auth_addr_get,
       commands::auth_addr_set,
       commands::auth_addr_resolve,

@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package sample.v1;
+
+service DeviceAuthService {
+  rpc CreateDeviceCode(CreateDeviceCodeRequest) returns (CreateDeviceCodeResponse);
+  rpc PollDeviceToken(PollDeviceTokenRequest) returns (PollDeviceTokenResponse);
+  rpc AuthorizeDeviceCode(AuthorizeDeviceCodeRequest) returns (AuthorizeDeviceCodeResponse);
+}
+
+message CreateDeviceCodeRequest {
+  string client_id = 1;
+  string scope = 2;
+  string idempotency_key = 3;
+  string user_agent = 4;
+}
+
+message CreateDeviceCodeResponse {
+  string device_code = 1;
+  string user_code = 2;
+  string verification_uri = 3;
+  string verification_uri_complete = 4;
+  int32 expires_in = 5;
+  int32 interval = 6;
+}
+
+message PollDeviceTokenRequest {
+  string device_code = 1;
+  string client_id = 2;
+}
+
+message PollDeviceTokenResponse {
+  string access_token = 1;
+  string token_type = 2;
+  int32 expires_in = 3;
+  string refresh_token = 4;
+  string account_id = 5;
+  string email = 6;
+  string name = 7;
+}
+
+message AuthorizeDeviceCodeRequest {
+  string device_code = 1;
+  string user_id = 2;
+  string email = 3;
+  string name = 4;
+  string scope = 5;
+}
+
+message AuthorizeDeviceCodeResponse {
+  int64 authorized_at_unix_ms = 1;
+}
+

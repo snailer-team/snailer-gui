@@ -11,10 +11,11 @@ pub struct EngineStartResponse {
     pub default_project_path: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct EngineState {
     url: String,
     token: String,
+    child: Option<std::process::Child>,
 }
 
 fn engine_state() -> &'static Mutex<Option<EngineState>> {
@@ -27,13 +28,20 @@ fn find_free_port() -> std::io::Result<u16> {
     Ok(listener.local_addr()?.port())
 }
 
-fn default_project_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidate = manifest_dir.join("../../snailer");
-    if candidate.is_dir() {
-        return candidate;
+fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let addr = format!("127.0.0.1:{port}");
+    while start.elapsed() < timeout {
+        if std::net::TcpStream::connect(&addr).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+    Err(format!("Timed out waiting for Snailer daemon to listen on {addr}"))
+}
+
+fn default_project_path() -> PathBuf {
+    home_dir()
 }
 
 fn home_dir() -> PathBuf {
@@ -65,6 +73,162 @@ fn snailer_cli_prefix_dir() -> PathBuf {
     snailer_home_dir().join("npm_cli")
 }
 
+fn snailer_node_root_dir() -> PathBuf {
+    snailer_home_dir().join("node")
+}
+
+fn snailer_node_current_dir() -> PathBuf {
+    snailer_node_root_dir().join("current")
+}
+
+fn snailer_node_current_bin_dir() -> PathBuf {
+    snailer_node_current_dir().join("bin")
+}
+
+fn prepend_path(dir: &Path) -> String {
+    let dir = dir.to_string_lossy();
+    let old = std::env::var("PATH").unwrap_or_default();
+    if old.is_empty() {
+        dir.to_string()
+    } else {
+        format!("{}:{}", dir, old)
+    }
+}
+
+fn node_platform_string() -> Result<&'static str, String> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    match (os, arch) {
+        ("macos", "aarch64") => Ok("darwin-arm64"),
+        ("macos", "x86_64") => Ok("darwin-x64"),
+        ("linux", "x86_64") => Ok("linux-x64"),
+        ("linux", "aarch64") => Ok("linux-arm64"),
+        ("windows", "x86_64") => Ok("win-x64"),
+        ("windows", "aarch64") => Ok("win-arm64"),
+        _ => Err(format!("Unsupported platform for auto Node install: {os}/{arch}")),
+    }
+}
+
+fn detect_latest_lts_node_version() -> Option<String> {
+    // Best-effort: fetch Node.js dist index and pick first LTS entry.
+    // Falls back to a pinned version if this fails.
+    let resp = ureq::get("https://nodejs.org/dist/index.json").call().ok()?;
+    let mut body = String::new();
+    resp.into_reader().read_to_string(&mut body).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let arr = v.as_array()?;
+    for item in arr {
+        let lts = item.get("lts")?;
+        if lts.is_boolean() && !lts.as_bool().unwrap_or(false) {
+            continue;
+        }
+        // Node uses `false` for non-LTS, otherwise string/bool.
+        if lts.is_null() {
+            continue;
+        }
+        if lts.is_boolean() && lts.as_bool().unwrap_or(false) == false {
+            continue;
+        }
+        let ver = item.get("version")?.as_str()?.trim().to_string();
+        if ver.starts_with('v') {
+            return Some(ver);
+        }
+    }
+    None
+}
+
+fn install_node_if_needed() -> Result<PathBuf, String> {
+    let bin = snailer_node_current_bin_dir();
+    let npm = if cfg!(target_os = "windows") {
+        bin.join("npm.cmd")
+    } else {
+        bin.join("npm")
+    };
+    let node = if cfg!(target_os = "windows") {
+        bin.join("node.exe")
+    } else {
+        bin.join("node")
+    };
+    if npm.is_file() && node.is_file() {
+        return Ok(bin);
+    }
+
+    let version = detect_latest_lts_node_version().unwrap_or_else(|| "v20.11.1".to_string());
+    let platform = node_platform_string()?;
+
+    let root = snailer_node_root_dir();
+    std::fs::create_dir_all(&root).map_err(|e| format!("mkdir failed: {}", e))?;
+    let cache_dir = root.join("cache");
+    std::fs::create_dir_all(&cache_dir).map_err(|e| format!("mkdir failed: {}", e))?;
+
+    let file_name = format!("node-{}-{}.tar.gz", version, platform);
+    let url = format!("https://nodejs.org/dist/{}/{}", version, file_name);
+    let archive_path = cache_dir.join(&file_name);
+
+    // Download
+    let resp = ureq::get(&url)
+        .call()
+        .map_err(|e| format!("Failed to download Node.js: {e}"))?;
+    let mut reader = resp.into_reader();
+    let mut out = std::fs::File::create(&archive_path).map_err(|e| format!("write failed: {e}"))?;
+    std::io::copy(&mut reader, &mut out).map_err(|e| format!("download write failed: {e}"))?;
+
+    // Extract to a temp dir, then move into `current`
+    let tmp = root.join(format!("tmp-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("mkdir failed: {}", e))?;
+    let status = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive_path)
+        .arg("-C")
+        .arg(&tmp)
+        .status()
+        .map_err(|e| format!("Failed to run tar: {e}"))?;
+    if !status.success() {
+        return Err("Failed to extract Node.js archive (tar)".to_string());
+    }
+
+    let extracted = tmp.join(format!("node-{}-{}", version, platform));
+    if !extracted.is_dir() {
+        return Err("Node.js archive extracted but expected directory was not found.".to_string());
+    }
+
+    let current = snailer_node_current_dir();
+    if current.exists() {
+        let _ = std::fs::remove_dir_all(&current);
+    }
+    std::fs::rename(&extracted, &current).map_err(|e| format!("install failed: {}", e))?;
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    let bin = snailer_node_current_bin_dir();
+    let npm = if cfg!(target_os = "windows") {
+        bin.join("npm.cmd")
+    } else {
+        bin.join("npm")
+    };
+    if !npm.is_file() {
+        return Err("Node.js installed but npm was not found.".to_string());
+    }
+    Ok(bin)
+}
+
+fn resolve_npm_command() -> Result<(String, Option<PathBuf>), String> {
+    // First try system npm.
+    if let Ok(out) = std::process::Command::new("npm").arg("--version").output() {
+        if out.status.success() {
+            return Ok(("npm".to_string(), None));
+        }
+    }
+
+    // Fallback: install bundled Node/npm under ~/.snailer/node/current
+    let bin = install_node_if_needed()?;
+    let npm_path = if cfg!(target_os = "windows") {
+        bin.join("npm.cmd")
+    } else {
+        bin.join("npm")
+    };
+    Ok((npm_path.to_string_lossy().to_string(), Some(bin)))
+}
+
 fn snailer_cli_bin_path(prefix: &Path) -> PathBuf {
     let base = prefix.join("node_modules").join(".bin");
     #[cfg(target_os = "windows")]
@@ -80,7 +244,7 @@ fn snailer_cli_bin_path(prefix: &Path) -> PathBuf {
 fn snailer_cli_is_installed(prefix: &Path) -> bool {
     let pkg = prefix
         .join("node_modules")
-        .join("@felixaihub")
+        .join("@snailer-team")
         .join("snailer")
         .join("package.json");
     pkg.is_file() && snailer_cli_bin_path(prefix).is_file()
@@ -392,12 +556,14 @@ pub async fn attachment_save_image(req: AttachmentSaveRequest) -> Result<String,
     .map_err(|e| format!("save task failed: {}", e))?
 }
 
-/// Ensure the Snailer npm CLI (`@felixaihub/snailer`) is installed for this user.
+/// Ensure the Snailer npm CLI (`@snailer-team/snailer`) is installed for this user.
 ///
 /// Installs into `~/.snailer/npm_cli` (not global) and returns the resolved CLI binary path.
 #[tauri::command]
 pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
+        let (npm_cmd, maybe_node_bin) = resolve_npm_command()?;
+
         if let Ok(ok) = std::process::Command::new("snailer")
             .arg("--version")
             .output()
@@ -414,15 +580,23 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
 
         std::fs::create_dir_all(&prefix).map_err(|e| format!("Failed to create install dir: {}", e))?;
 
-        let npm_check = std::process::Command::new("npm")
+        let mut npm_check = std::process::Command::new(&npm_cmd);
+        if let Some(bin) = maybe_node_bin.as_ref() {
+            npm_check.env("PATH", prepend_path(bin));
+        }
+        let npm_check = npm_check
             .arg("--version")
             .output()
-            .map_err(|_| "npm not found. Please install Node.js (which includes npm) and try again.".to_string())?;
+            .map_err(|_| "npm not found and auto-install failed. Please install Node.js (which includes npm) and try again.".to_string())?;
         if !npm_check.status.success() {
             return Err("npm is installed but not working. Please reinstall Node.js/npm and try again.".to_string());
         }
 
-        let out = std::process::Command::new("npm")
+        let mut out_cmd = std::process::Command::new(&npm_cmd);
+        if let Some(bin) = maybe_node_bin.as_ref() {
+            out_cmd.env("PATH", prepend_path(bin));
+        }
+        let out = out_cmd
             .current_dir(&prefix)
             .env("npm_config_update_notifier", "false")
             .args([
@@ -430,7 +604,7 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
                 "--no-fund",
                 "--no-audit",
                 "--silent",
-                "@felixaihub/snailer",
+                "@snailer-team/snailer",
             ])
             .output()
             .map_err(|e| format!("Failed to run npm install: {}", e))?;
@@ -469,58 +643,205 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
     .map_err(|e| format!("Install task failed: {}", e))?
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SnailerCliStatus {
+    pub installed: bool,
+    pub cli_path: Option<String>,
+    pub npm_available: bool,
+    pub using_bundled_node: bool,
+    pub bundled_node_path: Option<String>,
+    pub prefix_dir: String,
+}
+
+#[tauri::command]
+pub async fn snailer_cli_status() -> Result<SnailerCliStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        // npm availability (system or already-bundled). This must not trigger auto-install.
+        let system_npm_ok = std::process::Command::new("npm")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let bundled_bin = snailer_node_current_bin_dir();
+        let bundled_npm = if cfg!(target_os = "windows") {
+            bundled_bin.join("npm.cmd")
+        } else {
+            bundled_bin.join("npm")
+        };
+        let bundled_ok = if bundled_npm.is_file() {
+            let mut cmd = std::process::Command::new(&bundled_npm);
+            cmd.env("PATH", prepend_path(&bundled_bin));
+            cmd.arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let npm_available = system_npm_ok || bundled_ok;
+        let using_bundled_node = !system_npm_ok && bundled_ok;
+
+        let prefix = snailer_cli_prefix_dir();
+        let prefix_dir = prefix.to_string_lossy().to_string();
+
+        // Installed CLI resolution order: global `snailer` then local prefix.
+        if let Ok(ok) = std::process::Command::new("snailer")
+            .arg("--version")
+            .output()
+        {
+            if ok.status.success() {
+                return Ok(SnailerCliStatus {
+                    installed: true,
+                    cli_path: Some("snailer".to_string()),
+                    npm_available,
+                    using_bundled_node,
+                    bundled_node_path: if bundled_ok {
+                        Some(bundled_bin.to_string_lossy().to_string())
+                    } else {
+                        None
+                    },
+                    prefix_dir,
+                });
+            }
+        }
+
+        if snailer_cli_is_installed(&prefix) {
+            return Ok(SnailerCliStatus {
+                installed: true,
+                cli_path: Some(snailer_cli_bin_path(&prefix).to_string_lossy().to_string()),
+                npm_available,
+                using_bundled_node,
+                bundled_node_path: if bundled_ok {
+                    Some(bundled_bin.to_string_lossy().to_string())
+                } else {
+                    None
+                },
+                prefix_dir,
+            });
+        }
+
+        Ok(SnailerCliStatus {
+            installed: false,
+            cli_path: None,
+            npm_available,
+            using_bundled_node,
+            bundled_node_path: if bundled_ok {
+                Some(bundled_bin.to_string_lossy().to_string())
+            } else {
+                None
+            },
+            prefix_dir,
+        })
+    })
+    .await
+    .map_err(|e| format!("Status task failed: {}", e))?
+}
+
 #[tauri::command]
 pub async fn engine_start() -> Result<EngineStartResponse, String> {
-    let mut guard = engine_state()
-        .lock()
-        .map_err(|_| "engine state lock poisoned".to_string())?;
+    {
+        let mut guard = engine_state()
+            .lock()
+            .map_err(|_| "engine state lock poisoned".to_string())?;
 
-    if let Some(ref st) = *guard {
-        return Ok(EngineStartResponse {
-            url: st.url.clone(),
-            token: st.token.clone(),
-            default_project_path: default_project_path().to_string_lossy().to_string(),
-        });
+        if let Some(ref mut st) = *guard {
+            if let Some(ref mut child) = st.child {
+                // If the daemon process died, restart.
+                if child.try_wait().ok().flatten().is_some() {
+                    *guard = None;
+                } else {
+                    return Ok(EngineStartResponse {
+                        url: st.url.clone(),
+                        token: st.token.clone(),
+                        default_project_path: default_project_path().to_string_lossy().to_string(),
+                    });
+                }
+            } else {
+                return Ok(EngineStartResponse {
+                    url: st.url.clone(),
+                    token: st.token.clone(),
+                    default_project_path: default_project_path().to_string_lossy().to_string(),
+                });
+            }
+        }
     }
 
     // Shared-only: always use `~/.snailer/.env` so API keys are reusable across workspaces.
-    let _ = ensure_shared_env_selected();
+    let shared_env = ensure_shared_env_selected().ok();
 
     let port = find_free_port().map_err(|e| format!("failed to pick free port: {}", e))?;
     let token = uuid::Uuid::new_v4().to_string();
     let url = format!("ws://127.0.0.1:{port}");
 
-    let token_for_task = token.clone();
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                log::error!("Failed to build daemon runtime: {e:?}");
-                return;
-            }
-        };
+    // Launch external Snailer daemon via the npm-installed CLI.
+    let cli_bin = snailer_cli_ensure_installed().await?;
+    let token_for_daemon = token.clone();
+    let env_file = read_gui_settings_env_file()
+        .map(PathBuf::from)
+        .or(shared_env)
+        .or_else(|| shared_env_path().ok());
+    let env_file = env_file.map(|p| p.to_string_lossy().to_string());
 
-        rt.block_on(async move {
-            let daemon = snailer::daemon::SnailerDaemon::new(port, token_for_task);
-            if let Err(e) = daemon.run().await {
-                log::error!("Snailer daemon crashed: {e:?}");
-            }
+    let child = tauri::async_runtime::spawn_blocking(move || -> Result<std::process::Child, String> {
+        let mut cmd = std::process::Command::new(&cli_bin);
+        cmd.arg("daemon")
+            .arg("--port")
+            .arg(port.to_string())
+            .arg("--token")
+            .arg(token_for_daemon);
+
+        if let Some(p) = env_file.as_deref() {
+            cmd.env("SNAILER_ENV_FILE", p);
+        }
+
+        // If we installed Node/npm under ~/.snailer/node/current, ensure it's on PATH
+        // so `#!/usr/bin/env node` shims work.
+        let node_bin = snailer_node_current_bin_dir();
+        if node_bin.is_dir() {
+            cmd.env("PATH", prepend_path(&node_bin));
+        }
+
+        // Avoid inherited interactive prompts from npm.
+        cmd.env("CI", "true");
+
+        let child = cmd.spawn().map_err(|e| format!("Failed to spawn Snailer daemon: {e}"))?;
+        wait_for_port(port, Duration::from_secs(8))?;
+        Ok(child)
+    })
+    .await
+    .map_err(|e| format!("daemon spawn task failed: {}", e))??;
+
+    {
+        let mut guard = engine_state()
+            .lock()
+            .map_err(|_| "engine state lock poisoned".to_string())?;
+        *guard = Some(EngineState {
+            url: url.clone(),
+            token: token.clone(),
+            child: Some(child),
         });
-    });
-
-    *guard = Some(EngineState {
-        url: url.clone(),
-        token: token.clone(),
-    });
+    }
 
     Ok(EngineStartResponse {
         url,
         token,
         default_project_path: default_project_path().to_string_lossy().to_string(),
     })
+}
+
+pub fn engine_kill() {
+    let Ok(mut guard) = engine_state().lock() else {
+        return;
+    };
+    if let Some(mut st) = guard.take() {
+        if let Some(mut child) = st.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -754,6 +1075,91 @@ pub async fn env_ensure_file_at_path(path: String) -> Result<String, String> {
 // Budget Commands (Starter plan tuning)
 // ============================================================================
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BudgetState {
+    month: u32,
+    year: i32,
+    spent_minimax: f32,
+    spent_main: f32,
+    monthly_limit_minimax: f32,
+    monthly_limit_main: f32,
+}
+
+fn budget_state_path() -> Result<PathBuf, String> {
+    let dir = snailer_home_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {}", e))?;
+    Ok(dir.join("budget_state.json"))
+}
+
+fn default_main_limit_for_plan(plan: &str) -> f32 {
+    match plan.to_lowercase().as_str() {
+        "starter" => 15.0_f32,
+        "max" => 30.0_f32,
+        "heavy" => 60.0_f32,
+        "super rich" | "superrich" => 700.0_f32,
+        _ => 15.0_f32,
+    }
+}
+
+fn read_budget_state(
+    plan: &str,
+    env_main_override: Option<f32>,
+    env_minimax_override: Option<f32>,
+) -> BudgetState {
+    use chrono::Datelike;
+
+    let now = chrono::Utc::now();
+    let limit_minimax = env_minimax_override.unwrap_or(13.0_f32).min(13.0_f32);
+    let default_main = default_main_limit_for_plan(plan);
+    let limit_main = env_main_override.unwrap_or(default_main).max(0.0);
+
+    let fresh = || BudgetState {
+        month: now.month(),
+        year: now.year(),
+        spent_minimax: 0.0,
+        spent_main: 0.0,
+        monthly_limit_minimax: limit_minimax,
+        monthly_limit_main: limit_main,
+    };
+
+    let path = match budget_state_path() {
+        Ok(p) => p,
+        Err(_) => return fresh(),
+    };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return fresh();
+    };
+    let Ok(mut state) = serde_json::from_str::<BudgetState>(&contents) else {
+        return fresh();
+    };
+
+    // Month rollover: reset spend for the new month/year.
+    if state.month != now.month() || state.year != now.year() {
+        state = fresh();
+    }
+
+    // Env overrides take precedence over persisted limits.
+    state.monthly_limit_minimax = limit_minimax;
+    state.monthly_limit_main = limit_main;
+    state
+}
+
+fn write_budget_state(state: &BudgetState) -> Result<(), String> {
+    let path = budget_state_path()?;
+    let text = serde_json::to_string(state).map_err(|e| format!("serialize failed: {}", e))?;
+    std::fs::write(&path, text).map_err(|e| format!("write failed: {}", e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(&path) {
+            let mut perms = metadata.permissions();
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(&path, perms);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BudgetStatusResponse {
@@ -771,26 +1177,27 @@ pub struct BudgetStatusResponse {
 #[tauri::command]
 pub async fn budget_get_status() -> Result<BudgetStatusResponse, String> {
     use chrono::Datelike;
-    use snailer::analytics::budget_monitor::BudgetMonitor;
 
     let plan = std::env::var("SNAILER_PLAN").unwrap_or_else(|_| "starter".to_string());
     let is_starter = plan.to_lowercase() == "starter";
     let env_main_override = std::env::var("SNAILER_BUDGET_MAIN")
         .ok()
         .and_then(|v| v.parse::<f32>().ok());
+    let env_minimax_override = std::env::var("SNAILER_BUDGET_MINIMAX")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok());
 
-    let monitor = BudgetMonitor::from_env();
-    let stats = monitor.stats();
+    let state = read_budget_state(&plan, env_main_override, env_minimax_override);
     let now = chrono::Utc::now();
 
     Ok(BudgetStatusResponse {
         plan,
         is_starter,
         env_main_override,
-        main_limit_usd: stats.main_limit,
-        main_spent_usd: stats.main_spent,
-        minimax_limit_usd: monitor.minimax_limit(),
-        minimax_spent_usd: monitor.minimax_spent(),
+        main_limit_usd: state.monthly_limit_main,
+        main_spent_usd: state.spent_main,
+        minimax_limit_usd: state.monthly_limit_minimax,
+        minimax_spent_usd: state.spent_minimax,
         month: now.month(),
         year: now.year(),
     })
@@ -798,13 +1205,21 @@ pub async fn budget_get_status() -> Result<BudgetStatusResponse, String> {
 
 #[tauri::command]
 pub async fn budget_set_main_limit(main_limit_usd: f32) -> Result<BudgetStatusResponse, String> {
-    use snailer::analytics::budget_monitor::BudgetMonitor;
-
     if !main_limit_usd.is_finite() || main_limit_usd < 0.0 {
         return Err("mainLimitUsd must be a non-negative number".to_string());
     }
 
-    BudgetMonitor::update_persisted_main_limit(main_limit_usd);
+    let plan = std::env::var("SNAILER_PLAN").unwrap_or_else(|_| "starter".to_string());
+    let env_main_override = std::env::var("SNAILER_BUDGET_MAIN")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok());
+    let env_minimax_override = std::env::var("SNAILER_BUDGET_MINIMAX")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok());
+
+    let mut state = read_budget_state(&plan, env_main_override, env_minimax_override);
+    state.monthly_limit_main = main_limit_usd.max(0.0);
+    write_budget_state(&state)?;
 
     // Return refreshed snapshot
     budget_get_status().await
@@ -1042,7 +1457,7 @@ fn get_auth_addr() -> Result<String, String> {
 /// Start device login flow - returns device code info for user to complete auth in browser
 #[tauri::command]
 pub async fn auth_start_device_login() -> Result<DeviceCodeResponse, String> {
-    use snailer::auth::pb;
+    use crate::auth_pb as pb;
 
     let auth_addr = get_auth_addr()?;
 
@@ -1109,7 +1524,7 @@ pub async fn auth_start_device_login() -> Result<DeviceCodeResponse, String> {
 /// Poll for device token after user completes browser auth
 #[tauri::command]
 pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse, String> {
-    use snailer::auth::pb;
+    use crate::auth_pb as pb;
 
     let auth_addr = get_auth_addr()?;
 
@@ -1143,28 +1558,6 @@ pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse
                 expires_at: Some(expires_at),
             })
             .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
-
-            // Save tokens using snailer's UserAuth
-            if let Ok(mut ua) = snailer::user_auth::UserAuth::load() {
-                ua.access_token = Some(t.access_token.clone());
-                ua.refresh_token = Some(t.refresh_token.clone());
-                ua.account_id = Some(t.account_id.clone());
-                ua.email = Some(t.email.clone());
-                ua.name = Some(t.name.clone());
-                ua.expires_at = Some(
-                    (chrono::Utc::now() + chrono::Duration::seconds(t.expires_in as i64))
-                        .timestamp(),
-                );
-                let _ = ua.save();
-            }
-
-            // Also write to account config
-            let _ = snailer::account_config::write_config(
-                &t.account_id,
-                &t.email,
-                &t.access_token,
-                "cloud",
-            );
 
             // Clear stored device code
             if let Ok(mut guard) = auth_state().lock() {
@@ -1214,13 +1607,6 @@ pub async fn auth_set_api_key(api_key: String) -> Result<(), String> {
     })
     .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
 
-    // Save API key to snailer config
-    let mut ua = snailer::user_auth::UserAuth::load().unwrap_or_default();
-    ua.access_token = Some(api_key.clone());
-    ua.email = Some("API Key User".to_string());
-    ua.name = Some("API Key".to_string());
-    ua.save().map_err(|e| format!("Failed to save API key: {}", e))?;
-
     Ok(())
 }
 
@@ -1228,15 +1614,6 @@ pub async fn auth_set_api_key(api_key: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn auth_logout() -> Result<(), String> {
     let _ = auth_keychain_clear();
-
-    // Clear UserAuth
-    let ua = snailer::user_auth::UserAuth::default();
-    ua.save().map_err(|e| format!("Failed to clear auth: {}", e))?;
-
-    // Clear account config (matches CLI `/account` → Logout behavior)
-    if let Err(e) = snailer::account_config::clear_config() {
-        log::warn!("Failed to clear account config: {e:?}");
-    }
 
     // Clear device code state
     if let Ok(mut guard) = auth_state().lock() {
@@ -1276,46 +1653,7 @@ pub async fn auth_check() -> Result<Option<TokenResponse>, String> {
         }));
     }
 
-    match snailer::user_auth::UserAuth::load() {
-        Ok(ua) => {
-            if let Some(ref token) = ua.access_token {
-                // Check expiration
-                if let Some(expires_at) = ua.expires_at {
-                    let now = chrono::Utc::now().timestamp();
-                    if now > expires_at {
-                        return Ok(None); // Expired
-                    }
-                }
-
-                let now = chrono::Utc::now().timestamp();
-                let expires_at = ua.expires_at;
-                let expires_in = expires_at.map(|e| (e - now).max(0) as i32).unwrap_or(0);
-                let resp = TokenResponse {
-                    access_token: token.clone(),
-                    refresh_token: ua.refresh_token.clone().unwrap_or_default(),
-                    account_id: ua.account_id.clone().unwrap_or_default(),
-                    email: ua.email.clone().unwrap_or_default(),
-                    name: ua.name.clone().unwrap_or_default(),
-                    expires_in,
-                };
-
-                // Best-effort migration to keychain.
-                let _ = auth_keychain_set(&StoredAuth {
-                    access_token: resp.access_token.clone(),
-                    refresh_token: resp.refresh_token.clone(),
-                    account_id: resp.account_id.clone(),
-                    email: resp.email.clone(),
-                    name: resp.name.clone(),
-                    expires_at,
-                });
-
-                Ok(Some(resp))
-            } else {
-                Ok(None)
-            }
-        }
-        Err(_) => Ok(None),
-    }
+    Ok(None)
 }
 
 async fn build_auth_channel(
