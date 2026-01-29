@@ -39,7 +39,9 @@ jobs:
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Cargo check (tauri)
         working-directory: src-tauri
         run: cargo check
-

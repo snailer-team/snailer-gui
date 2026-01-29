@@ -34,6 +34,9 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
 
+      - name: Setup protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
