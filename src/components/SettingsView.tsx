@@ -348,6 +348,10 @@ export function SettingsView() {
 
   useEffect(() => {
     void (async () => {
+      const auth = await authService.refresh()
+      setIsLoggedIn(authService.isLoggedIn())
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
       await refreshAccount()
       await refreshEnvFileConfig()
       await refreshEnv()
@@ -879,7 +883,7 @@ export function SettingsView() {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => window.open('https://snailer.ai/account', '_blank')}
+                  onClick={() => window.open('https://snailer.ai/account', '_blank', 'noopener,noreferrer')}
                 >
                   Open
                 </Button>

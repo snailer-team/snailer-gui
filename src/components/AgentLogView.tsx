@@ -176,15 +176,16 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
   return null
 }
 
-export function AgentLogView() {
+export function AgentLogView({ runId }: { runId?: string } = {}) {
   const sessions = useAppStore((s) => s.sessions)
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const currentRunStatus = useAppStore((s) => s.currentRunStatus)
+  const currentRunId = useAppStore((s) => s.currentRunId)
   const modifiedFilesByPath = useAppStore((s) => s.modifiedFilesByPath)
 
   // Get agentEvents from the active session
   const session = sessions.find((s) => s.id === activeSessionId)
-  const agentEvents = session?.agentEvents ?? []
+  const agentEvents = (session?.agentEvents ?? []).filter((e) => (runId ? e.runId === runId : true))
 
   // Process events into display items with diff patches
   const displayItems = useMemo(() => {
@@ -207,7 +208,8 @@ export function AgentLogView() {
 
   if (displayItems.length === 0) return null
 
-  const isRunning = currentRunStatus === 'running' || currentRunStatus === 'queued'
+  const isRunning =
+    (currentRunStatus === 'running' || currentRunStatus === 'queued') && (!runId || runId === currentRunId)
 
   return (
     <div className="rounded-xl bg-gray-900/95 text-gray-100 overflow-hidden shadow-lg">

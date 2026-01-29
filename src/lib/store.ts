@@ -354,6 +354,10 @@ function updateStreamingMessage(
   })
 }
 
+function updateMessage(existing: SessionView[], sessionId: string, messageId: string, patch: Partial<ChatMessage>): SessionView[] {
+  return updateStreamingMessage(existing, sessionId, messageId, patch)
+}
+
 function appendAgentEvent(existing: SessionView[], sessionId: string, event: AgentEvent): SessionView[] {
   return existing.map((s) =>
     s.id === sessionId ? { ...s, agentEvents: [...s.agentEvents, event], updatedAt: now() } : s,
@@ -542,11 +546,12 @@ export const useAppStore = create<AppState>()(
             const activeSessionId = state.activeSessionId
             if (!activeSessionId) return
 
+            const explicitRunId = String(p.runId ?? '').trim()
             const agentEvent: AgentEvent = {
               id: crypto.randomUUID(),
               type: eventType as AgentEventType,
               timestamp: Date.now(),
-              runId: state.currentRunId ?? undefined,
+              runId: explicitRunId || state.currentRunId || undefined,
               phase: p.phase as string | undefined,
               message: p.message as string | undefined,
               line: p.line as string | undefined,
@@ -1421,13 +1426,13 @@ export const useAppStore = create<AppState>()(
           promptForAgent = `LLM detail:\n${lines.join('\n')}\n\n${trimmed}`
         }
 
-        const userMsg: ChatMessage = {
-          id: crypto.randomUUID(),
-          role: 'user',
-          content: trimmed,
-          createdAt: now(),
-        }
-        set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
+          const userMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: trimmed,
+            createdAt: now(),
+          }
+          set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
 
         const imagePaths = get().attachedImages
         set({
@@ -1492,6 +1497,7 @@ export const useAppStore = create<AppState>()(
             imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
           })
           set({ currentRunId: res.runId, currentRunStatus: 'running' })
+          set((st) => ({ sessions: updateMessage(st.sessions, sessionId, userMsg.id, { runId: res.runId }) }))
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'run.start failed'
           set({ currentRunStatus: 'failed', error: msg })
@@ -1580,7 +1586,7 @@ export const useAppStore = create<AppState>()(
         })),
         activeSessionId: state.activeSessionId,
       }),
-      version: 3,
+      version: 4,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>
         // Migration from version 2 to 3: add agentEvents to sessions
@@ -1589,6 +1595,31 @@ export const useAppStore = create<AppState>()(
             ...s,
             agentEvents: s.agentEvents ?? [],
           }))
+        }
+        // Migration from version 3 to 4: backfill `runId` on user messages based on subsequent run-tagged messages.
+        if (version < 4 && state.sessions && Array.isArray(state.sessions)) {
+          state.sessions = (state.sessions as Array<Record<string, unknown>>).map((s) => {
+            const raw = (s.messages as Array<Record<string, unknown>>) ?? []
+            const messages = Array.isArray(raw) ? raw.map((m) => ({ ...m })) : []
+            let lastUserIdx: number | null = null
+            for (let i = 0; i < messages.length; i++) {
+              const m = messages[i]
+              const role = String(m?.role ?? '')
+              const runId = String(m?.runId ?? '').trim()
+              if (role === 'user') {
+                lastUserIdx = i
+                continue
+              }
+              if (runId && lastUserIdx !== null) {
+                const um = messages[lastUserIdx]
+                const hasUserRunId = Boolean(String(um?.runId ?? '').trim())
+                if (!hasUserRunId) {
+                  messages[lastUserIdx] = { ...um, runId }
+                }
+              }
+            }
+            return { ...s, messages }
+          })
         }
         return state
       },

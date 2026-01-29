@@ -11,6 +11,7 @@ export function ChatArea() {
     sessions,
     activeSessionId,
     currentRunStatus,
+    currentRunId,
     daemon,
     mode,
     model,
@@ -21,8 +22,13 @@ export function ChatArea() {
     [sessions, activeSessionId],
   )
 
-  // Get agentEvents from the active session
-  const agentEvents = session?.agentEvents ?? []
+  const runIdsWithEvents = useMemo(() => {
+    const out = new Set<string>()
+    for (const e of session?.agentEvents ?? []) {
+      if (e.runId) out.add(e.runId)
+    }
+    return out
+  }, [session?.agentEvents])
 
   // Track if we should animate title (only for new sessions/prompts)
   const [animatingTitle, setAnimatingTitle] = useState<string | null>(null)
@@ -49,7 +55,6 @@ export function ChatArea() {
   }, [session?.id, session?.messages.length])
 
   const lastContent = session?.messages.at(-1)?.content ?? ''
-  const lastMsg = session?.messages.at(-1) ?? null
   const bottomRef = useRef<HTMLDivElement>(null)
   const busy = currentRunStatus === 'running' || currentRunStatus === 'queued'
   const modeChoices = useMemo(
@@ -62,7 +67,7 @@ export function ChatArea() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [session?.messages.length, lastContent, agentEvents.length])
+  }, [session?.messages.length, lastContent, session?.agentEvents.length])
 
   // Format model name for display
   const modelDisplay = model?.replace('claude-', '').replace('-20', ' ').replace(/(\d)/, ' $1') || 'Opus 4.5'
@@ -160,39 +165,46 @@ export function ChatArea() {
                   </div>
                 )}
 
-                {/* Messages - only show user messages, agent activity is shown in AgentLogView */}
+                {/* Messages - show user prompts, then the run log right after */}
                 {session.messages
                   .filter((m) => m.role === 'user')
-                  .map((m) => (
-                    <div key={m.id} className="flex gap-3 flex-row-reverse">
-                      <div className="h-9 w-9 shrink-0 rounded-2xl shadow-sm grid place-items-center bg-white/80 border border-black/5">
-                        <span className="text-xs font-semibold text-black/60">You</span>
-                      </div>
-                      <div className="min-w-0 flex-1 text-right">
-                        <div className="inline-block max-w-full rounded-2xl px-4 py-3 shadow-sm border border-black/5 bg-white border-gray-200">
-                          <div className="whitespace-pre-wrap break-words text-sm text-gray-800">{m.content}</div>
+                  .map((m) => {
+                    const runId = m.runId
+                    const hasLog = Boolean(runId && runIdsWithEvents.has(runId))
+                    const isActiveRun = Boolean(runId && currentRunId && runId === currentRunId)
+                    const showPending = isActiveRun && (currentRunStatus === 'running' || currentRunStatus === 'queued')
+                    return (
+                      <div key={m.id} className="space-y-2">
+                        <div className="flex gap-3 flex-row-reverse">
+                          <div className="h-9 w-9 shrink-0 rounded-2xl shadow-sm grid place-items-center bg-white/80 border border-black/5">
+                            <span className="text-xs font-semibold text-black/60">You</span>
+                          </div>
+                          <div className="min-w-0 flex-1 text-right">
+                            <div className="inline-block max-w-full rounded-2xl px-4 py-3 shadow-sm border border-black/5 bg-white border-gray-200">
+                              <div className="whitespace-pre-wrap break-words text-sm text-gray-800">{m.content}</div>
+                            </div>
+                            <div className="mt-1 text-xs text-[color:var(--color-text-muted)]">
+                              {new Date(m.createdAt).toLocaleTimeString()}
+                            </div>
+                          </div>
                         </div>
-                        <div className="mt-1 text-xs text-[color:var(--color-text-muted)]">
-                          {new Date(m.createdAt).toLocaleTimeString()}
-                        </div>
+
+                        {runId ? (
+                          <div className="ml-0 sm:ml-10">
+                            <AgentLogView runId={runId} />
+                            {showPending && !hasLog ? (
+                              <div className="flex items-center gap-3 py-2">
+                                <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
+                                <span className="text-sm text-gray-500 italic">Working…</span>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
               </>
             )}
-
-            {/* Agent activity log - show when there are events */}
-            {agentEvents.length > 0 && (
-              <AgentLogView />
-            )}
-
-            {/* Loading indicator when waiting for first response */}
-            {session && busy && lastMsg?.role === 'user' && agentEvents.length === 0 ? (
-              <div className="flex items-center gap-3 py-2">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-gray-600" />
-                <span className="text-sm text-gray-500 italic">Thought for 2s</span>
-              </div>
-            ) : null}
             <div ref={bottomRef} />
           </div>
         </ScrollAreaViewport>

@@ -32,11 +32,41 @@ export interface TokenResponse {
   expiresIn: number
 }
 
-const AUTH_STORAGE_KEY = 'snailer.auth'
-const AUTH_SERVER = 'https://auth.snailer.dev'
-
 class AuthService {
   private pollAbortController: AbortController | null = null
+  private cachedAuth: UserAuth | null = null
+
+  private hasTauri(): boolean {
+    return (
+      typeof window !== 'undefined' &&
+      Boolean((window as unknown as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke)
+    )
+  }
+
+  private setCachedAuth(auth: UserAuth | null) {
+    this.cachedAuth = auth
+  }
+
+  async refresh(): Promise<UserAuth | null> {
+    if (!this.hasTauri()) return this.cachedAuth
+    const res = await invoke<TokenResponse | null>('auth_check')
+    if (!res) {
+      this.setCachedAuth(null)
+      return null
+    }
+    const now = Math.floor(Date.now() / 1000)
+    const expiresAt = res.expiresIn > 0 ? now + res.expiresIn : undefined
+    const auth: UserAuth = {
+      accessToken: res.accessToken,
+      refreshToken: res.refreshToken,
+      accountId: res.accountId,
+      email: res.email,
+      name: res.name,
+      expiresAt,
+    }
+    this.setCachedAuth(auth)
+    return auth
+  }
 
   /**
    * Check if user is logged in
@@ -55,13 +85,7 @@ class AuthService {
    * Get stored auth data
    */
   getStoredAuth(): UserAuth | null {
-    try {
-      const stored = localStorage.getItem(AUTH_STORAGE_KEY)
-      if (!stored) return null
-      return JSON.parse(stored) as UserAuth
-    } catch {
-      return null
-    }
+    return this.cachedAuth
   }
 
   /**
@@ -79,52 +103,15 @@ class AuthService {
   }
 
   /**
-   * Save auth data to storage
-   */
-  private saveAuth(auth: UserAuth): void {
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth))
-  }
-
-  /**
-   * Clear stored auth data
-   */
-  private clearAuth(): void {
-    localStorage.removeItem(AUTH_STORAGE_KEY)
-  }
-
-  /**
    * Start device login flow
    * Returns device code info for user to complete auth in browser
    */
   async startDeviceLogin(): Promise<DeviceCodeResponse> {
-    // Try to use Tauri invoke for native gRPC call
     try {
-      const result = await invoke<DeviceCodeResponse>('auth_start_device_login')
-      return result
-    } catch {
-      // Fallback: direct HTTP request (for web preview)
-      const response = await fetch(`${AUTH_SERVER}/device/code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_id: 'snailer-gui',
-          scope: 'read write',
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`Failed to start device login: ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      return {
-        deviceCode: data.device_code,
-        userCode: data.user_code,
-        verificationUri: data.verification_uri,
-        verificationUriComplete: data.verification_uri_complete,
-        expiresIn: data.expires_in,
-        interval: data.interval || 5,
-      }
+      return await invoke<DeviceCodeResponse>('auth_start_device_login')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(`Failed to start device login (desktop app required): ${msg}`)
     }
   }
 
@@ -150,88 +137,34 @@ class AuthService {
       attempts++
 
       try {
-        // Try Tauri invoke first
-        try {
-          const result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
-          onStatus?.('complete')
-          this.saveAuth({
-            accessToken: result.accessToken,
-            refreshToken: result.refreshToken,
-            accountId: result.accountId,
-            email: result.email,
-            name: result.name,
-            expiresAt: Math.floor(Date.now() / 1000) + result.expiresIn,
-          })
-          return result
-        } catch (e) {
-          const error = e as Error
-          if (error.message?.includes('authorization_pending')) {
-            onStatus?.('pending')
-            continue
-          }
-          if (error.message?.includes('slow_down')) {
-            currentInterval = Math.min(currentInterval + 1, 10)
-            continue
-          }
-          if (error.message?.includes('expired_token')) {
-            onStatus?.('expired')
-            return null
-          }
-          throw e
+        const result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+        onStatus?.('complete')
+        const now = Math.floor(Date.now() / 1000)
+        this.setCachedAuth({
+          accessToken: result.accessToken,
+          refreshToken: result.refreshToken,
+          accountId: result.accountId,
+          email: result.email,
+          name: result.name,
+          expiresAt: result.expiresIn > 0 ? now + result.expiresIn : undefined,
+        })
+        return result
+      } catch (e) {
+        const error = e as Error
+        if (error.message?.includes('authorization_pending')) {
+          onStatus?.('pending')
+          continue
         }
-      } catch {
-        // Fallback: HTTP polling
-        try {
-          const response = await fetch(`${AUTH_SERVER}/device/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              client_id: 'snailer-gui',
-              device_code: deviceCode,
-              grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-            }),
-          })
-
-          if (response.status === 200) {
-            const data = await response.json()
-            onStatus?.('complete')
-            const auth: UserAuth = {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              accountId: data.account_id,
-              email: data.email,
-              name: data.name,
-              expiresAt: Math.floor(Date.now() / 1000) + data.expires_in,
-            }
-            this.saveAuth(auth)
-            return {
-              accessToken: data.access_token,
-              refreshToken: data.refresh_token,
-              accountId: data.account_id,
-              email: data.email,
-              name: data.name,
-              expiresIn: data.expires_in,
-            }
-          }
-
-          if (response.status === 428 || response.status === 400) {
-            const data = await response.json()
-            if (data.error === 'authorization_pending') {
-              onStatus?.('pending')
-              continue
-            }
-            if (data.error === 'slow_down') {
-              currentInterval = Math.min(currentInterval + 1, 10)
-              continue
-            }
-            if (data.error === 'expired_token') {
-              onStatus?.('expired')
-              return null
-            }
-          }
-        } catch {
-          onStatus?.('error')
+        if (error.message?.includes('slow_down')) {
+          currentInterval = Math.min(currentInterval + 1, 10)
+          continue
         }
+        if (error.message?.includes('expired_token')) {
+          onStatus?.('expired')
+          return null
+        }
+        onStatus?.('error')
+        return null
       }
     }
 
@@ -256,20 +189,17 @@ class AuthService {
       return { success: false, error: 'Invalid API key format. Should start with sk-ant- or sk-' }
     }
 
-    // Save as API key auth
-    const auth: UserAuth = {
-      accessToken: apiKey,
-      email: 'API Key User',
-      name: 'API Key',
-    }
-
-    this.saveAuth(auth)
-
-    // Try to verify with daemon
     try {
       await invoke('auth_set_api_key', { apiKey })
+      this.setCachedAuth({
+        accessToken: apiKey,
+        refreshToken: '',
+        accountId: '',
+        email: 'API Key User',
+        name: 'API Key',
+      })
     } catch {
-      // OK if daemon doesn't support this
+      return { success: false, error: 'Failed to save API key in secure storage.' }
     }
 
     return { success: true }
@@ -280,7 +210,7 @@ class AuthService {
    */
   async logout(): Promise<void> {
     this.cancelPoll()
-    this.clearAuth()
+    this.setCachedAuth(null)
 
     // Notify daemon
     try {
@@ -295,14 +225,14 @@ class AuthService {
    */
   openCreateAccount(): void {
     const signupUrl = 'https://console.anthropic.com/signup'
-    window.open(signupUrl, '_blank')
+    window.open(signupUrl, '_blank', 'noopener,noreferrer')
   }
 
   /**
    * Open browser for login
    */
   async openLoginUrl(url: string): Promise<void> {
-    window.open(url, '_blank')
+    window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   private sleep(ms: number): Promise<void> {

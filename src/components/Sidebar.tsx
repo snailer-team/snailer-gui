@@ -88,6 +88,15 @@ export function Sidebar() {
     return () => window.removeEventListener('mousedown', onDown)
   }, [openSessionMenuId])
 
+  useEffect(() => {
+    void (async () => {
+      const auth = await authService.refresh()
+      setIsLoggedIn(authService.isLoggedIn())
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
+    })()
+  }, [])
+
   const subtitle = useMemo(() => {
     if (connectionStatus === 'connected') return 'Ready'
     if (connectionStatus === 'connecting' || connectionStatus === 'starting') return 'Connecting…'

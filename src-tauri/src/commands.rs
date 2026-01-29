@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -100,16 +100,59 @@ fn read_gui_settings_env_file() -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+fn read_gui_settings_auth_addr() -> Option<String> {
+    let path = gui_settings_path();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return None;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return None;
+    };
+    v.get("authAddr")
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+}
+
 fn write_gui_settings_env_file(value: Option<&str>) -> Result<(), String> {
     let path = gui_settings_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
     }
-    let mut obj = serde_json::Map::new();
+    let mut obj = if let Ok(text) = std::fs::read_to_string(&path) {
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text).unwrap_or_default()
+    } else {
+        serde_json::Map::new()
+    };
     if let Some(v) = value {
-        obj.insert("snailerEnvFile".to_string(), serde_json::Value::String(v.to_string()));
+        obj.insert(
+            "snailerEnvFile".to_string(),
+            serde_json::Value::String(v.to_string()),
+        );
     } else {
         obj.insert("snailerEnvFile".to_string(), serde_json::Value::Null);
+    }
+    let text = serde_json::Value::Object(obj).to_string();
+    std::fs::write(&path, text).map_err(|e| format!("write failed: {}", e))?;
+    Ok(())
+}
+
+fn write_gui_settings_auth_addr(value: Option<&str>) -> Result<(), String> {
+    let path = gui_settings_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+
+    let mut obj = if let Ok(text) = std::fs::read_to_string(&path) {
+        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&text).unwrap_or_default()
+    } else {
+        serde_json::Map::new()
+    };
+
+    if let Some(v) = value {
+        obj.insert("authAddr".to_string(), serde_json::Value::String(v.to_string()));
+    } else {
+        obj.insert("authAddr".to_string(), serde_json::Value::Null);
     }
     let text = serde_json::Value::Object(obj).to_string();
     std::fs::write(&path, text).map_err(|e| format!("write failed: {}", e))?;
@@ -160,6 +203,125 @@ pub async fn snailer_env_file_set(path: Option<String>) -> Result<Option<String>
             Ok(None)
         }
     }
+}
+
+fn default_auth_addr() -> Option<String> {
+    let build_default = option_env!("SNAILER_AUTH_ADDR_DEFAULT")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    if build_default.is_some() {
+        return build_default;
+    }
+    None
+}
+
+fn resolve_auth_addr() -> Result<String, String> {
+    if let Ok(v) = std::env::var("SNAILER_AUTH_ADDR") {
+        if !v.trim().is_empty() {
+            return Ok(v);
+        }
+    }
+
+    if let Some(v) = read_gui_settings_auth_addr() {
+        if !v.trim().is_empty() {
+            return Ok(v);
+        }
+    }
+
+    if let Some(v) = default_auth_addr() {
+        return Ok(v);
+    }
+
+    Err("Auth server address is not configured. Set SNAILER_AUTH_ADDR (environment) or configure it in the GUI settings.".to_string())
+}
+
+const KEYCHAIN_SERVICE: &str = "com.snailer.gui";
+const KEYCHAIN_AUTH_KEY: &str = "snailer-auth";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredAuth {
+    access_token: String,
+    refresh_token: String,
+    account_id: String,
+    email: String,
+    name: String,
+    expires_at: Option<i64>,
+}
+
+fn auth_keychain_entry() -> Result<keyring::Entry, String> {
+    keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_AUTH_KEY)
+        .map_err(|e| format!("keychain init failed: {}", e))
+}
+
+fn auth_keychain_get() -> Result<Option<StoredAuth>, String> {
+    let entry = auth_keychain_entry()?;
+    match entry.get_password() {
+        Ok(text) => {
+            let v = serde_json::from_str::<StoredAuth>(&text)
+                .map_err(|e| format!("keychain data invalid: {}", e))?;
+            Ok(Some(v))
+        }
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("no entry") || msg.contains("not found") || msg.contains("no such") {
+                Ok(None)
+            } else {
+                Err(format!("keychain read failed: {}", e))
+            }
+        }
+    }
+}
+
+fn auth_keychain_set(value: &StoredAuth) -> Result<(), String> {
+    let entry = auth_keychain_entry()?;
+    let text = serde_json::to_string(value).map_err(|e| format!("serialize failed: {}", e))?;
+    entry
+        .set_password(&text)
+        .map_err(|e| format!("keychain write failed: {}", e))?;
+    Ok(())
+}
+
+fn auth_keychain_clear() -> Result<(), String> {
+    let entry = auth_keychain_entry()?;
+    match entry.delete_password() {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("no entry") || msg.contains("not found") || msg.contains("no such") {
+                Ok(())
+            } else {
+                Err(format!("keychain delete failed: {}", e))
+            }
+        }
+    }
+}
+
+/// Get the configured auth server address persisted by this GUI (does not include env overrides).
+#[tauri::command]
+pub async fn auth_addr_get() -> Result<Option<String>, String> {
+    Ok(read_gui_settings_auth_addr())
+}
+
+/// Set (or clear) the auth server address persisted by this GUI.
+#[tauri::command]
+pub async fn auth_addr_set(addr: Option<String>) -> Result<Option<String>, String> {
+    match addr.as_deref() {
+        Some(v) if !v.trim().is_empty() => {
+            write_gui_settings_auth_addr(Some(v))?;
+            Ok(Some(v.to_string()))
+        }
+        _ => {
+            write_gui_settings_auth_addr(None)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Resolve the effective auth server address (env overrides > GUI setting > build default).
+#[tauri::command]
+pub async fn auth_addr_resolve() -> Result<String, String> {
+    Ok(resolve_auth_addr()?)
 }
 
 /// Ensure the Snailer npm CLI (`@felixaihub/snailer`) is installed for this user.
@@ -805,9 +967,8 @@ fn auth_state() -> &'static Mutex<Option<DeviceCodeResponse>> {
     STATE.get_or_init(|| Mutex::new(None))
 }
 
-fn get_auth_addr() -> String {
-    std::env::var("SNAILER_AUTH_ADDR")
-        .unwrap_or_else(|_| "https://snailer.ai:443".to_string())
+fn get_auth_addr() -> Result<String, String> {
+    resolve_auth_addr()
 }
 
 /// Start device login flow - returns device code info for user to complete auth in browser
@@ -815,7 +976,7 @@ fn get_auth_addr() -> String {
 pub async fn auth_start_device_login() -> Result<DeviceCodeResponse, String> {
     use snailer::auth::pb;
 
-    let auth_addr = get_auth_addr();
+    let auth_addr = get_auth_addr()?;
 
     // Build channel
     let channel = build_auth_channel(&auth_addr)
@@ -882,7 +1043,7 @@ pub async fn auth_start_device_login() -> Result<DeviceCodeResponse, String> {
 pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse, String> {
     use snailer::auth::pb;
 
-    let auth_addr = get_auth_addr();
+    let auth_addr = get_auth_addr()?;
 
     let channel = build_auth_channel(&auth_addr)
         .await
@@ -901,6 +1062,19 @@ pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse
     match client.poll_device_token(preq).await {
         Ok(ok) => {
             let t = ok.into_inner();
+            let now = chrono::Utc::now().timestamp();
+            let expires_at = now + (t.expires_in as i64);
+
+            // Store tokens in OS keychain / secure storage
+            auth_keychain_set(&StoredAuth {
+                access_token: t.access_token.clone(),
+                refresh_token: t.refresh_token.clone(),
+                account_id: t.account_id.clone(),
+                email: t.email.clone(),
+                name: t.name.clone(),
+                expires_at: Some(expires_at),
+            })
+            .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
 
             // Save tokens using snailer's UserAuth
             if let Ok(mut ua) = snailer::user_auth::UserAuth::load() {
@@ -962,6 +1136,16 @@ pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse
 /// Set API key directly (for users who prefer API key auth)
 #[tauri::command]
 pub async fn auth_set_api_key(api_key: String) -> Result<(), String> {
+    auth_keychain_set(&StoredAuth {
+        access_token: api_key.clone(),
+        refresh_token: String::new(),
+        account_id: String::new(),
+        email: "API Key User".to_string(),
+        name: "API Key".to_string(),
+        expires_at: None,
+    })
+    .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
+
     // Save API key to snailer config
     let mut ua = snailer::user_auth::UserAuth::load().unwrap_or_default();
     ua.access_token = Some(api_key.clone());
@@ -975,6 +1159,8 @@ pub async fn auth_set_api_key(api_key: String) -> Result<(), String> {
 /// Logout - clear stored auth
 #[tauri::command]
 pub async fn auth_logout() -> Result<(), String> {
+    let _ = auth_keychain_clear();
+
     // Clear UserAuth
     let ua = snailer::user_auth::UserAuth::default();
     ua.save().map_err(|e| format!("Failed to clear auth: {}", e))?;
@@ -995,6 +1181,33 @@ pub async fn auth_logout() -> Result<(), String> {
 /// Check if user is logged in
 #[tauri::command]
 pub async fn auth_check() -> Result<Option<TokenResponse>, String> {
+    if let Ok(Some(st)) = auth_keychain_get() {
+        if let Some(expires_at) = st.expires_at {
+            let now = chrono::Utc::now().timestamp();
+            if now > expires_at {
+                let _ = auth_keychain_clear();
+                return Ok(None);
+            }
+            return Ok(Some(TokenResponse {
+                access_token: st.access_token,
+                refresh_token: st.refresh_token,
+                account_id: st.account_id,
+                email: st.email,
+                name: st.name,
+                expires_in: (expires_at - now).max(0) as i32,
+            }));
+        }
+
+        return Ok(Some(TokenResponse {
+            access_token: st.access_token,
+            refresh_token: st.refresh_token,
+            account_id: st.account_id,
+            email: st.email,
+            name: st.name,
+            expires_in: 0,
+        }));
+    }
+
     match snailer::user_auth::UserAuth::load() {
         Ok(ua) => {
             if let Some(ref token) = ua.access_token {
@@ -1006,14 +1219,29 @@ pub async fn auth_check() -> Result<Option<TokenResponse>, String> {
                     }
                 }
 
-                Ok(Some(TokenResponse {
+                let now = chrono::Utc::now().timestamp();
+                let expires_at = ua.expires_at;
+                let expires_in = expires_at.map(|e| (e - now).max(0) as i32).unwrap_or(0);
+                let resp = TokenResponse {
                     access_token: token.clone(),
-                    refresh_token: ua.refresh_token.unwrap_or_default(),
-                    account_id: ua.account_id.unwrap_or_default(),
-                    email: ua.email.unwrap_or_default(),
-                    name: ua.name.unwrap_or_default(),
-                    expires_in: ua.expires_at.map(|e| (e - chrono::Utc::now().timestamp()) as i32).unwrap_or(0),
-                }))
+                    refresh_token: ua.refresh_token.clone().unwrap_or_default(),
+                    account_id: ua.account_id.clone().unwrap_or_default(),
+                    email: ua.email.clone().unwrap_or_default(),
+                    name: ua.name.clone().unwrap_or_default(),
+                    expires_in,
+                };
+
+                // Best-effort migration to keychain.
+                let _ = auth_keychain_set(&StoredAuth {
+                    access_token: resp.access_token.clone(),
+                    refresh_token: resp.refresh_token.clone(),
+                    account_id: resp.account_id.clone(),
+                    email: resp.email.clone(),
+                    name: resp.name.clone(),
+                    expires_at,
+                });
+
+                Ok(Some(resp))
             } else {
                 Ok(None)
             }
