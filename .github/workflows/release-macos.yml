@@ -56,7 +56,6 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
@@ -67,7 +66,6 @@ jobs:
           need() { if [[ -z "${!1:-}" ]]; then echo "Missing secret: $1"; missing=1; fi }
           need APPLE_CERTIFICATE
           need APPLE_CERTIFICATE_PASSWORD
-          need APPLE_SIGNING_IDENTITY
           need APPLE_TEAM_ID
           need APPLE_NOTARY_API_KEY
           need APPLE_NOTARY_KEY_ID
@@ -83,6 +81,7 @@ jobs:
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           KEYCHAIN_PASSWORD="$(uuidgen)"
@@ -102,9 +101,30 @@ jobs:
           # Allow codesign to access the key non-interactively.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
+          echo ""
+          echo "Available code signing identities in imported keychain:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+
+          IDENTITIES="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true)"
+          SIGN_ID=""
+          if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+            SIGN_ID="$(echo "$IDENTITIES" | awk -v pat="$APPLE_SIGNING_IDENTITY" '$0 ~ pat {print $2; exit}')"
+          fi
+          if [[ -z "$SIGN_ID" ]]; then
+            SIGN_ID="$(echo "$IDENTITIES" | awk '/Developer ID Application/ {print $2; exit}')"
+          fi
+          if [[ -z "$SIGN_ID" ]]; then
+            echo ""
+            echo "No valid codesigning identity found."
+            echo "Your .p12 likely does not include the private key. Export it from Keychain Access → login → My Certificates (certificate + private key)."
+            exit 1
+          fi
+          echo "Using signing identity: $SIGN_ID"
+          echo "APPLE_SIGNING_IDENTITY_EFFECTIVE=$SIGN_ID" >> "$GITHUB_ENV"
+
       - name: Build Tauri (universal)
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY_EFFECTIVE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm tauri build --target universal-apple-darwin
 
@@ -120,7 +140,7 @@ jobs:
       - name: Sign DMG
         shell: bash
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY_EFFECTIVE }}
         run: |
           set -euo pipefail
           DMG="${{ steps.dmg.outputs.dmg_path }}"
