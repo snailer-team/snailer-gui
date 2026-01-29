@@ -41,6 +41,8 @@ jobs:
 
       - name: Setup protoc
         uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cargo check (tauri)
         working-directory: src-tauri
