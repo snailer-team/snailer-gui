@@ -1,0 +1,46 @@
+name: PR Notify
+
+on:
+  pull_request_target:
+    types: [opened, reopened,ready_for_review]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  request-review:
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request review from code owners team
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+            await github.rest.pulls.requestReviewers({
+              owner,
+              repo,
+              pull_number,
+              team_reviewers: ["snailer-team"],
+            });
+
+      # Optional: send email when SMTP secrets are configured.
+      - name: Email notify (optional)
+        if: ${{ secrets.SMTP_SERVER != '' && secrets.SMTP_USERNAME != '' && secrets.SMTP_PASSWORD != '' && secrets.SMTP_FROM != '' }}
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT || '587' }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[Snailer GUI] PR #${{ github.event.pull_request.number }} opened: ${{ github.event.pull_request.title }}"
+          to: team@snailer.ai
+          from: ${{ secrets.SMTP_FROM }}
+          body: |
+            PR: ${{ github.event.pull_request.html_url }}
+            Author: ${{ github.event.pull_request.user.login }}
+            Base: ${{ github.event.pull_request.base.ref }}
+            Head: ${{ github.event.pull_request.head.ref }}

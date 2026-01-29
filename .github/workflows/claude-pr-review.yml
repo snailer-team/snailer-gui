@@ -1,0 +1,114 @@
+name: Claude PR Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate review (Claude)
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-sonnet-4-5' }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+            echo "ANTHROPIC_API_KEY not set; skipping."
+            exit 0
+          fi
+
+          DIFF_URL="https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}"
+          echo "Fetching PR diff: $DIFF_URL"
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github.v3.diff" \
+            "$DIFF_URL" > pr.diff
+
+          DIFF_BYTES="$(wc -c < pr.diff | tr -d ' ')"
+          MAX_BYTES=200000
+          TRUNCATED="false"
+          if [[ "$DIFF_BYTES" -gt "$MAX_BYTES" ]]; then
+            head -c "$MAX_BYTES" pr.diff > pr.diff.trunc
+            mv pr.diff.trunc pr.diff
+            TRUNCATED="true"
+          fi
+
+          PROMPT_FILE="prompt.txt"
+          cat > "$PROMPT_FILE" <<'EOF'
+          You are an expert reviewer for a Tauri (Rust) + React desktop app.
+          Style: short & sharp. Prefer first principles reasoning.
+
+          Produce:
+          1) Summary (<= 6 bullets)
+          2) Risks (Security/Perf/UX/Maintainability) with a single overall Risk: Very Low / Low / Medium / High / Very High
+          3) Actionable suggestions (<= 8 bullets), cite file paths when possible
+          4) Testing checklist (<= 6 checkboxes)
+
+          Be strict about:
+          - Token/secret handling
+          - Sandbox/command execution safety
+          - XSS/CSP and unsafe rendering in the frontend
+          - OS keychain / secure storage usage
+          - Supply chain concerns for downloads/installers
+
+          If the diff is truncated, explicitly mention it and focus on high-impact issues.
+          EOF
+
+          REVIEW_INPUT="$(cat "$PROMPT_FILE")"
+          REVIEW_INPUT+=$'\n\n---\n'
+          REVIEW_INPUT+="PR diff (truncated=${TRUNCATED}):"$'\n'
+          REVIEW_INPUT+="$(cat pr.diff)"
+
+          jq -n --arg model "$MODEL" --arg system "You are a senior code reviewer." --arg content "$REVIEW_INPUT" '{
+            model: $model,
+            max_tokens: 900,
+            system: $system,
+            messages: [
+              { role: "user", content: $content }
+            ]
+          }' > anthropic.json
+
+          echo "Calling Anthropic API..."
+          curl -fsSL https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @anthropic.json > anthropic.out.json
+
+          REVIEW_TEXT="$(jq -r '.content[0].text // empty' anthropic.out.json)"
+          if [[ -z "$REVIEW_TEXT" ]]; then
+            echo "No review text returned."
+            cat anthropic.out.json
+            exit 1
+          fi
+
+          COMMENT_BODY_FILE="comment.md"
+          {
+            echo "<!-- claude-pr-review -->"
+            echo "### Claude PR Review"
+            echo ""
+            echo "$REVIEW_TEXT"
+          } > "$COMMENT_BODY_FILE"
+
+          jq -n --rawfile body "$COMMENT_BODY_FILE" '{body: $body}' > comment.json
+
+          echo "Posting comment..."
+          curl -fsSL \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            -d @comment.json \
+            "https://api.github.com/repos/${REPO}/issues/${PR_NUMBER}/comments" > /dev/null

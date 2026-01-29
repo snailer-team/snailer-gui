@@ -1,0 +1,4 @@
+# Enforces maintainer review when branch protection has:
+# - "Require review from Code Owners" enabled on main
+*
+@snailer-team
