@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { convertFileSrc } from '@tauri-apps/api/core'
 
 import { Badge } from './ui/badge'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
 import { AgentLogView } from './AgentLogView'
 import { TypewriterTitle } from './TypewriterTitle'
 import { useAppStore } from '../lib/store'
+import { isTauriRuntime } from '../lib/tauri'
 
 export function ChatArea() {
   const {
@@ -51,8 +53,13 @@ export function ChatArea() {
     // Trigger animation when first message is added to a session
     if ((isNewSession || hasNewUserMessage) && currentMessageCount === 1 && session.messages[0]?.role === 'user') {
       // Generate title from first user message (truncate to ~50 chars)
-      const firstMessage = session.messages[0].content
-      const title = firstMessage.length > 50 ? firstMessage.slice(0, 47) + '...' : firstMessage
+      const first = session.messages[0]
+      const firstText = first.content.trim()
+      const titleSource =
+        firstText ||
+        (first.attachments?.length ? `Images (${first.attachments.length})` : '') ||
+        'New Session'
+      const title = titleSource.length > 50 ? titleSource.slice(0, 47) + '...' : titleSource
       setAnimatingTitle(title)
     }
 
@@ -70,6 +77,8 @@ export function ChatArea() {
     ],
     [],
   )
+
+  const tauriRuntime = useMemo(() => isTauriRuntime(), [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -173,7 +182,12 @@ export function ChatArea() {
 
                 {/* Messages - show user prompts, then the run log right after */}
                 {session.messages
-                  .filter((m) => m.role === 'user')
+                  .filter((m) => {
+                    if (m.role !== 'user') return false
+                    const hasText = Boolean(m.content.trim())
+                    const hasAttachments = Boolean(m.attachments?.length)
+                    return hasText || hasAttachments
+                  })
                   .map((m) => {
                     const runId = m.runId
                     const hasLog = Boolean(runId && runIdsWithEvents.has(runId))
@@ -187,7 +201,31 @@ export function ChatArea() {
                           </div>
                           <div className="min-w-0 flex-1 text-right">
                             <div className="inline-block max-w-full rounded-2xl px-4 py-3 shadow-sm border border-black/5 bg-white border-gray-200">
-                              <div className="whitespace-pre-wrap break-words text-sm text-gray-800">{m.content}</div>
+                              {m.content.trim() ? (
+                                <div className="whitespace-pre-wrap break-words text-sm text-gray-800">{m.content}</div>
+                              ) : null}
+                              {m.attachments?.length ? (
+                                <div className={['mt-2 grid gap-2', m.attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'].join(' ')}>
+                                  {m.attachments.slice(0, 10).map((a) =>
+                                    tauriRuntime ? (
+                                      <img
+                                        key={a.path}
+                                        src={convertFileSrc(a.path)}
+                                        alt={a.name}
+                                        className="h-32 w-56 max-w-full rounded-xl border border-black/10 object-cover bg-white"
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <div
+                                        key={a.path}
+                                        className="rounded-xl border border-black/10 bg-white/60 px-3 py-2 text-xs text-gray-700"
+                                      >
+                                        {a.name}
+                                      </div>
+                                    ),
+                                  )}
+                                </div>
+                              ) : null}
                             </div>
                             <div className="mt-1 text-xs text-[color:var(--color-text-muted)]">
                               {new Date(m.createdAt).toLocaleTimeString()}

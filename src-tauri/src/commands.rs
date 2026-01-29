@@ -57,6 +57,10 @@ fn snailer_home_dir() -> PathBuf {
     home_dir().join(".snailer")
 }
 
+fn snailer_attachments_dir() -> PathBuf {
+    snailer_home_dir().join("gui_attachments")
+}
+
 fn snailer_cli_prefix_dir() -> PathBuf {
     snailer_home_dir().join("npm_cli")
 }
@@ -233,7 +237,7 @@ fn resolve_auth_addr() -> Result<String, String> {
         return Ok(v);
     }
 
-    Err("Auth server address is not configured. Set SNAILER_AUTH_ADDR (environment) or configure it in the GUI settings.".to_string())
+    Err("Auth server address is not configured. Set SNAILER_AUTH_ADDR (environment) or set `authAddr` in `~/.snailer/gui_settings.json` (or provide a build default).".to_string())
 }
 
 const KEYCHAIN_SERVICE: &str = "com.snailer.gui";
@@ -322,6 +326,70 @@ pub async fn auth_addr_set(addr: Option<String>) -> Result<Option<String>, Strin
 #[tauri::command]
 pub async fn auth_addr_resolve() -> Result<String, String> {
     Ok(resolve_auth_addr()?)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentSaveRequest {
+    pub name: String,
+    pub mime: String,
+    pub data_base64: String,
+}
+
+fn ext_from_mime(mime: &str) -> Option<&'static str> {
+    match mime {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/jpg" => Some("jpg"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        "image/bmp" => Some("bmp"),
+        _ => None,
+    }
+}
+
+/// Save an uploaded image into `~/.snailer/gui_attachments` and return the file path.
+#[tauri::command]
+pub async fn attachment_save_image(req: AttachmentSaveRequest) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mime = req.mime.trim().to_lowercase();
+        if !mime.starts_with("image/") {
+            return Err("Only image attachments are supported.".to_string());
+        }
+
+        let dir = snailer_attachments_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {}", e))?;
+
+        let data = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, req.data_base64.trim())
+            .map_err(|_| "Invalid base64 payload.".to_string())?;
+
+        const MAX_BYTES: usize = 12 * 1024 * 1024;
+        if data.is_empty() {
+            return Err("Empty file.".to_string());
+        }
+        if data.len() > MAX_BYTES {
+            return Err("Image is too large (max 12MB).".to_string());
+        }
+
+        let ext = ext_from_mime(&mime)
+            .map(|s| s.to_string())
+            .or_else(|| {
+                let lower = req.name.to_lowercase();
+                let ext = lower.rsplit('.').next().unwrap_or("");
+                match ext {
+                    "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => Some(ext.to_string()),
+                    _ => None,
+                }
+            })
+            .ok_or_else(|| "Unsupported image type.".to_string())?;
+
+        let file_name = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+        let path = dir.join(file_name);
+        std::fs::write(&path, data).map_err(|e| format!("write failed: {}", e))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("save task failed: {}", e))?
 }
 
 /// Ensure the Snailer npm CLI (`@felixaihub/snailer`) is installed for this user.

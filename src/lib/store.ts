@@ -15,6 +15,7 @@ export interface ChatMessage {
   content: string
   createdAt: number
   runId?: string
+  attachments?: Array<{ path: string; name: string }>
   stream?: string
   isStreaming?: boolean
 }
@@ -47,6 +48,13 @@ export interface BashCommand {
   timestamp: string
   duration: number
   output: string
+}
+
+export interface AttachedImage {
+  id: string
+  path: string
+  name: string
+  previewUrl?: string
 }
 
 export interface PendingApproval {
@@ -286,7 +294,7 @@ interface AppState {
 
   lastToast: { title: string; message: string } | null
   draftPrompt: string
-  attachedImages: string[]
+  attachedImages: AttachedImage[]
 
   // Actions
   connect: () => Promise<void>
@@ -306,8 +314,8 @@ interface AppState {
   completePromptStageWizard: (details: Array<string | null>) => Promise<void>
   setDraftPrompt: (value: string) => void
   appendToDraftPrompt: (value: string) => void
-  addAttachedImage: (path: string) => void
-  removeAttachedImage: (path: string) => void
+  addAttachedImage: (img: AttachedImage) => void
+  removeAttachedImage: (id: string) => void
   clearAttachedImages: () => void
   clearError: () => void
 }
@@ -1212,8 +1220,8 @@ export const useAppStore = create<AppState>()(
             mode: get().mode,
           })
 
-          try {
-            const slash = await client.slashList()
+	          try {
+	            const slash = await client.slashList()
             const modelItems = (() => {
               const items = [...slash.modelItems]
               if (!items.some((m) => m.token === 'kimi-k2.5')) {
@@ -1223,25 +1231,30 @@ export const useAppStore = create<AppState>()(
               }
               return items
             })()
-            set({
-              slashItems: slash.slashItems,
-              modeItems: slash.modeItems,
-              modelItems,
-            })
-          } catch (e) {
+	            set({
+	              slashItems: slash.slashItems,
+	              modeItems: slash.modeItems.filter((m) => {
+	                const label = String(m.label ?? '').toLowerCase()
+	                const token = String(m.token ?? '').toLowerCase()
+	                if (token === 'snailer-doctor' || token === 'snailer-plato' || token === 'plato') return false
+	                if (label.startsWith('snailer plato')) return false
+	                return true
+	              }),
+	              modelItems,
+	            })
+	          } catch (e) {
             // Backward-compat: older daemon may not implement slash.list.
             const msg = e instanceof Error ? e.message : String(e)
             if (msg.toLowerCase().includes('method not found')) {
               set({
-                slashItems: [],
-                modeItems: [
-                  { label: 'Classic', token: 'classic' },
-                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
-                  { label: 'Snailer Plato', token: 'snailer-doctor' },
-                ],
-                modelItems: [
-                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
-                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
+	                slashItems: [],
+	                modeItems: [
+	                  { label: 'Classic', token: 'classic' },
+	                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
+	                ],
+	                modelItems: [
+	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
+	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
                   { label: 'gpt-5', token: 'gpt-5', desc: '' },
                 ],
               })
@@ -1426,15 +1439,17 @@ export const useAppStore = create<AppState>()(
           promptForAgent = `LLM detail:\n${lines.join('\n')}\n\n${trimmed}`
         }
 
-          const userMsg: ChatMessage = {
-            id: crypto.randomUUID(),
-            role: 'user',
-            content: trimmed,
-            createdAt: now(),
-          }
-          set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
+        const attachments = get().attachedImages.map((i) => ({ path: i.path, name: i.name }))
+        const userMsg: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: trimmed,
+          createdAt: now(),
+          attachments: attachments.length ? attachments : undefined,
+        }
+        set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
 
-        const imagePaths = get().attachedImages
+        const imagePaths = attachments.map((i) => i.path)
         set({
           promptStageWizard: null,
           draftPrompt: '',
@@ -1546,16 +1561,17 @@ export const useAppStore = create<AppState>()(
       appendToDraftPrompt: (value) =>
         set((st) => ({ draftPrompt: st.draftPrompt ? st.draftPrompt + value : value })),
 
-      addAttachedImage: (path) =>
+      addAttachedImage: (img) =>
         set((st) => ({
-          attachedImages: st.attachedImages.includes(path)
-            ? st.attachedImages
-            : [...st.attachedImages, path],
+          attachedImages:
+            st.attachedImages.length >= 10 || st.attachedImages.some((x) => x.id === img.id)
+              ? st.attachedImages
+              : [...st.attachedImages, img],
         })),
 
-      removeAttachedImage: (path) =>
+      removeAttachedImage: (id) =>
         set((st) => ({
-          attachedImages: st.attachedImages.filter((p) => p !== path),
+          attachedImages: st.attachedImages.filter((p) => p.id !== id),
         })),
 
       clearAttachedImages: () => set({ attachedImages: [] }),

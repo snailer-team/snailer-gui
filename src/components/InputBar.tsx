@@ -1,4 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { toast } from 'sonner'
 
 import { useAppStore } from '../lib/store'
 
@@ -123,8 +125,10 @@ export function InputBar() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const objectUrlsRef = useRef<Map<string, string>>(new Map())
   const [showModeDropdown, setShowModeDropdown] = useState(false)
   const [showModelDropdown, setShowModelDropdown] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
   const modeDropdownRef = useRef<HTMLDivElement>(null)
   const modelDropdownRef = useRef<HTMLDivElement>(null)
 
@@ -137,6 +141,17 @@ export function InputBar() {
   useEffect(() => {
     textareaRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    // Revoke object URLs for removed attachments to avoid leaking memory.
+    const nextIds = new Set(attachedImages.map((x) => x.id))
+    for (const [id, url] of objectUrlsRef.current.entries()) {
+      if (!nextIds.has(id)) {
+        URL.revokeObjectURL(url)
+        objectUrlsRef.current.delete(id)
+      }
+    }
+  }, [attachedImages])
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -193,27 +208,112 @@ export function InputBar() {
     fileInputRef.current?.click()
   }
 
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer)
+    const chunkSize = 0x4000
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize)
+      let part = ''
+      for (let j = 0; j < chunk.length; j++) part += String.fromCharCode(chunk[j]!)
+      binary += part
+    }
+    return btoa(binary)
+  }
+
+  const saveImageFile = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      toast('Only image files are supported.')
+      return
+    }
+    const remaining = 10 - attachedImages.length
+    if (remaining <= 0) {
+      toast('You can attach up to 10 images.')
+      return
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      toast('Image is too large', { description: 'Max 12MB per image.' })
+      return
+    }
+
+    const id = crypto.randomUUID()
+    const previewUrl = URL.createObjectURL(file)
+    objectUrlsRef.current.set(id, previewUrl)
+
+    try {
+      const dataBase64 = arrayBufferToBase64(await file.arrayBuffer())
+      const path = await invoke<string>(
+        'attachment_save_image',
+        {
+          name: file.name || 'image',
+          mime: file.type || 'image/*',
+          dataBase64,
+        } as unknown as Record<string, unknown>,
+      )
+
+      addAttachedImage({
+        id,
+        path,
+        name: file.name || 'image',
+        previewUrl,
+      })
+    } catch (e) {
+      URL.revokeObjectURL(previewUrl)
+      objectUrlsRef.current.delete(id)
+      throw e
+    }
+  }
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      // For web/Tauri, we need to get the file path
-      // In Tauri, webkitRelativePath might contain the path
-      // Otherwise we use the file name
-      const path = (file as unknown as { path?: string }).path || file.name
-      addAttachedImage(path)
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    const remaining = 10 - attachedImages.length
+    if (list.length > remaining) {
+      toast('Image limit reached', { description: 'You can attach up to 10 images.' })
     }
+    void (async () => {
+      for (const f of list.slice(0, Math.max(0, remaining))) {
+        try {
+          await saveImageFile(f)
+        } catch (err) {
+          toast('Failed to attach image', { description: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    })()
 
     // Reset input so same file can be selected again
     e.target.value = ''
   }
 
-  // Get filename from path
-  const getFileName = (path: string) => {
-    const parts = path.split(/[/\\]/)
-    return parts[parts.length - 1] || path
+  const handleRemove = (id: string) => {
+    const url = objectUrlsRef.current.get(id)
+    if (url) URL.revokeObjectURL(url)
+    objectUrlsRef.current.delete(id)
+    removeAttachedImage(id)
+  }
+
+  const onDropFiles = (files: FileList) => {
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'))
+    if (list.length === 0) return
+    const remaining = 10 - attachedImages.length
+    if (remaining <= 0) {
+      toast('You can attach up to 10 images.')
+      return
+    }
+    if (list.length > remaining) {
+      toast('Image limit reached', { description: 'You can attach up to 10 images.' })
+    }
+    void (async () => {
+      for (const f of list.slice(0, Math.max(0, remaining))) {
+        try {
+          await saveImageFile(f)
+        } catch (err) {
+          toast('Failed to attach image', { description: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    })()
   }
 
   return (
@@ -232,18 +332,31 @@ export function InputBar() {
         {/* Attached images preview */}
         {attachedImages.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
-            {attachedImages.map((path) => (
+            {attachedImages.map((img) => (
               <div
-                key={path}
-                className="flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-1.5 text-sm"
+                key={img.id}
+                className="group relative flex items-center gap-2 rounded-xl border border-black/10 bg-white/60 px-2 py-2 text-sm shadow-sm"
               >
-                <IconImage className="h-4 w-4 text-gray-500" />
-                <span className="max-w-[150px] truncate text-gray-700" title={path}>
-                  {getFileName(path)}
-                </span>
+                {img.previewUrl ? (
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    className="h-12 w-12 rounded-lg object-cover border border-black/10 bg-white"
+                  />
+                ) : (
+                  <div className="h-12 w-12 rounded-lg border border-black/10 bg-white/70 grid place-items-center">
+                    <IconImage className="h-5 w-5 text-gray-500" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div className="max-w-[180px] truncate text-gray-800" title={img.name}>
+                    {img.name}
+                  </div>
+                  <div className="text-xs text-gray-400">Attached</div>
+                </div>
                 <button
-                  onClick={() => removeAttachedImage(path)}
-                  className="rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                  onClick={() => handleRemove(img.id)}
+                  className="absolute -right-2 -top-2 rounded-full bg-white shadow border border-black/10 p-1 text-gray-500 opacity-0 transition group-hover:opacity-100 hover:bg-gray-50"
                 >
                   <IconX className="h-3.5 w-3.5" />
                 </button>
@@ -253,7 +366,47 @@ export function InputBar() {
         )}
 
         {/* Main input card */}
-        <div className="rounded-2xl border border-gray-200 bg-white shadow-sm">
+        <div
+          className={[
+            'relative rounded-2xl border border-gray-200 bg-white shadow-sm',
+            dragActive ? 'ring-2 ring-blue-200 border-blue-200' : '',
+          ].join(' ')}
+          onDragEnter={(e) => {
+            if (busy) return
+            if (e.dataTransfer?.types?.includes('Files')) setDragActive(true)
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return
+            setDragActive(false)
+          }}
+          onDragOver={(e) => {
+            if (busy) return
+            if (e.dataTransfer?.types?.includes('Files')) {
+              e.preventDefault()
+              e.dataTransfer.dropEffect = 'copy'
+              setDragActive(true)
+            }
+          }}
+          onDrop={(e) => {
+            if (busy) return
+            const files = e.dataTransfer.files
+            if (files && files.length > 0) {
+              e.preventDefault()
+              setDragActive(false)
+              onDropFiles(files)
+              return
+            }
+            setDragActive(false)
+          }}
+        >
+          {dragActive ? (
+            <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-2xl bg-blue-50/40 backdrop-blur-[1px]">
+              <div className="rounded-xl border border-blue-200 bg-white/80 px-4 py-2 text-sm text-blue-900 shadow-sm">
+                Drop images to attach (max 10)
+              </div>
+            </div>
+          ) : null}
+
           {/* Text area */}
           <div className="px-4 pt-4">
             <textarea
@@ -268,20 +421,7 @@ export function InputBar() {
                 }
               }}
               onDrop={(e) => {
-                // Handle dropped files
-                const files = e.dataTransfer.files
-                if (files && files.length > 0) {
-                  e.preventDefault()
-                  for (let i = 0; i < files.length; i++) {
-                    const file = files[i]
-                    if (file.type.startsWith('image/')) {
-                      // Note: For dropped files, we'd need to get the path via Tauri
-                      // For now, we'll use the text drop behavior
-                    }
-                  }
-                }
-
-                // Handle dropped text
+                // Handle dropped text (file drop is handled by the card container)
                 const text = e.dataTransfer.getData('text/plain')
                 if (!text) return
                 e.preventDefault()
@@ -397,13 +537,13 @@ export function InputBar() {
               {/* Image attachment button */}
               <button
                 onClick={() => void handleAttachImage()}
-                disabled={busy}
+                disabled={busy || attachedImages.length >= 10}
                 className={[
                   'rounded-lg p-2 transition',
                   attachedImages.length > 0
                     ? 'text-blue-500 bg-blue-50 hover:bg-blue-100'
                     : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-                  busy ? 'opacity-50 cursor-not-allowed' : '',
+                  busy || attachedImages.length >= 10 ? 'opacity-50 cursor-not-allowed' : '',
                 ].join(' ')}
                 title="Attach image"
               >
@@ -422,10 +562,10 @@ export function InputBar() {
               ) : (
                 <button
                   onClick={handleSend}
-                  disabled={!draftPrompt.trim() && attachedImages.length === 0}
+                  disabled={!draftPrompt.trim()}
                   className={[
                     'flex h-9 w-9 items-center justify-center rounded-full transition',
-                    draftPrompt.trim() || attachedImages.length > 0
+                    draftPrompt.trim()
                       ? 'bg-gray-900 text-white hover:bg-gray-700'
                       : 'bg-gray-200 text-gray-400 cursor-not-allowed',
                   ].join(' ')}
