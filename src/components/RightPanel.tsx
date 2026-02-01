@@ -8,6 +8,7 @@ import { useAppStore, type ModifiedFile, type PendingApproval } from '../lib/sto
 import { DiffViewer } from './DiffViewer'
 import { TerminalPanel } from './TerminalPanel'
 import { OrchestratorPanel } from './OrchestratorPanel'
+import { ElonOrgPanel } from './ElonOrgPanel'
 
 type FileNode = { name: string; path: string; kind: 'file' | 'dir'; relPath: string }
 
@@ -99,6 +100,7 @@ function TreeNode({
 export function RightPanel() {
   const { projectPath, modifiedFilesByPath, bashCommands, daemon, pendingApprovals, mode, currentRunId } = useAppStore()
   const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
+  const isElonMode = mode === 'elon'
   const [clockMs, setClockMs] = useState(() => Date.now())
   const [files, setFiles] = useState<FileNode[]>([])
   const [filter, setFilter] = useState('')
@@ -244,11 +246,11 @@ export function RightPanel() {
 
   return (
     <div className="h-full snailer-card rounded-[22px] border border-black/10 bg-white/70 p-3">
-      <Tabs defaultValue={isOrchestratorMode ? 'agents' : 'diffs'} className="h-full flex flex-col">
+      <Tabs defaultValue={isOrchestratorMode || isElonMode ? 'agents' : 'diffs'} className="h-full flex flex-col">
         <TabsList className="w-full">
-          {isOrchestratorMode && (
+          {(isOrchestratorMode || isElonMode) && (
             <TabsTrigger value="agents" className="flex-1">
-              Agents
+              {isElonMode ? 'Org' : 'Agents'}
             </TabsTrigger>
           )}
           <TabsTrigger value="files" className="flex-1">
@@ -268,9 +270,9 @@ export function RightPanel() {
           </TabsTrigger>
         </TabsList>
 
-        {isOrchestratorMode && (
+        {(isOrchestratorMode || isElonMode) && (
           <TabsContent value="agents" className="flex-1 min-h-0 overflow-hidden">
-            <OrchestratorPanel />
+            {isElonMode ? <ElonOrgPanel /> : <OrchestratorPanel />}
           </TabsContent>
         )}
 

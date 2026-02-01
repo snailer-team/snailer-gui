@@ -17,6 +17,8 @@ export function ChatArea() {
     daemon,
     mode,
     model,
+    setUiMode,
+    lastStandardMode,
   } = useAppStore()
 
   const session = useMemo(
@@ -77,6 +79,7 @@ export function ChatArea() {
     ],
     [],
   )
+  const displayMode = mode === 'elon' ? lastStandardMode : mode
 
   const tauriRuntime = useMemo(() => isTauriRuntime(), [])
 
@@ -97,15 +100,14 @@ export function ChatArea() {
         <div className="flex items-center gap-2">
           <div className="inline-flex items-center rounded-full border border-black/10 bg-white/70 p-1 shadow-sm">
             {modeChoices.map((m) => {
-              const active = mode === m.token
+              const active = displayMode === m.token
               return (
                 <button
                   key={m.token}
                   disabled={!daemon || busy}
                   onClick={() => {
                     void (async () => {
-                      useAppStore.setState({ mode: m.token })
-                      await daemon?.settingsSet({ mode: m.token })
+                      await setUiMode(m.token)
                     })()
                   }}
                   className={[

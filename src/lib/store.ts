@@ -4,6 +4,16 @@ import { persist } from 'zustand/middleware'
 
 import type { PromptStage, UiEventEnvelope } from './daemon'
 import { DaemonClient } from './daemon'
+import {
+  applyElonPromptPrefixWithFrame,
+  ensureElonModeItem,
+  isUiModeToken,
+  uiModeToDaemonMode,
+  type ElonFrame,
+  type UiModeToken,
+} from './modes'
+import type { PlanTree, PlanNode } from './elonPlan'
+import type { Evidence } from './elonEvidence'
 
 export type ChatRole = 'user' | 'assistant' | 'system'
 
@@ -236,6 +246,135 @@ export interface OrchestratorState {
 
 // ==================== End Orchestrator Types ====================
 
+// ==================== ElonX HARD Types ====================
+
+export type ElonAgentStatus = 'idle' | 'observing' | 'planning' | 'acting' | 'evaluating' | 'blocked'
+
+export interface ElonAgentState {
+  id: string
+  status: ElonAgentStatus
+  currentTask?: string
+  lastOutput?: string
+  startedAt?: number
+}
+
+export interface ElonMetrics {
+  cycleStartMs: number
+  autonomyRate: number // 0-100
+  completedTasks: number
+  totalTasks: number
+  estimatedCost: number
+  interventions: number // Human interventions count
+}
+
+export interface ElonApprovalRequest {
+  id: string
+  agentId: string
+  action: string
+  riskLevel: 'low' | 'medium' | 'high'
+  evidence: string[]
+  deadlineMs: number
+}
+
+export interface ElonXState {
+  // Plan Tree
+  planTree: PlanTree | null
+  selectedNodeId: string | null
+
+  // Agent statuses
+  agentStatuses: Record<string, ElonAgentState>
+
+  // Evidence
+  evidences: Evidence[]
+  selectedEvidenceId: string | null
+  evidenceFilter: 'all' | 'pass' | 'fail' | 'warning'
+
+  // Metrics
+  metrics: ElonMetrics
+
+  // Approval requests
+  elonApprovals: ElonApprovalRequest[]
+
+  // CEO Auto-Cycle (M0)
+  autoCycle: AutoCycleState
+  broadcasts: Broadcast[]
+  cycleRuns: CycleRun[]
+
+  // GitHub Integration (M2)
+  githubStatus: GitHubReadStatus
+}
+
+// ==================== CEO Auto-Cycle Types ====================
+
+export type AutoCycleStatus = 'idle' | 'running' | 'paused' | 'cooldown'
+export type AutoCycleInterval = 300000 | 900000 | 1800000 | 3600000 // 5/15/30/60 min
+
+export interface AutoCycleState {
+  enabled: boolean
+  intervalMs: AutoCycleInterval
+  nextRunAt: number | null
+  lastRunAt: number | null
+  status: AutoCycleStatus
+  consecutiveFailures: number // Drift Guard: 3회 연속 실패 시 auto-pause
+}
+
+export interface Broadcast {
+  id: string
+  cycleRunId: string
+  toAgentIds: string[] // e.g., ['pm', 'swe-2', 'swe-3']
+  message: string // 1-3줄
+  why: string // leverage/병목/리스크 근거
+  evidenceLinks: string[]
+  expiresAt: number
+  createdAt: number
+  status: 'active' | 'expired' | 'superseded'
+}
+
+export type LeverageRisk = 'low' | 'medium' | 'high'
+
+export interface TopLeverageItem {
+  title: string
+  assignee: string // pm | swe-2 | swe-3
+  why: string
+  risk: LeverageRisk
+  evidenceIds: string[]
+  acceptance: string[]
+}
+
+export interface CeoLlmOutput {
+  cycleSummary: string
+  topLeverage: TopLeverageItem[]
+  broadcasts: Array<{ to: string; message: string; expiresMins: number }>
+  needsExternalData: boolean
+}
+
+export type CycleRunStatus = 'running' | 'completed' | 'failed' | 'aborted'
+
+export interface CycleRun {
+  id: string
+  startedAt: number
+  endedAt: number | null
+  status: CycleRunStatus
+  evidenceIds: string[]
+  broadcastIds: string[]
+  llmOutput: CeoLlmOutput | null
+  errorMessage: string | null
+}
+
+export interface GitHubReadStatus {
+  installed: boolean
+  authenticated: boolean
+  lastFetchedAt: number | null
+  prCount: number
+  issueCount: number
+  ciStatus: 'pass' | 'fail' | 'pending' | 'unknown'
+  summary: string | null
+}
+
+// ==================== End CEO Auto-Cycle Types ====================
+
+// ==================== End ElonX HARD Types ====================
+
 export type RunStatus =
   | 'idle'
   | 'queued'
@@ -260,11 +399,13 @@ interface AppState {
   projectPathDraft: string
   model: string
   mode: string
+  lastStandardMode: 'classic' | 'team-orchestrator'
   workMode: 'plan' | 'build' | 'review'
   prMode: boolean
   autoApprove: boolean
   mdapK: number
   teamConfigName: string
+  elonFrame: { collapsed: boolean; problem: string; constraints: string; verification: string }
 
   // UI data
   slashItems: Array<{ cmd: string; desc: string }>
@@ -290,6 +431,9 @@ interface AppState {
   // Orchestrator state
   orchestrator: OrchestratorState
 
+  // ElonX HARD state
+  elonX: ElonXState
+
   lastToast: { title: string; message: string } | null
   draftPrompt: string
   attachedImages: AttachedImage[]
@@ -303,6 +447,9 @@ interface AppState {
   deleteSession: (sessionId: string) => Promise<void>
   selectSession: (sessionId: string) => void
   setViewMode: (mode: 'chat' | 'settings') => void
+  setUiMode: (mode: string) => Promise<void>
+  setElonFrame: (patch: Partial<ElonFrame> & { collapsed?: boolean }) => void
+  clearElonFrame: () => void
   sendPrompt: (prompt: string) => Promise<void>
   cancelRun: () => Promise<void>
 
@@ -316,6 +463,30 @@ interface AppState {
   removeAttachedImage: (id: string) => void
   clearAttachedImages: () => void
   clearError: () => void
+
+  // ElonX HARD actions
+  elonExecuteGoal: () => Promise<void>
+  elonPauseExecution: () => void
+  elonResumeExecution: () => void
+  elonAbortExecution: () => void
+  elonSelectNode: (nodeId: string | null) => void
+  elonRetryNode: (nodeId: string) => void
+  elonSkipNode: (nodeId: string) => void
+  elonSelectEvidence: (evidenceId: string | null) => void
+  elonSetEvidenceFilter: (filter: 'all' | 'pass' | 'fail' | 'warning') => void
+  elonApproveAction: (approvalId: string) => void
+  elonRejectAction: (approvalId: string, reason?: string) => void
+  elonUpdateAgentStatus: (agentId: string, status: ElonAgentStatus, task?: string) => void
+  elonAddEvidence: (evidence: Evidence) => void
+  elonUpdatePlanNode: (nodeId: string, patch: Partial<PlanNode>) => void
+
+  // CEO Auto-Cycle actions (M0)
+  autoCycleToggle: (enabled: boolean) => void
+  autoCycleSetInterval: (intervalMs: AutoCycleInterval) => void
+  autoCycleRunNow: () => Promise<void>
+  autoCycleKillSwitch: () => void
+  autoCycleTick: () => void
+  autoCycleExpireBroadcasts: () => void
 }
 
 type PendingApprovalDecision =
@@ -383,11 +554,13 @@ export const useAppStore = create<AppState>()(
       projectPathDraft: '',
       model: 'minimax-m2',
       mode: 'classic',
+      lastStandardMode: 'classic',
       workMode: 'build',
       prMode: false,
       autoApprove: false,
       mdapK: 3,
       teamConfigName: 'ShipFast',
+      elonFrame: { collapsed: false, problem: '', constraints: '', verification: '' },
 
       slashItems: [],
       modeItems: [],
@@ -433,6 +606,45 @@ export const useAppStore = create<AppState>()(
         skills: undefined,
         dynamicAgents: [],
         tasks: [],
+      },
+
+      elonX: {
+        planTree: null,
+        selectedNodeId: null,
+        agentStatuses: {},
+        evidences: [],
+        selectedEvidenceId: null,
+        evidenceFilter: 'all',
+        metrics: {
+          cycleStartMs: 0,
+          autonomyRate: 100,
+          completedTasks: 0,
+          totalTasks: 0,
+          estimatedCost: 0,
+          interventions: 0,
+        },
+        elonApprovals: [],
+        // CEO Auto-Cycle (M0)
+        autoCycle: {
+          enabled: false,
+          intervalMs: 1800000, // 30분 기본값
+          nextRunAt: null,
+          lastRunAt: null,
+          status: 'idle',
+          consecutiveFailures: 0,
+        },
+        broadcasts: [],
+        cycleRuns: [],
+        // GitHub Integration (M2)
+        githubStatus: {
+          installed: false,
+          authenticated: false,
+          lastFetchedAt: null,
+          prCount: 0,
+          issueCount: 0,
+          ciStatus: 'unknown',
+          summary: null,
+        },
       },
 
       lastToast: null,
@@ -1108,7 +1320,11 @@ export const useAppStore = create<AppState>()(
             const nextMode =
               target.includes('classic') ? 'classic' : target.includes('orchestrator') ? 'team-orchestrator' : null
             if (!nextMode) return
-            set({ mode: nextMode })
+            if (get().mode === 'elon') {
+              set({ lastStandardMode: nextMode })
+            } else {
+              set({ mode: nextMode, lastStandardMode: nextMode })
+            }
             return
           }
 
@@ -1210,7 +1426,7 @@ export const useAppStore = create<AppState>()(
             token: started.token,
             projectPath,
             model: get().model,
-            mode: get().mode,
+            mode: uiModeToDaemonMode((isUiModeToken(get().mode) ? (get().mode as UiModeToken) : 'classic') as UiModeToken),
           })
 
 	          try {
@@ -1226,13 +1442,15 @@ export const useAppStore = create<AppState>()(
             })()
 	            set({
 	              slashItems: slash.slashItems,
-	              modeItems: slash.modeItems.filter((m) => {
-	                const label = String(m.label ?? '').toLowerCase()
-	                const token = String(m.token ?? '').toLowerCase()
-	                if (token === 'snailer-doctor' || token === 'snailer-plato' || token === 'plato') return false
-	                if (label.startsWith('snailer plato')) return false
-	                return true
-	              }),
+	              modeItems: ensureElonModeItem(
+                  slash.modeItems.filter((m) => {
+	                  const label = String(m.label ?? '').toLowerCase()
+	                  const token = String(m.token ?? '').toLowerCase()
+	                  if (token === 'snailer-doctor' || token === 'snailer-plato' || token === 'plato') return false
+	                  if (label.startsWith('snailer plato')) return false
+	                  return true
+                  }),
+                ),
 	              modelItems,
 	            })
 	          } catch (e) {
@@ -1241,10 +1459,10 @@ export const useAppStore = create<AppState>()(
             if (msg.toLowerCase().includes('method not found')) {
               set({
 	                slashItems: [],
-	                modeItems: [
+	                modeItems: ensureElonModeItem([
 	                  { label: 'Classic', token: 'classic' },
 	                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
-	                ],
+	                ]),
 	                modelItems: [
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
@@ -1257,9 +1475,12 @@ export const useAppStore = create<AppState>()(
           }
 
           const settings = await client.settingsGet()
+          const daemonMode = settings.mode === 'team-orchestrator' ? 'team-orchestrator' : 'classic'
+          const prevUiMode = get().mode
           set({
             model: settings.model,
-            mode: settings.mode,
+            mode: prevUiMode === 'elon' ? 'elon' : daemonMode,
+            lastStandardMode: daemonMode,
             workMode: settings.workMode as 'plan' | 'build' | 'review',
             prMode: settings.prMode,
             teamConfigName: settings.teamConfigName,
@@ -1380,6 +1601,41 @@ export const useAppStore = create<AppState>()(
       selectSession: (sessionId) => set({ activeSessionId: sessionId }),
       setViewMode: (mode) => set({ viewMode: mode }),
 
+      setElonFrame: (patch) =>
+        set((st) => ({
+          elonFrame: {
+            collapsed: patch.collapsed ?? st.elonFrame.collapsed,
+            problem: patch.problem ?? st.elonFrame.problem,
+            constraints: patch.constraints ?? st.elonFrame.constraints,
+            verification: patch.verification ?? st.elonFrame.verification,
+          },
+        })),
+
+      clearElonFrame: () =>
+        set((st) => ({
+          elonFrame: { ...st.elonFrame, problem: '', constraints: '', verification: '' },
+        })),
+
+      setUiMode: async (next) => {
+        const token = String(next ?? '').trim().toLowerCase()
+        if (!isUiModeToken(token)) return
+
+        const uiMode = token as UiModeToken
+        const daemon = get().daemon
+
+        if (uiMode === 'elon') {
+          set({ mode: 'elon' })
+        } else {
+          set({ mode: uiMode, lastStandardMode: uiMode })
+        }
+
+        try {
+          await daemon?.settingsSet({ mode: uiModeToDaemonMode(uiMode) })
+        } catch {
+          // keep local state even if daemon is offline/older
+        }
+      },
+
       sendPrompt: async (prompt) => {
         const daemon = get().daemon
         const sessionId = get().activeSessionId
@@ -1419,6 +1675,8 @@ export const useAppStore = create<AppState>()(
         if (!daemon) throw new Error('daemon not connected')
         if (!sessionId) throw new Error('no active session')
 
+        const uiMode = (isUiModeToken(get().mode) ? (get().mode as UiModeToken) : 'classic') as UiModeToken
+
         const wiz = get().promptStageWizard
         const trimmed = wiz?.originalPrompt ?? ''
         if (!trimmed) return
@@ -1430,6 +1688,10 @@ export const useAppStore = create<AppState>()(
             return `  ${s.name}: ${v ?? '(skipped)'}`
           })
           promptForAgent = `LLM detail:\n${lines.join('\n')}\n\n${trimmed}`
+        }
+        if (uiMode === 'elon') {
+          const frame = get().elonFrame
+          promptForAgent = applyElonPromptPrefixWithFrame(promptForAgent, frame)
         }
 
         const attachments = get().attachedImages.map((i) => ({ path: i.path, name: i.name }))
@@ -1477,13 +1739,16 @@ export const useAppStore = create<AppState>()(
             },
           },
         })
+        if (uiMode === 'elon') {
+          get().clearElonFrame()
+        }
         try {
           // Ensure daemon session settings match GUI state.
           // `run.start` uses daemon session settings (not per-call params) for mode/model/workMode/prMode/teamConfigName.
           try {
             await daemon.settingsSet({
               model: get().model,
-              mode: get().mode,
+              mode: uiModeToDaemonMode(uiMode),
               workMode: get().workMode,
               prMode: get().prMode,
               teamConfigName: get().teamConfigName,
@@ -1496,7 +1761,7 @@ export const useAppStore = create<AppState>()(
             prompt: promptForAgent,
             sessionId,
             model: get().model,
-            mode: get().mode,
+            mode: uiModeToDaemonMode(uiMode),
             workMode: get().workMode,
             prMode: get().prMode,
             teamConfigName: get().teamConfigName,
@@ -1570,6 +1835,542 @@ export const useAppStore = create<AppState>()(
       clearAttachedImages: () => set({ attachedImages: [] }),
 
       clearError: () => set({ error: null }),
+
+      // ==================== ElonX HARD Actions ====================
+
+      elonExecuteGoal: async () => {
+        const { elonFrame } = get()
+        if (!elonFrame.problem.trim()) return
+
+        // Initialize plan tree from goal
+        const newTree: PlanTree = {
+          goalId: crypto.randomUUID(),
+          problem: elonFrame.problem,
+          constraints: elonFrame.constraints,
+          verification: elonFrame.verification,
+          status: 'running',
+          startedAt: Date.now(),
+          root: {
+            id: 'root',
+            title: elonFrame.problem,
+            status: 'running',
+            assignee: 'pm',
+            children: [],
+          },
+        }
+
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            planTree: newTree,
+            metrics: {
+              ...st.elonX.metrics,
+              cycleStartMs: Date.now(),
+              completedTasks: 0,
+              totalTasks: 1,
+            },
+          },
+        }))
+
+        // Also trigger the normal sendPrompt flow
+        const prompt = elonFrame.problem
+        if (prompt) {
+          await get().sendPrompt(prompt)
+        }
+      },
+
+      elonPauseExecution: () => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            planTree: st.elonX.planTree
+              ? { ...st.elonX.planTree, status: 'paused' }
+              : null,
+          },
+        }))
+      },
+
+      elonResumeExecution: () => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            planTree: st.elonX.planTree
+              ? { ...st.elonX.planTree, status: 'running' }
+              : null,
+          },
+        }))
+      },
+
+      elonAbortExecution: () => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            planTree: st.elonX.planTree
+              ? { ...st.elonX.planTree, status: 'failed' }
+              : null,
+          },
+        }))
+        // Also cancel the daemon run
+        get().cancelRun()
+      },
+
+      elonSelectNode: (nodeId) => {
+        set((st) => ({
+          elonX: { ...st.elonX, selectedNodeId: nodeId },
+        }))
+      },
+
+      elonRetryNode: (nodeId) => {
+        set((st) => {
+          const tree = st.elonX.planTree
+          if (!tree?.root) return st
+
+          const updateNode = (node: PlanNode): PlanNode => {
+            if (node.id === nodeId) {
+              return { ...node, status: 'pending', actualMs: undefined }
+            }
+            return { ...node, children: node.children.map(updateNode) }
+          }
+
+          return {
+            elonX: {
+              ...st.elonX,
+              planTree: { ...tree, root: updateNode(tree.root) },
+            },
+          }
+        })
+      },
+
+      elonSkipNode: (nodeId) => {
+        set((st) => {
+          const tree = st.elonX.planTree
+          if (!tree?.root) return st
+
+          const updateNode = (node: PlanNode): PlanNode => {
+            if (node.id === nodeId) {
+              return { ...node, status: 'completed', outputSummary: 'Skipped' }
+            }
+            return { ...node, children: node.children.map(updateNode) }
+          }
+
+          return {
+            elonX: {
+              ...st.elonX,
+              planTree: { ...tree, root: updateNode(tree.root) },
+            },
+          }
+        })
+      },
+
+      elonSelectEvidence: (evidenceId) => {
+        set((st) => ({
+          elonX: { ...st.elonX, selectedEvidenceId: evidenceId },
+        }))
+      },
+
+      elonSetEvidenceFilter: (filter) => {
+        set((st) => ({
+          elonX: { ...st.elonX, evidenceFilter: filter },
+        }))
+      },
+
+      elonApproveAction: (approvalId) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            elonApprovals: st.elonX.elonApprovals.filter((a) => a.id !== approvalId),
+            metrics: {
+              ...st.elonX.metrics,
+              interventions: st.elonX.metrics.interventions + 1,
+              autonomyRate: Math.max(0, st.elonX.metrics.autonomyRate - 5),
+            },
+          },
+        }))
+      },
+
+      elonRejectAction: (approvalId) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            elonApprovals: st.elonX.elonApprovals.filter((a) => a.id !== approvalId),
+            metrics: {
+              ...st.elonX.metrics,
+              interventions: st.elonX.metrics.interventions + 1,
+              autonomyRate: Math.max(0, st.elonX.metrics.autonomyRate - 5),
+            },
+          },
+        }))
+      },
+
+      elonUpdateAgentStatus: (agentId, status, task) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            agentStatuses: {
+              ...st.elonX.agentStatuses,
+              [agentId]: {
+                id: agentId,
+                status,
+                currentTask: task,
+                startedAt: status === 'acting' ? Date.now() : st.elonX.agentStatuses[agentId]?.startedAt,
+              },
+            },
+          },
+        }))
+      },
+
+      elonAddEvidence: (evidence) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            evidences: [evidence, ...st.elonX.evidences].slice(0, 100),
+          },
+        }))
+      },
+
+      elonUpdatePlanNode: (nodeId, patch) => {
+        set((st) => {
+          const tree = st.elonX.planTree
+          if (!tree?.root) return st
+
+          const updateNode = (node: PlanNode): PlanNode => {
+            if (node.id === nodeId) {
+              return { ...node, ...patch }
+            }
+            return { ...node, children: node.children.map(updateNode) }
+          }
+
+          // Update metrics
+          const countCompleted = (n: PlanNode): number => {
+            let count = n.status === 'completed' ? 1 : 0
+            for (const c of n.children) count += countCompleted(c)
+            return count
+          }
+          const countTotal = (n: PlanNode): number => {
+            let count = 1
+            for (const c of n.children) count += countTotal(c)
+            return count
+          }
+
+          const newRoot = updateNode(tree.root)
+          const completed = countCompleted(newRoot)
+          const total = countTotal(newRoot)
+
+          return {
+            elonX: {
+              ...st.elonX,
+              planTree: { ...tree, root: newRoot },
+              metrics: {
+                ...st.elonX.metrics,
+                completedTasks: completed,
+                totalTasks: total,
+              },
+            },
+          }
+        })
+      },
+
+      // ==================== End ElonX HARD Actions ====================
+
+      // ==================== CEO Auto-Cycle Actions (M0) ====================
+
+      autoCycleToggle: (enabled) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            autoCycle: {
+              ...st.elonX.autoCycle,
+              enabled,
+              status: enabled ? 'cooldown' : 'idle',
+              nextRunAt: enabled ? Date.now() + st.elonX.autoCycle.intervalMs : null,
+              consecutiveFailures: enabled ? 0 : st.elonX.autoCycle.consecutiveFailures,
+            },
+          },
+        }))
+      },
+
+      autoCycleSetInterval: (intervalMs) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            autoCycle: {
+              ...st.elonX.autoCycle,
+              intervalMs,
+              nextRunAt: st.elonX.autoCycle.enabled ? Date.now() + intervalMs : null,
+            },
+          },
+        }))
+      },
+
+      autoCycleRunNow: async () => {
+        const state = get()
+        if (state.elonX.autoCycle.status === 'running') return
+
+        const daemon = state.daemon
+        const sessionId = state.activeSessionId
+        if (!daemon || !sessionId) {
+          console.error('[autoCycleRunNow] No daemon or session')
+          return
+        }
+
+        const cycleId = crypto.randomUUID()
+        const startedAt = Date.now()
+
+        // Mark cycle as running
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            autoCycle: {
+              ...st.elonX.autoCycle,
+              status: 'running',
+            },
+            cycleRuns: [
+              {
+                id: cycleId,
+                startedAt,
+                endedAt: null,
+                status: 'running',
+                evidenceIds: [],
+                broadcastIds: [],
+                llmOutput: null,
+                errorMessage: null,
+              },
+              ...st.elonX.cycleRuns,
+            ].slice(0, 50), // Keep last 50 runs
+          },
+        }))
+
+        try {
+          // Build CEO observe context and prompt
+          const { buildObserveContext, buildCeoMessages, parseCeoLlmOutput } = await import('./ceoLlm')
+          const { invoke } = await import('@tauri-apps/api/core')
+          const observeContext = buildObserveContext(get().elonX)
+          const { systemPrompt, userPrompt } = buildCeoMessages(observeContext)
+
+          // Call xAI API directly via Rust backend (bypasses daemon)
+          const rawResponse = await invoke<string>('xai_chat_completion', { systemPrompt, userPrompt })
+
+          // Parse the CEO LLM output
+          const llmOutput = parseCeoLlmOutput(rawResponse)
+
+          // Create broadcasts from LLM output
+          const broadcastIds: string[] = []
+          const now = Date.now()
+          const newBroadcasts: Broadcast[] = llmOutput.broadcasts.map((b) => {
+            const id = crypto.randomUUID()
+            broadcastIds.push(id)
+            return {
+              id,
+              cycleRunId: cycleId,
+              toAgentIds: [b.to],
+              message: b.message,
+              why: llmOutput.topLeverage.find((l) => l.assignee === b.to)?.why || 'Top leverage item',
+              evidenceLinks: [],
+              expiresAt: now + b.expiresMins * 60 * 1000,
+              createdAt: now,
+              status: 'active' as const,
+            }
+          })
+
+          // Mark previous active broadcasts as superseded
+          set((st) => ({
+            elonX: {
+              ...st.elonX,
+              broadcasts: [
+                ...newBroadcasts,
+                ...st.elonX.broadcasts.map((b) =>
+                  b.status === 'active' ? { ...b, status: 'superseded' as const } : b,
+                ),
+              ].slice(0, 100), // Keep last 100 broadcasts
+            },
+          }))
+
+          // Update agent statuses and call LLMs for each broadcast
+          const { buildAgentPrompt, parseAgentOutput } = await import('./ceoLlm')
+
+          for (const b of newBroadcasts) {
+            for (const agentId of b.toAgentIds) {
+              // Mark agent as evaluating
+              set((st) => ({
+                elonX: {
+                  ...st.elonX,
+                  agentStatuses: {
+                    ...st.elonX.agentStatuses,
+                    [agentId]: {
+                      id: agentId,
+                      status: 'evaluating',
+                      currentTask: b.message,
+                      startedAt: Date.now(),
+                    },
+                  },
+                },
+              }))
+
+              try {
+                const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(agentId, b.message)
+
+                let rawAgentResponse: string
+                if (agentId === 'pm') {
+                  // PM uses Kimi K2.5 with web search for real-time research
+                  rawAgentResponse = await invoke<string>('kimi_web_search_completion', {
+                    systemPrompt: agentSys,
+                    userPrompt: agentUsr,
+                  })
+                } else if (agentId.startsWith('swe')) {
+                  // SWE agents use Anthropic Claude Sonnet 4
+                  rawAgentResponse = await invoke<string>('anthropic_chat_completion', {
+                    systemPrompt: agentSys,
+                    userPrompt: agentUsr,
+                  })
+                } else {
+                  // Fallback: OpenAI GPT-4o
+                  rawAgentResponse = await invoke<string>('openai_chat_completion', {
+                    systemPrompt: agentSys,
+                    userPrompt: agentUsr,
+                  })
+                }
+
+                // Parse output and store results
+                let outputSummary: string
+                try {
+                  const agentOutput = parseAgentOutput(rawAgentResponse)
+                  outputSummary = agentOutput.output
+                } catch {
+                  // If parsing fails, use raw response as summary
+                  outputSummary = rawAgentResponse.slice(0, 500)
+                }
+
+                // Mark agent as idle with last output
+                set((st) => ({
+                  elonX: {
+                    ...st.elonX,
+                    agentStatuses: {
+                      ...st.elonX.agentStatuses,
+                      [agentId]: {
+                        id: agentId,
+                        status: 'idle',
+                        currentTask: undefined,
+                        lastOutput: outputSummary,
+                        startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                      },
+                    },
+                  },
+                }))
+              } catch (agentErr) {
+                // Agent LLM call failed - mark as idle with error
+                const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr)
+                set((st) => ({
+                  elonX: {
+                    ...st.elonX,
+                    agentStatuses: {
+                      ...st.elonX.agentStatuses,
+                      [agentId]: {
+                        id: agentId,
+                        status: 'idle',
+                        currentTask: undefined,
+                        lastOutput: `[Error] ${errMsg}`,
+                        startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                      },
+                    },
+                  },
+                }))
+              }
+            }
+          }
+
+          // Complete the cycle run
+          const endedAt = Date.now()
+          set((st) => ({
+            elonX: {
+              ...st.elonX,
+              autoCycle: {
+                ...st.elonX.autoCycle,
+                status: st.elonX.autoCycle.enabled ? 'cooldown' : 'idle',
+                lastRunAt: endedAt,
+                nextRunAt: st.elonX.autoCycle.enabled ? endedAt + st.elonX.autoCycle.intervalMs : null,
+                consecutiveFailures: 0,
+              },
+              cycleRuns: st.elonX.cycleRuns.map((r) =>
+                r.id === cycleId
+                  ? { ...r, endedAt, status: 'completed' as const, llmOutput, broadcastIds }
+                  : r,
+              ),
+            },
+          }))
+        } catch (error) {
+          // Handle failure
+          const endedAt = Date.now()
+          const errorMsg = error instanceof Error ? error.message : 'Cycle execution failed'
+
+          set((st) => {
+            const failures = st.elonX.autoCycle.consecutiveFailures + 1
+            const shouldPause = failures >= 3 // Drift Guard: auto-pause after 3 failures
+
+            return {
+              elonX: {
+                ...st.elonX,
+                autoCycle: {
+                  ...st.elonX.autoCycle,
+                  status: shouldPause ? 'paused' : st.elonX.autoCycle.enabled ? 'cooldown' : 'idle',
+                  enabled: shouldPause ? false : st.elonX.autoCycle.enabled,
+                  lastRunAt: endedAt,
+                  nextRunAt: shouldPause ? null : st.elonX.autoCycle.enabled ? endedAt + st.elonX.autoCycle.intervalMs : null,
+                  consecutiveFailures: failures,
+                },
+                cycleRuns: st.elonX.cycleRuns.map((r) =>
+                  r.id === cycleId ? { ...r, endedAt, status: 'failed' as const, errorMessage: errorMsg } : r,
+                ),
+              },
+            }
+          })
+        }
+      },
+
+      autoCycleKillSwitch: () => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            autoCycle: {
+              ...st.elonX.autoCycle,
+              enabled: false,
+              status: 'idle',
+              nextRunAt: null,
+            },
+            // Abort any running cycle
+            cycleRuns: st.elonX.cycleRuns.map((r) =>
+              r.status === 'running' ? { ...r, status: 'aborted' as const, endedAt: Date.now() } : r,
+            ),
+          },
+        }))
+      },
+
+      autoCycleTick: () => {
+        const state = get()
+        const { autoCycle } = state.elonX
+
+        if (!autoCycle.enabled || autoCycle.status !== 'cooldown') return
+        if (!autoCycle.nextRunAt) return
+
+        const now = Date.now()
+        if (now >= autoCycle.nextRunAt) {
+          // Time to run the next cycle
+          get().autoCycleRunNow()
+        }
+      },
+
+      autoCycleExpireBroadcasts: () => {
+        const now = Date.now()
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            broadcasts: st.elonX.broadcasts.map((b) =>
+              b.status === 'active' && b.expiresAt <= now ? { ...b, status: 'expired' as const } : b,
+            ),
+          },
+        }))
+      },
+
+      // ==================== End CEO Auto-Cycle Actions ====================
     }),
     {
       name: 'snailer-gui',
@@ -1577,6 +2378,7 @@ export const useAppStore = create<AppState>()(
         projectPath: state.projectPath,
         model: state.model,
         mode: state.mode,
+        lastStandardMode: state.lastStandardMode,
         workMode: state.workMode,
         prMode: state.prMode,
         autoApprove: state.autoApprove,

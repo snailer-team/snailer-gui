@@ -88,6 +88,10 @@ export function HomeScreen() {
     setProjectPath,
     model,
     mode,
+    lastStandardMode,
+    setUiMode,
+    elonFrame,
+    setElonFrame,
     modelItems,
     draftPrompt,
     setDraftPrompt,
@@ -116,6 +120,8 @@ export function HomeScreen() {
     ],
     [],
   )
+  const displayMode = mode === 'elon' ? lastStandardMode : mode
+  const elonEnabled = mode === 'elon'
 
   const handleSubmit = () => {
     const prompt = draftPrompt.trim()
@@ -172,14 +178,13 @@ export function HomeScreen() {
       <div className="px-8 pt-6">
         <div className="inline-flex items-center rounded-full border border-black/10 bg-white p-1 shadow-sm">
           {modeChoices.map((m) => {
-            const active = mode === m.token
+            const active = displayMode === m.token
             return (
               <button
                 key={m.token}
                 disabled={!daemon || busy}
                 onClick={async () => {
-                  useAppStore.setState({ mode: m.token })
-                  await daemon?.settingsSet({ mode: m.token })
+                  await setUiMode(m.token)
                 }}
                 className={[
                   'rounded-full px-3 py-1.5 text-sm font-medium transition',
@@ -263,6 +268,64 @@ export function HomeScreen() {
 
             {/* Textarea */}
             <div className="relative">
+              {!elonEnabled ? null : (
+                <div className="mb-3 rounded-2xl border border-black/10 bg-white/60 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold tracking-wide text-black/70">ElonX HARD Frame</div>
+                    <button
+                      type="button"
+                      onClick={() => setElonFrame({ collapsed: !elonFrame.collapsed })}
+                      className="rounded-lg border border-black/10 bg-white/60 px-2 py-1 text-[11px] font-medium text-black/60 hover:bg-white"
+                    >
+                      {elonFrame.collapsed ? 'Show' : 'Hide'}
+                    </button>
+                  </div>
+
+                  {elonFrame.collapsed ? (
+                    <div className="mt-2 text-[12px] text-black/50">
+                      {(elonFrame.problem || elonFrame.constraints || elonFrame.verification)
+                        ? [
+                            elonFrame.problem ? `Problem: ${elonFrame.problem}` : null,
+                            elonFrame.constraints ? `Constraints: ${elonFrame.constraints}` : null,
+                            elonFrame.verification ? `Verification: ${elonFrame.verification}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')
+                        : 'Set a one-line problem, constraints, and verification.'}
+                    </div>
+                  ) : (
+                    <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Problem</div>
+                        <input
+                          value={elonFrame.problem}
+                          onChange={(e) => setElonFrame({ problem: e.target.value })}
+                          placeholder="What are we building?"
+                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                        />
+                      </div>
+                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Constraints</div>
+                        <input
+                          value={elonFrame.constraints}
+                          onChange={(e) => setElonFrame({ constraints: e.target.value })}
+                          placeholder="Hard limits"
+                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                        />
+                      </div>
+                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Verification</div>
+                        <input
+                          value={elonFrame.verification}
+                          onChange={(e) => setElonFrame({ verification: e.target.value })}
+                          placeholder="Proof of done"
+                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <textarea
                 value={draftPrompt}
                 disabled={busy}

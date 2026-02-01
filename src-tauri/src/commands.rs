@@ -5,10 +5,91 @@ use std::time::Duration;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Serialize)]
+pub struct GitHubCliStatusResponse {
+    pub installed: bool,
+    pub version: Option<String>,
+    pub auth: String, // "ok" | "not_logged_in" | "unknown"
+    pub auth_output: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct EngineStartResponse {
     pub url: String,
     pub token: String,
     pub default_project_path: String,
+}
+
+fn run_cmd_capture(cmd: &str, args: &[&str], cwd: Option<&str>) -> Result<(i32, String), String> {
+    let mut c = std::process::Command::new(cmd);
+    c.args(args);
+    if let Some(dir) = cwd {
+        if !dir.trim().is_empty() {
+            c.current_dir(dir);
+        }
+    }
+    let out = c.output().map_err(|e| format!("Failed to run {cmd}: {e}"))?;
+    let code = out.status.code().unwrap_or(-1);
+    let mut text = String::new();
+    if !out.stdout.is_empty() {
+        text.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    if !out.stderr.is_empty() {
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&out.stderr));
+    }
+    Ok((code, text.trim().to_string()))
+}
+
+#[tauri::command]
+pub fn github_cli_status(cwd: Option<String>) -> Result<GitHubCliStatusResponse, String> {
+    let cwd_ref = cwd.as_deref();
+
+    // 1) gh --version (installed?)
+    let version_out = std::process::Command::new("gh")
+        .arg("--version")
+        .output();
+
+    let Ok(version_out) = version_out else {
+        return Ok(GitHubCliStatusResponse {
+            installed: false,
+            version: None,
+            auth: "unknown".to_string(),
+            auth_output: None,
+        });
+    };
+
+    let installed = version_out.status.success();
+    let version_text = String::from_utf8_lossy(&version_out.stdout).lines().next().unwrap_or("").trim().to_string();
+    let version = if version_text.is_empty() { None } else { Some(version_text) };
+
+    if !installed {
+        return Ok(GitHubCliStatusResponse {
+            installed: false,
+            version,
+            auth: "unknown".to_string(),
+            auth_output: None,
+        });
+    }
+
+    // 2) gh auth status
+    let (_code, auth_text) = run_cmd_capture("gh", &["auth", "status", "-h", "github.com"], cwd_ref)?;
+    let auth_lower = auth_text.to_lowercase();
+    let auth = if auth_lower.contains("logged in to github.com") || auth_lower.contains("authenticated") {
+        "ok"
+    } else if auth_lower.contains("not logged") || auth_lower.contains("no github hosts") {
+        "not_logged_in"
+    } else {
+        "unknown"
+    };
+
+    Ok(GitHubCliStatusResponse {
+        installed: true,
+        version,
+        auth: auth.to_string(),
+        auth_output: if auth_text.is_empty() { None } else { Some(auth_text) },
+    })
 }
 
 #[derive(Debug)]
@@ -1719,6 +1800,311 @@ fn load_system_ca_bundle() -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+// ============================================================================
+// xAI Direct API Call (CEO Auto-Cycle)
+// ============================================================================
+
+fn read_env_key(key: &str) -> Result<String, String> {
+    let env_path = snailer_home_dir().join(".env");
+    let contents = std::fs::read_to_string(&env_path)
+        .map_err(|e| format!("Failed to read ~/.snailer/.env: {}", e))?;
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix(key) {
+            let rest = rest.trim_start();
+            if let Some(value) = rest.strip_prefix('=') {
+                let value = value.trim();
+                // Remove surrounding quotes if present
+                let value = if (value.starts_with('"') && value.ends_with('"'))
+                    || (value.starts_with('\'') && value.ends_with('\''))
+                {
+                    &value[1..value.len() - 1]
+                } else {
+                    value
+                };
+                if !value.is_empty() {
+                    return Ok(value.to_string());
+                }
+            }
+        }
+    }
+
+    Err(format!("{} not found in ~/.snailer/.env", key))
+}
+
+/// Call xAI chat completions API directly with grok-4 model.
+#[tauri::command]
+pub async fn xai_chat_completion(
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("XAI_API_KEY")?;
+
+        let body = serde_json::json!({
+            "model": "grok-4",
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "temperature": 0.3
+        });
+
+        let resp = ureq::post("https://api.x.ai/v1/chat/completions")
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| format!("xAI API request failed: {}", e))?;
+
+        let resp_json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse xAI API response: {}", e))?;
+
+        let content = resp_json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "Unexpected xAI API response structure: {}",
+                    serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+                )
+            })?;
+
+        Ok(content.to_string())
+    })
+    .await
+    .map_err(|e| format!("xAI task failed: {}", e))?
+}
+
+/// Call OpenAI chat completions API directly with gpt-4o model (used by PM agent).
+#[tauri::command]
+pub async fn openai_chat_completion(
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("OPENAI_API_KEY")?;
+
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "temperature": 0.3
+        });
+
+        let resp = ureq::post("https://api.openai.com/v1/chat/completions")
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| format!("OpenAI API request failed: {}", e))?;
+
+        let resp_json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse OpenAI API response: {}", e))?;
+
+        let content = resp_json
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "Unexpected OpenAI API response structure: {}",
+                    serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+                )
+            })?;
+
+        Ok(content.to_string())
+    })
+    .await
+    .map_err(|e| format!("OpenAI task failed: {}", e))?
+}
+
+/// Call Kimi K2.5 chat completions API with built-in `$web_search` tool.
+///
+/// Uses a tool_calls loop: if `finish_reason == "tool_calls"`, the assistant message and
+/// tool results (arguments echoed back) are appended and a follow-up request is made.
+/// The loop runs at most 5 iterations to prevent runaway requests.
+#[tauri::command]
+pub async fn kimi_web_search_completion(
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("MOONSHOT_API_KEY")?;
+
+        let tools = serde_json::json!([
+            {
+                "type": "builtin_function",
+                "function": { "name": "$web_search" }
+            }
+        ]);
+
+        let mut messages = vec![
+            serde_json::json!({ "role": "system", "content": system_prompt }),
+            serde_json::json!({ "role": "user", "content": user_prompt }),
+        ];
+
+        const MAX_ITERATIONS: usize = 5;
+
+        for _iter in 0..MAX_ITERATIONS {
+            let body = serde_json::json!({
+                "model": "kimi-k2.5",
+                "messages": messages,
+                "tools": tools,
+                "max_tokens": 8192,
+                "temperature": 0.3,
+                "thinking": { "enabled": false }
+            });
+
+            let resp = ureq::post("https://api.moonshot.cn/v1/chat/completions")
+                .set("Authorization", &format!("Bearer {}", api_key))
+                .set("Content-Type", "application/json")
+                .send_json(body)
+                .map_err(|e| format!("Kimi API request failed: {}", e))?;
+
+            let resp_json: serde_json::Value = resp
+                .into_json()
+                .map_err(|e| format!("Failed to parse Kimi API response: {}", e))?;
+
+            let choice = resp_json
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .ok_or_else(|| {
+                    format!(
+                        "Unexpected Kimi API response: {}",
+                        serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+                    )
+                })?;
+
+            let finish_reason = choice
+                .get("finish_reason")
+                .and_then(|f| f.as_str())
+                .unwrap_or("");
+
+            let message = choice.get("message").cloned().unwrap_or(serde_json::json!({}));
+
+            if finish_reason == "stop" {
+                // Final response
+                let content = message
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+                return Ok(content.to_string());
+            }
+
+            if finish_reason == "tool_calls" {
+                // Append assistant message (contains tool_calls)
+                messages.push(message.clone());
+
+                // Extract tool_calls and echo arguments back as tool results
+                if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                    for tc in tool_calls {
+                        let tool_call_id = tc
+                            .get("id")
+                            .and_then(|id| id.as_str())
+                            .unwrap_or("");
+                        let function = tc.get("function").cloned().unwrap_or(serde_json::json!({}));
+                        let name = function
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("$web_search");
+                        let arguments = function
+                            .get("arguments")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("{}");
+
+                        messages.push(serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "name": name,
+                            "content": arguments
+                        }));
+                    }
+                }
+
+                // Continue loop for next request
+                continue;
+            }
+
+            // Unknown finish_reason — try to extract content anyway
+            let content = message
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("");
+            if !content.is_empty() {
+                return Ok(content.to_string());
+            }
+
+            return Err(format!(
+                "Kimi API returned unexpected finish_reason: {}",
+                finish_reason
+            ));
+        }
+
+        Err("Kimi web search exceeded maximum iterations (5)".to_string())
+    })
+    .await
+    .map_err(|e| format!("Kimi task failed: {}", e))?
+}
+
+/// Call Anthropic Messages API directly with claude-sonnet-4-20250514 model (used by SWE agents).
+#[tauri::command]
+pub async fn anthropic_chat_completion(
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("ANTHROPIC_API_KEY")?;
+
+        let body = serde_json::json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 4096,
+            "system": system_prompt,
+            "messages": [
+                { "role": "user", "content": user_prompt }
+            ]
+        });
+
+        let resp = ureq::post("https://api.anthropic.com/v1/messages")
+            .set("x-api-key", &api_key)
+            .set("anthropic-version", "2023-06-01")
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| format!("Anthropic API request failed: {}", e))?;
+
+        let resp_json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse Anthropic API response: {}", e))?;
+
+        let content = resp_json
+            .get("content")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("text"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "Unexpected Anthropic API response structure: {}",
+                    serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+                )
+            })?;
+
+        Ok(content.to_string())
+    })
+    .await
+    .map_err(|e| format!("Anthropic task failed: {}", e))?
 }
 
 #[cfg(test)]

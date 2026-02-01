@@ -45,7 +45,12 @@ pub fn run() {
       commands::auth_poll_device_token,
       commands::auth_set_api_key,
       commands::auth_logout,
-      commands::auth_check
+      commands::auth_check,
+      commands::github_cli_status,
+      commands::xai_chat_completion,
+      commands::openai_chat_completion,
+      commands::anthropic_chat_completion,
+      commands::kimi_web_search_completion
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

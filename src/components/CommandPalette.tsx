@@ -58,8 +58,7 @@ export function CommandPalette() {
         id: `mode:${m.token}`,
         label: `Mode: ${m.label}`,
         run: async () => {
-          useAppStore.setState({ mode: m.token })
-          await daemon?.settingsSet({ mode: m.token })
+          await useAppStore.getState().setUiMode(m.token)
         },
       })),
     [modeItems, daemon],

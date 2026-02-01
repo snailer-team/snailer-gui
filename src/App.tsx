@@ -11,6 +11,7 @@ import { HomeScreen } from './components/HomeScreen'
 import { PromptStageWizard } from './components/PromptStageWizard'
 import { ClarifyingPromptPanel } from './components/ClarifyingPromptPanel'
 import { SettingsView } from './components/SettingsView'
+import { ElonLayout } from './components/elon'
 import { useAppStore } from './lib/store'
 
 export default function App() {
@@ -33,14 +34,16 @@ export default function App() {
     [sessions, activeSessionId],
   )
   const isSettingsView = viewMode !== 'chat'
+  const isElonMode = mode === 'elon'
   const showHome =
     viewMode === 'chat' &&
+    !isElonMode &&
     (!activeSession || activeSession.messages.length === 0) &&
     !promptStageWizard &&
     clarifyingQuestions.length === 0 &&
     pendingApprovals.length === 0
   const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
-  const showSplitRightPanel = viewMode === 'chat' && isOrchestratorMode
+  const showSplitRightPanel = viewMode === 'chat' && isOrchestratorMode && !isElonMode
 
   // Auto-connect on mount
   useEffect(() => {
@@ -94,6 +97,10 @@ export default function App() {
           {isSettingsView ? (
             <div className="h-full w-full overflow-hidden">
               <SettingsView />
+            </div>
+          ) : isElonMode ? (
+            <div className="h-full w-full overflow-hidden bg-[#FAF9F6]">
+              <ElonLayout />
             </div>
           ) : (
             <>
