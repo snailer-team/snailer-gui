@@ -147,6 +147,7 @@ import { ELON_AGENTS } from '../../lib/elonOrg'
 import { XAI_CULTURE, AGENT_DISCIPLINE, SWE_COLLAB_RULES, type CulturePrinciple } from '../../lib/xaiCulture'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from '../ui/scroll-area'
 import { ElonSetupPanelContent } from './ElonSetupPanel'
+import { DiffViewer } from '../DiffViewer'
 
 function getAgentTitle(agentId: string): string {
   const agent = ELON_AGENTS.find((a) => a.id === agentId)
@@ -187,6 +188,45 @@ function EvidenceCard({
   )
 }
 
+function EvidenceDetailInline({ evidence }: { evidence: Evidence }) {
+  if (evidence.type === 'diff') {
+    const data = evidence.data as { path: string; added: number; removed: number; patch: string }
+    return (
+      <div className="p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">{getTypeIcon(evidence.type)}</span>
+          <span className="font-semibold text-sm text-black/80">{evidence.title}</span>
+        </div>
+        <div className="rounded-lg bg-white/60 p-2">
+          <div className="text-xs font-medium text-black/70 truncate">{data.path}</div>
+          <div className="mt-1 flex items-center gap-3 text-sm">
+            <span className="text-emerald-600 font-medium">+{data.added}</span>
+            <span className="text-red-600 font-medium">-{data.removed}</span>
+          </div>
+        </div>
+        {data.patch && (
+          <div className="h-[180px]">
+            <DiffViewer patch={data.patch} />
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Default: JSON pretty-print for other types
+  return (
+    <div className="p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-lg">{getTypeIcon(evidence.type)}</span>
+        <span className="font-semibold text-sm text-black/80">{evidence.title}</span>
+      </div>
+      <pre className="rounded-lg bg-black/5 p-2 text-[10px] text-black/60 overflow-auto max-h-40">
+        {JSON.stringify(evidence.data, null, 2)}
+      </pre>
+    </div>
+  )
+}
+
 function ElonEvidencePanelContent() {
   const { elonX, elonSelectEvidence, elonSetEvidenceFilter } = useAppStore()
   const { evidences, selectedEvidenceId, evidenceFilter } = elonX
@@ -200,6 +240,10 @@ function ElonEvidencePanelContent() {
       return true
     })
   }, [evidences, evidenceFilter])
+
+  const selectedEvidence = useMemo(() => {
+    return evidences.find((e) => e.id === selectedEvidenceId) ?? null
+  }, [evidences, selectedEvidenceId])
 
   const filterButtons: Array<{ key: typeof evidenceFilter; label: string }> = [
     { key: 'all', label: 'All' },
@@ -252,6 +296,13 @@ function ElonEvidencePanelContent() {
         </ScrollAreaViewport>
         <ScrollBar orientation="vertical" />
       </ScrollArea>
+
+      {/* Detail View */}
+      {selectedEvidence && (
+        <div className="shrink-0 border-t border-black/5 max-h-[280px] overflow-auto">
+          <EvidenceDetailInline evidence={selectedEvidence} />
+        </div>
+      )}
     </div>
   )
 }

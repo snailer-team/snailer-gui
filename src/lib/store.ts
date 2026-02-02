@@ -250,12 +250,25 @@ export interface OrchestratorState {
 
 export type ElonAgentStatus = 'idle' | 'observing' | 'planning' | 'acting' | 'evaluating' | 'blocked'
 
+export type OutputQuality = 'code_verified' | 'text_only' | 'actionable'
+
+export interface AgentActivityLog {
+  timestamp: number
+  type: 'thinking' | 'action' | 'ceo_feedback' | 'error' | 'success' | 'github'
+  message: string
+  detail?: string
+}
+
 export interface ElonAgentState {
   id: string
   status: ElonAgentStatus
   currentTask?: string
   lastOutput?: string
   startedAt?: number
+  lastOutputQuality?: OutputQuality
+  liveActivity?: string // Real-time status like "Writing code...", "Applying patch..."
+  activityLogs?: AgentActivityLog[] // Recent activity history
+  ceoFeedback?: string // Latest CEO feedback
 }
 
 export interface ElonMetrics {
@@ -634,6 +647,9 @@ interface AppState {
   elonApproveAction: (approvalId: string) => void
   elonRejectAction: (approvalId: string, reason?: string) => void
   elonUpdateAgentStatus: (agentId: string, status: ElonAgentStatus, task?: string) => void
+  elonSetAgentLiveActivity: (agentId: string, liveActivity: string | undefined) => void
+  elonAddAgentLog: (agentId: string, log: AgentActivityLog) => void
+  elonSetCeoFeedback: (agentId: string, feedback: string) => void
   elonAddEvidence: (evidence: Evidence) => void
   elonUpdatePlanNode: (nodeId: string, patch: Partial<PlanNode>) => void
 
@@ -2201,7 +2217,7 @@ export const useAppStore = create<AppState>()(
         const request: AgentInputRequest = {
           id,
           agentId: params.agentId,
-          cycleRunId: cycleRunId,
+          cycleRunId: params.cycleRunId,
           label: params.label,
           why: params.why,
           inputType: params.inputType,
@@ -2299,10 +2315,69 @@ export const useAppStore = create<AppState>()(
                 status,
                 currentTask: task,
                 startedAt: status === 'acting' ? Date.now() : st.elonX.agentStatuses[agentId]?.startedAt,
+                liveActivity: undefined, // Clear live activity on status change
               },
             },
           },
         }))
+      },
+
+      elonSetAgentLiveActivity: (agentId, liveActivity) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            agentStatuses: {
+              ...st.elonX.agentStatuses,
+              [agentId]: {
+                ...st.elonX.agentStatuses[agentId],
+                id: agentId,
+                status: st.elonX.agentStatuses[agentId]?.status || 'acting',
+                liveActivity,
+              },
+            },
+          },
+        }))
+      },
+
+      elonAddAgentLog: (agentId, log) => {
+        set((st) => {
+          const existing = st.elonX.agentStatuses[agentId]
+          const currentLogs = existing?.activityLogs || []
+          return {
+            elonX: {
+              ...st.elonX,
+              agentStatuses: {
+                ...st.elonX.agentStatuses,
+                [agentId]: {
+                  ...existing,
+                  id: agentId,
+                  status: existing?.status || 'idle',
+                  activityLogs: [log, ...currentLogs].slice(0, 20), // Keep last 20 logs
+                },
+              },
+            },
+          }
+        })
+      },
+
+      elonSetCeoFeedback: (agentId, feedback) => {
+        set((st) => {
+          const existing = st.elonX.agentStatuses[agentId]
+          return {
+            elonX: {
+              ...st.elonX,
+              agentStatuses: {
+                ...st.elonX.agentStatuses,
+                [agentId]: {
+                  ...existing,
+                  id: agentId,
+                  status: existing?.status || 'idle',
+                  ceoFeedback: feedback,
+                },
+              },
+            },
+          }
+        })
       },
 
       elonAddEvidence: (evidence) => {
@@ -2663,12 +2738,26 @@ export const useAppStore = create<AppState>()(
           const newBroadcasts: Broadcast[] = llmOutput.broadcasts.map((b) => {
             const id = crypto.randomUUID()
             broadcastIds.push(id)
+
+            // Set CEO feedback for the agent (visible in UI)
+            const leverageItem = llmOutput.topLeverage.find((l) => l.assignee === b.to)
+            const ceoFeedback = leverageItem
+              ? `Task: ${leverageItem.title} | Why: ${leverageItem.why} | Risk: ${leverageItem.risk}`
+              : b.message.slice(0, 100)
+            get().elonSetCeoFeedback(b.to, ceoFeedback)
+            get().elonAddAgentLog(b.to, {
+              timestamp: now,
+              type: 'ceo_feedback',
+              message: `CEO assigned: ${leverageItem?.title || 'New directive'}`,
+              detail: leverageItem?.why || b.message,
+            })
+
             return {
               id,
               cycleRunId: cycleId,
               toAgentIds: [b.to],
               message: b.message,
-              why: llmOutput.topLeverage.find((l) => l.assignee === b.to)?.why || 'Top leverage item',
+              why: leverageItem?.why || 'Top leverage item',
               evidenceLinks: [],
               expiresAt: now + b.expiresMins * 60 * 1000,
               createdAt: now,
@@ -2750,6 +2839,32 @@ export const useAppStore = create<AppState>()(
                 ? '\n\n[Direct Messages for you]\n' + pendingDMs.map((dm) => `From ${dm.fromAgentId}: ${dm.message}`).join('\n')
                 : ''
 
+              // Fetch real project context for agents (git status, file tree)
+              const projectPath = get().projectPath
+              let projectContext = ''
+              if (projectPath) {
+                try {
+                  const [gitStatus, fileTree] = await Promise.all([
+                    invoke<string>('git_status_summary', { cwd: projectPath }).catch(() => 'Git status unavailable'),
+                    invoke<Array<{ name: string; path: string; kind: string }>>('fs_list_tree', { root: projectPath, maxDepth: 3 }).catch(() => []),
+                  ])
+                  const treeStr = (fileTree as Array<{ name: string; path: string; kind: string }>)
+                    .slice(0, 80)
+                    .map((f) => `${f.kind === 'dir' ? '📁' : '📄'} ${f.path.replace(projectPath + '/', '')}`)
+                    .join('\n')
+                  projectContext = `\n\n[Project Context — REAL FILESYSTEM]
+Project path: ${projectPath}
+${gitStatus}
+File structure (top 80 files):
+${treeStr}
+
+IMPORTANT: You are operating on a REAL codebase. Your codeDiff patches will be applied to actual files.
+Your githubActions will execute real git/gh commands. Write precise, working code.`
+                } catch {
+                  // Project context unavailable, continue without it
+                }
+              }
+
               // Phase 1: Self-Correction Loop — retry up to 3 times with reflection
               const MAX_ATTEMPTS = 3
               let attempt = 0
@@ -2760,13 +2875,22 @@ export const useAppStore = create<AppState>()(
                 attempt++
 
                 try {
-                  const broadcastWithContext = b.message + meetingDecisionContext + dmContext
+                  const broadcastWithContext = b.message + meetingDecisionContext + dmContext + projectContext
                   const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(
                     agentId,
                     currentPromptOverride ?? broadcastWithContext,
                     undefined,
                     knowledgeContext || undefined,
                   )
+
+                  // Update live activity - calling LLM
+                  get().elonSetAgentLiveActivity(agentId, 'Thinking...')
+                  get().elonAddAgentLog(agentId, {
+                    timestamp: Date.now(),
+                    type: 'thinking',
+                    message: 'Analyzing task and generating response...',
+                    detail: b.message.slice(0, 100),
+                  })
 
                   // Route to appropriate LLM and get response with usage
                   let llmResponse: LlmCompletionResponse
@@ -2804,6 +2928,16 @@ export const useAppStore = create<AppState>()(
                   // Parse output and store results
                   const agentOutput = parseAgentOutput(rawAgentResponse)
                   const outputSummary = agentOutput.output
+
+                  // SWE codeDiff validation: write_code actions MUST include codeDiff
+                  const isSweAgent = agentId.startsWith('swe')
+                  if (isSweAgent) {
+                    const writeCodeActions = agentOutput.actions.filter((a) => a.type === 'write_code')
+                    const missingDiff = writeCodeActions.filter((a) => !a.codeDiff)
+                    if (missingDiff.length > 0) {
+                      throw new Error(`SWE codeDiff REJECTED: ${missingDiff.length} write_code action(s) missing codeDiff. Every write_code action MUST include a unified diff in codeDiff field.`)
+                    }
+                  }
 
                   // Rule 3: Validate improvements — empty = cycle fail → triggers retry
                   if (agentOutput.improvements.length === 0) {
@@ -2846,6 +2980,300 @@ export const useAppStore = create<AppState>()(
                     data: { json: evidenceData },
                   })
 
+                  // ── REAL EXECUTION: Apply codeDiffs to actual filesystem ──
+                  const executionResults: Array<{ action: string; success: boolean; detail: string }> = []
+                  for (const action of agentOutput.actions) {
+                    if (action.codeDiff && projectPath) {
+                      // Update live activity
+                      get().elonSetAgentLiveActivity(agentId, `Applying patch: ${action.title}...`)
+                      get().elonAddAgentLog(agentId, {
+                        timestamp: Date.now(),
+                        type: 'action',
+                        message: `Applying code patch: ${action.title}`,
+                        detail: `Files: ${action.files?.join(', ') || 'unknown'}`,
+                      })
+                      try {
+                        const applyResult = await invoke<string>('git_apply_patch', {
+                          cwd: projectPath,
+                          patch: action.codeDiff,
+                        })
+                        executionResults.push({ action: action.title, success: true, detail: applyResult })
+                        get().elonAddAgentLog(agentId, {
+                          timestamp: Date.now(),
+                          type: 'success',
+                          message: `Patch applied successfully: ${action.title}`,
+                        })
+                      } catch (patchErr) {
+                        const patchErrMsg = patchErr instanceof Error ? patchErr.message : String(patchErr)
+                        get().elonAddAgentLog(agentId, {
+                          timestamp: Date.now(),
+                          type: 'error',
+                          message: `Patch failed: ${action.title}`,
+                          detail: patchErrMsg,
+                        })
+                        // Fallback: if git apply fails, try direct file write for simple cases
+                        if (action.files && action.files.length === 1) {
+                          try {
+                            // Read current file, attempt simple application
+                            executionResults.push({ action: action.title, success: false, detail: `git apply failed: ${patchErrMsg}. File listed: ${action.files[0]}` })
+                          } catch {
+                            executionResults.push({ action: action.title, success: false, detail: `Patch failed: ${patchErrMsg}` })
+                          }
+                        } else {
+                          executionResults.push({ action: action.title, success: false, detail: `Patch failed: ${patchErrMsg}` })
+                        }
+                      }
+
+                      // Record diff Evidence regardless of apply success
+                      const addedLines = (action.codeDiff.match(/^\+[^+]/gm) || []).length
+                      const removedLines = (action.codeDiff.match(/^-[^-]/gm) || []).length
+                      const filePath = action.files?.[0] ?? action.title
+                      const lastResult = executionResults[executionResults.length - 1]
+                      get().elonAddEvidence({
+                        id: crypto.randomUUID(),
+                        type: 'diff',
+                        title: `[${agentId.toUpperCase()}] ${action.title}`,
+                        timestamp: Date.now(),
+                        relatedAgentId: agentId,
+                        summary: `${lastResult?.success ? 'APPLIED' : 'FAILED'} +${addedLines} -${removedLines} ${filePath}`,
+                        verdict: lastResult?.success ? 'pass' : 'fail',
+                        data: { path: filePath, added: addedLines, removed: removedLines, patch: action.codeDiff },
+                      })
+                    } else if (action.type === 'write_code' && action.files && action.files.length > 0 && action.detail && projectPath) {
+                      // For write_code without codeDiff but with file content in detail
+                      // (fallback for agents that write full file content)
+                      get().elonSetAgentLiveActivity(agentId, `Writing file: ${action.files[0]}...`)
+                      try {
+                        for (const file of action.files) {
+                          const fullPath = file.startsWith('/') ? file : `${projectPath}/${file}`
+                          await invoke<string>('fs_write_text', { path: fullPath, content: action.detail })
+                          executionResults.push({ action: `write ${file}`, success: true, detail: `Written ${action.detail.length} chars` })
+                        }
+                      } catch (writeErr) {
+                        const writeErrMsg = writeErr instanceof Error ? writeErr.message : String(writeErr)
+                        executionResults.push({ action: action.title, success: false, detail: `Write failed: ${writeErrMsg}` })
+                      }
+                    }
+                  }
+
+                  // Record execution summary as evidence
+                  if (executionResults.length > 0) {
+                    const successCount = executionResults.filter((r) => r.success).length
+                    const failCount = executionResults.filter((r) => !r.success).length
+                    get().elonAddEvidence({
+                      id: crypto.randomUUID(),
+                      type: 'terminal',
+                      title: `[${agentId.toUpperCase()}] Code Execution`,
+                      timestamp: Date.now(),
+                      relatedAgentId: agentId,
+                      summary: `${successCount} applied, ${failCount} failed`,
+                      verdict: failCount === 0 ? 'pass' : successCount > 0 ? 'warning' : 'fail',
+                      data: {
+                        command: 'agent code execution',
+                        exitCode: failCount === 0 ? 0 : 1,
+                        stdout: executionResults.filter((r) => r.success).map((r) => `✓ ${r.action}: ${r.detail}`).join('\n'),
+                        stderr: executionResults.filter((r) => !r.success).map((r) => `✗ ${r.action}: ${r.detail}`).join('\n'),
+                        duration: 0,
+                      },
+                    })
+                  }
+
+                  // Determine output quality for CEO quality tracking
+                  const hasCodeDiff = agentOutput.actions.some((a) => a.codeDiff)
+                  let outputQuality: 'code_verified' | 'text_only' | 'actionable'
+                  if (isSweAgent) {
+                    outputQuality = hasCodeDiff ? 'code_verified' : 'text_only'
+                  } else if (agentId === 'pm') {
+                    outputQuality = (agentOutput.actions.length >= 2 && agentOutput.improvements.length >= 1) ? 'actionable' : 'text_only'
+                  } else {
+                    outputQuality = agentOutput.actions.length >= 1 ? 'actionable' : 'text_only'
+                  }
+
+                  // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
+                  if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
+                    // First check if git remote exists (git_status_summary returns a string)
+                    let hasGitRemote = false
+                    try {
+                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
+                      // Check if remote info exists in the status string
+                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
+                    } catch {
+                      hasGitRemote = false
+                    }
+
+                    if (!hasGitRemote) {
+                      // Log but don't block - allow local git operations
+                      get().elonAddAgentLog(agentId, {
+                        timestamp: Date.now(),
+                        type: 'error',
+                        message: 'GitHub actions skipped: no git remote found',
+                        detail: `Project path: ${projectPath}. To enable: git remote add origin <url>`,
+                      })
+                      get().elonAddEvidence({
+                        id: crypto.randomUUID(),
+                        type: 'terminal',
+                        title: `[${agentId.toUpperCase()}] GitHub Skipped`,
+                        timestamp: Date.now(),
+                        relatedAgentId: agentId,
+                        summary: 'No git remote configured - GitHub actions not executed',
+                        verdict: 'warning',
+                        data: {
+                          command: 'git remote check',
+                          exitCode: 1,
+                          stdout: '',
+                          stderr: 'No git remote found. Configure with: git remote add origin <url>',
+                          duration: 0,
+                        },
+                      })
+                    } else {
+                    // Process GitHub actions only if remote exists
+                    for (const ghAction of agentOutput.githubActions) {
+                      // High-risk write ops that need CEO approval
+                      if (ghAction.requiresCeoApproval && ['merge_pr'].includes(ghAction.type)) {
+                        set((st) => ({
+                          elonX: {
+                            ...st.elonX,
+                            elonApprovals: [
+                              ...st.elonX.elonApprovals,
+                              {
+                                id: crypto.randomUUID(),
+                                agentId,
+                                action: `github:${ghAction.type}`,
+                                riskLevel: 'high' as const,
+                                evidence: [JSON.stringify(ghAction.params)],
+                                deadlineMs: Date.now() + 30 * 60 * 1000,
+                              },
+                            ],
+                          },
+                        }))
+                        continue
+                      }
+
+                      // Execute all other actions immediately (bottom-up ownership)
+                      // Update live activity for GitHub ops
+                      const ghActivityLabels: Record<string, string> = {
+                        create_issue: 'Creating GitHub issue...',
+                        create_branch: `Creating branch: ${ghAction.params.branch_name || ghAction.params.branchName}...`,
+                        commit_push: `Committing & pushing to ${ghAction.params.branch || 'main'}...`,
+                        create_pr: `Creating PR: ${ghAction.params.title}...`,
+                        comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
+                        merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
+                      }
+                      get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
+                      get().elonAddAgentLog(agentId, {
+                        timestamp: Date.now(),
+                        type: 'github',
+                        message: `Executing: ${ghAction.type}`,
+                        detail: JSON.stringify(ghAction.params),
+                      })
+
+                      try {
+                        let ghResult: string
+                        switch (ghAction.type) {
+                          case 'create_issue':
+                            ghResult = JSON.stringify(await invoke('gh_issue_create', {
+                              cwd: projectPath,
+                              title: ghAction.params.title ?? '',
+                              body: ghAction.params.body ?? '',
+                              labels: ghAction.params.labels ?? null,
+                              assignees: ghAction.params.assignees ?? null,
+                            }))
+                            break
+                          case 'create_branch':
+                            ghResult = JSON.stringify(await invoke('git_branch_create', {
+                              cwd: projectPath,
+                              branchName: ghAction.params.branch_name ?? ghAction.params.branchName ?? '',
+                            }))
+                            break
+                          case 'commit_push': {
+                            const files = ghAction.params.files
+                              ? ghAction.params.files.split(',').map((f: string) => f.trim())
+                              : []
+                            ghResult = JSON.stringify(await invoke('git_commit_and_push', {
+                              cwd: projectPath,
+                              branch: ghAction.params.branch ?? 'main',
+                              message: ghAction.params.message ?? `[${agentId}] auto-commit`,
+                              files,
+                            }))
+                            break
+                          }
+                          case 'create_pr':
+                            ghResult = JSON.stringify(await invoke('gh_pr_create', {
+                              cwd: projectPath,
+                              base: ghAction.params.base ?? 'main',
+                              head: ghAction.params.head ?? '',
+                              title: ghAction.params.title ?? `[${agentId}] Auto PR`,
+                              body: ghAction.params.body ?? '',
+                            }))
+                            break
+                          case 'comment_pr':
+                            ghResult = JSON.stringify(await invoke('gh_pr_comment', {
+                              cwd: projectPath,
+                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
+                              body: ghAction.params.body ?? '',
+                            }))
+                            break
+                          case 'merge_pr':
+                            ghResult = JSON.stringify(await invoke('gh_pr_merge', {
+                              cwd: projectPath,
+                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
+                              method: ghAction.params.method ?? null,
+                            }))
+                            break
+                          default:
+                            ghResult = `Unknown action: ${ghAction.type}`
+                        }
+                        get().elonAddAgentLog(agentId, {
+                          timestamp: Date.now(),
+                          type: 'success',
+                          message: `GitHub ${ghAction.type} succeeded`,
+                          detail: ghResult.slice(0, 100),
+                        })
+                        get().elonAddEvidence({
+                          id: crypto.randomUUID(),
+                          type: 'terminal',
+                          title: `[GitHub] ${ghAction.type} EXECUTED`,
+                          timestamp: Date.now(),
+                          relatedAgentId: agentId,
+                          summary: `✓ ${ghAction.type}: ${ghResult.slice(0, 150)}`,
+                          verdict: 'pass',
+                          data: {
+                            command: `gh/git ${ghAction.type}`,
+                            exitCode: 0,
+                            stdout: ghResult,
+                            stderr: '',
+                            duration: 0,
+                          },
+                        })
+                      } catch (ghErr) {
+                        const ghErrMsg = ghErr instanceof Error ? ghErr.message : String(ghErr)
+                        get().elonAddAgentLog(agentId, {
+                          timestamp: Date.now(),
+                          type: 'error',
+                          message: `GitHub ${ghAction.type} failed`,
+                          detail: ghErrMsg,
+                        })
+                        get().elonAddEvidence({
+                          id: crypto.randomUUID(),
+                          type: 'terminal',
+                          title: `[GitHub] ${ghAction.type} FAILED`,
+                          timestamp: Date.now(),
+                          relatedAgentId: agentId,
+                          summary: `✗ ${ghAction.type}: ${ghErrMsg.slice(0, 150)}`,
+                          verdict: 'fail',
+                          data: {
+                            command: `gh/git ${ghAction.type}`,
+                            exitCode: 1,
+                            stdout: '',
+                            stderr: ghErrMsg,
+                            duration: 0,
+                          },
+                        })
+                      }
+                    }
+                    } // end hasGitRemote check
+                  }
+
                   // Rule 6: Process directMessages (peer-to-peer communication)
                   if (agentOutput.directMessages && agentOutput.directMessages.length > 0) {
                     for (const dm of agentOutput.directMessages) {
@@ -2861,7 +3289,7 @@ export const useAppStore = create<AppState>()(
                     }
                   }
 
-                  // Mark agent as idle with last output and increment completed tasks
+                  // Mark agent as idle with last output, quality flag, and increment completed tasks
                   set((st) => ({
                     elonX: {
                       ...st.elonX,
@@ -2873,6 +3301,8 @@ export const useAppStore = create<AppState>()(
                           currentTask: undefined,
                           lastOutput: outputSummary,
                           startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                          lastOutputQuality: outputQuality,
+                          liveActivity: undefined, // Clear live activity
                         },
                       },
                       metrics: {

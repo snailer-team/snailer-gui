@@ -51,7 +51,21 @@ pub fn run() {
       commands::openai_chat_completion,
       commands::anthropic_chat_completion,
       commands::kimi_web_search_completion,
-      commands::xai_web_search_completion
+      commands::xai_web_search_completion,
+      commands::fs_write_text,
+      commands::git_apply_patch,
+      commands::shell_execute,
+      commands::git_status_summary,
+      commands::gh_issue_create,
+      commands::gh_issue_list,
+      commands::git_branch_create,
+      commands::git_commit_and_push,
+      commands::gh_pr_create,
+      commands::gh_pr_list,
+      commands::gh_pr_checks,
+      commands::gh_pr_comment,
+      commands::gh_pr_merge,
+      commands::git_diff
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

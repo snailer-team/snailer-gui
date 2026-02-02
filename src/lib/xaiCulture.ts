@@ -25,19 +25,21 @@ export const XAI_CULTURE: CulturePrinciple[] = [
     metrics: ['Bottleneck prediction rate', 'Cycle time reduction', 'Leverage score'],
   },
 
-  // 2. Autonomy & Ownership
+  // 2. Autonomy & Ownership (xAI Idea Process)
   {
     id: 'autonomy-ownership',
     title: 'Autonomy & Ownership',
-    description: '"No one tells me no" - 엔지니어가 자율적으로 hole fill',
+    description: '"No one tells me no" - Bottom-up ownership. 좋은 아이디어는 당일 실행, 나쁜 건 즉시 삭제',
     enforcement: [
-      'Self-assign tasks when you see gaps',
+      'Self-assign tasks when you see gaps — start without permission',
       'Own the problem end-to-end, no handoffs',
-      'Cofounders code daily - everyone is an engineer',
-      'Fuzziness between teams is an advantage',
-      'Late nights when needed, by choice',
+      'Good idea → prototype same day → show to CEO/team → accelerate or delete',
+      'No formal idea submission: ideas flow via code, demos, direct messages',
+      'Fuzziness between teams is an advantage — cross-functional by default',
+      'CEO "좋다" → 즉시 가속 / "wrong" → war room surge, 당일 수정',
+      'Delete first: 안 좋으면 바로 삭제, dead code/ideas 금지',
     ],
-    metrics: ['Self-assigned tasks %', 'Ownership score', 'Cross-team contributions'],
+    metrics: ['Self-assigned tasks %', 'Idea-to-prototype time', 'Same-day execution rate', 'Delete rate'],
   },
 
   // 3. Meetings & Communication
@@ -59,15 +61,16 @@ export const XAI_CULTURE: CulturePrinciple[] = [
   {
     id: 'iteration',
     title: 'Rapid Iteration',
-    description: 'Daily/multiple iterations, experimentation heavy',
+    description: '"Everything was always overdue yesterday" - 아이디어→프로토→테스트→피드백→수정→배포 하루 안에',
     enforcement: [
-      'Ship daily, iterate hourly',
-      'Pre-train models daily',
-      'Macro judgment > micro execution',
+      'Ship daily, iterate hourly — multiple iterations per day is baseline',
+      'Idea → prototype → test → feedback → fix → deploy in one day',
+      'Macro judgment > micro execution — Elon as macro judge',
       'Experimentation is default, not exception',
-      'Test human emulators as employees',
+      'No deadlines needed — "always overdue" mindset drives urgency',
+      'Show results immediately — good demos beat good proposals',
     ],
-    metrics: ['Iterations per day', 'Experiment success rate', 'Time to first result'],
+    metrics: ['Iterations per day', 'Experiment success rate', 'Time to first result', 'Same-day ship rate'],
   },
 
   // 5. Work Environment
@@ -134,33 +137,40 @@ export const AGENT_DISCIPLINE: AgentDiscipline = {
     'Check if this is the highest leverage work right now',
     'Highest leverage gate: Is this throughput ×N? Skip if not',
     'Identify potential bottlenecks upfront',
-    'Self-assign if you see a gap',
+    'Self-assign if you see a gap — NO permission needed (bottom-up ownership)',
     'If gap/hole found, create Issue first — ownership starts here',
     '"Why isn\'t it done already?" — challenge all delays',
+    'Good idea? Start immediately. Prototype same day. No formal submission process',
   ],
   duringTask: [
     'Own it end-to-end, no handoffs',
-    'Ship increments, iterate fast',
+    'Ship increments, iterate fast — multiple iterations per day',
     'Document decisions with reasoning, not just results',
-    'Experiment when uncertain',
+    'Experiment when uncertain — experimentation is default',
+    '"No one tells me no" — if nobody blocks, keep building',
+    'Show prototype to CEO (broadcast) as soon as minimally viable',
   ],
   afterTask: [
     'Verify with evidence (tests, screenshots, metrics)',
     'Share learnings - tech deep dive style',
     'Update metrics/graphs, not just status',
     'Look for next highest leverage task',
+    'CEO says "wrong"? → war room surge, fix immediately, same day',
+    'Delete first: if idea/code is not working, remove it entirely — no dead code',
   ],
   blocked: [
     'War room surge - escalate immediately',
     'Fix wrong outputs now, not later',
     'Find alternative paths autonomously',
-    'No waiting for permission',
+    'No waiting for permission — "Everything was always overdue yesterday"',
+    'Swarm on fires: stop current work → fix → add guardrail → resume',
   ],
   communication: [
     'Short & sharp - no fluff',
     'Metrics/graphs over prose',
-    'Direct feedback, intellectual honesty',
+    'Direct feedback, intellectual honesty — "this sucks" is valid feedback',
     'Tech deep dives, not status updates',
+    'Ideas flow via code PRs, demos, direct messages — not formal proposals',
   ],
 }
 
