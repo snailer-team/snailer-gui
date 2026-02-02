@@ -2558,24 +2558,44 @@ pub async fn git_branch_create(
     cwd: String,
     branch_name: String,
 ) -> Result<GitBranchResponse, String> {
-    let (code, text) = run_cmd_capture("git", &["checkout", "-b", &branch_name], Some(&cwd))?;
+    // Sanitize branch name: replace spaces and invalid chars with dashes
+    let sanitized = branch_name
+        .trim()
+        .replace(' ', "-")
+        .replace("'", "")
+        .replace("\"", "")
+        .replace(":", "-")
+        .replace("..", "-")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '/')
+        .collect::<String>();
+
+    if sanitized.is_empty() {
+        return Err("Invalid branch name".to_string());
+    }
+
+    let (code, text) = run_cmd_capture("git", &["checkout", "-b", &sanitized], Some(&cwd))?;
     if code != 0 {
         // If branch already exists, try to just checkout
-        if text.contains("already exists") {
-            let (code2, text2) = run_cmd_capture("git", &["checkout", &branch_name], Some(&cwd))?;
+        if text.contains("already exists") || text.contains("already exist") {
+            let (code2, text2) = run_cmd_capture("git", &["checkout", &sanitized], Some(&cwd))?;
             if code2 != 0 {
                 return Err(format!("git checkout failed (exit {}): {}", code2, text2));
             }
             return Ok(GitBranchResponse {
                 success: true,
-                branch: format!("{} (switched to existing)", branch_name),
+                branch: format!("{} (switched to existing)", sanitized),
             });
+        }
+        // Also handle "is not a valid branch name"
+        if text.contains("not a valid branch name") {
+            return Err(format!("Invalid branch name '{}': {}", branch_name, text));
         }
         return Err(format!("git checkout -b failed (exit {}): {}", code, text));
     }
     Ok(GitBranchResponse {
         success: true,
-        branch: branch_name,
+        branch: sanitized,
     })
 }
 
@@ -2640,6 +2660,7 @@ pub async fn git_commit_and_push(
 }
 
 /// Create a pull request via `gh pr create`.
+/// Automatically pushes the branch first if needed.
 #[tauri::command]
 pub async fn gh_pr_create(
     cwd: String,
@@ -2648,12 +2669,30 @@ pub async fn gh_pr_create(
     title: String,
     body: String,
 ) -> Result<GhPrResponse, String> {
+    // First, ensure the branch is pushed to remote
+    let branch_to_push = if head.is_empty() {
+        // Get current branch name
+        let (_, current_branch) = run_cmd_capture("git", &["branch", "--show-current"], Some(&cwd))?;
+        current_branch.trim().to_string()
+    } else {
+        head.clone()
+    };
+
+    // Push the branch (ignore errors if already up to date)
+    let _ = run_cmd_capture(
+        "git",
+        &["push", "-u", "origin", &branch_to_push],
+        Some(&cwd),
+    );
+
+    // Now create the PR
+    let head_ref = if head.is_empty() { &branch_to_push } else { &head };
     let (code, text) = run_cmd_capture(
         "gh",
         &[
             "pr", "create",
             "--base", &base,
-            "--head", &head,
+            "--head", head_ref,
             "--title", &title,
             "--body", &body,
         ],

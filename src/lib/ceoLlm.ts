@@ -319,31 +319,22 @@ export function buildAgentPrompt(
 Cite specific sources and data points in your analysis.\n`
     : isSwe
     ? `\n\n[SWE Code Output Rules - MANDATORY - YOUR CODE GETS EXECUTED ON REAL FILES]
-⚠️ CRITICAL: Your codeDiff is applied to REAL files via "git apply". This is NOT a simulation.
-
-🚫 FORBIDDEN ACTIONS:
-- DO NOT create shell scripts (.sh, .bat, .ps1) - we don't need setup scripts
-- DO NOT create config files unless explicitly requested
-- DO NOT write diagnostic/debugging tools
-- DO NOT suggest manual steps - you ARE the executor
-
-✅ REQUIRED ACTIONS:
-- ONLY modify EXISTING source files in the codebase (src/, lib/, components/, etc.)
-- Look at [Project Context] to see actual files you can modify
-- Write TypeScript/Rust/React code that implements the requested feature
+⚠️ CRITICAL: Your codeDiff is applied to REAL files via "git apply". Your githubActions execute REAL git/gh commands.
+This is NOT a simulation. Every codeDiff you write modifies actual source code on disk.
 
 When you perform a "write_code" action, you MUST include a "codeDiff" field in unified diff format.
-If codeDiff is missing from a write_code action, your output will be REJECTED.
+If codeDiff is missing from a write_code action, your output will be REJECTED and you must retry.
 
 REQUIREMENTS for codeDiff (must pass "git apply"):
-1. File paths must be EXISTING files from [Project Context] (e.g., src/lib/store.ts, src/components/*.tsx)
-2. Context lines must match the REAL file content EXACTLY (copy from Project Context)
+1. File paths must match ACTUAL files in the project (check the [Project Context] section)
+2. Context lines (unchanged lines) must match the REAL file content EXACTLY
 3. Line numbers in @@ hunks must be accurate
 4. Include 3 lines of context before and after each change
+5. Use proper unified diff headers: --- a/path and +++ b/path
 
-codeDiff format example (modifying an EXISTING file):
---- a/src/lib/store.ts
-+++ b/src/lib/store.ts
+codeDiff format example:
+--- a/src/example.ts
++++ b/src/example.ts
 @@ -10,6 +10,8 @@
  import { foo } from './foo'
 +import { bar } from './bar'
@@ -353,8 +344,22 @@ codeDiff format example (modifying an EXISTING file):
    return foo()
  }
 
-DO NOT include githubActions unless you have actual code changes ready.
-Focus on writing working code first.\n`
+WORKFLOW - Execute this sequence for every code change:
+1. Write codeDiff with valid unified diff targeting real files
+2. githubActions: [{type: "create_branch", params: {branch_name: "feat/your-feature"}}]
+3. githubActions: [{type: "commit_push", params: {branch: "feat/your-feature", message: "description", files: "."}}]
+4. githubActions: [{type: "create_pr", params: {base: "main", head: "feat/your-feature", title: "PR title", body: "description"}}]
+
+[GitHub Workflow - Self-Judgment Rules]
+You can autonomously trigger GitHub operations by including "githubActions" in your output.
+These execute REAL git and gh CLI commands on the actual repository.
+Rules:
+1. Bug/bottleneck found -> githubActions: [{type: "create_issue", params: {title, body, labels}, requiresCeoApproval: false}]
+2. Code written -> MUST follow the WORKFLOW above (create_branch + commit_push + create_pr)
+3. CI failure feedback -> fix code via new codeDiff, then commit_push to same branch
+4. CEO approves merge -> githubActions: [{type: "merge_pr", params: {pr_number, method}, requiresCeoApproval: true}]
+All write operations (commit_push, create_pr, merge_pr) MUST have requiresCeoApproval: true.
+Read operations (create_issue, create_branch) can set requiresCeoApproval: false.\n`
     : isAiMl
     ? `\n\nYou have web search capability. When researching, actively search for:
 - SOTA model architectures, benchmarks (MMLU, HumanEval, SWE-bench)

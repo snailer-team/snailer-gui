@@ -2840,19 +2840,7 @@ export const useAppStore = create<AppState>()(
                 : ''
 
               // Fetch real project context for agents (git status, file tree)
-              // Use projectPath from store, or try to detect a git repo
-              let projectPath = get().projectPath
-              if (!projectPath || projectPath.trim() === '') {
-                // Try to get default from Tauri (which checks for .git directory)
-                try {
-                  const engineStatus = await invoke<{ default_project_path?: string }>('engine_start', {})
-                  if (engineStatus.default_project_path) {
-                    projectPath = engineStatus.default_project_path
-                  }
-                } catch {
-                  // Ignore - will proceed without project context
-                }
-              }
+              const projectPath = get().projectPath
               let projectContext = ''
               if (projectPath) {
                 try {
@@ -3103,10 +3091,41 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
 
                   // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
                   if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
-                    // Note: We proceed with GitHub actions regardless of remote check
-                    // The gh/git commands will report their own errors if needed
-                    // This allows local git operations like branch creation to work
-                    {
+                    // First check if git remote exists (git_status_summary returns a string)
+                    let hasGitRemote = false
+                    try {
+                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
+                      // Check if remote info exists in the status string
+                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
+                    } catch {
+                      hasGitRemote = false
+                    }
+
+                    if (!hasGitRemote) {
+                      // Log but don't block - allow local git operations
+                      get().elonAddAgentLog(agentId, {
+                        timestamp: Date.now(),
+                        type: 'error',
+                        message: 'GitHub actions skipped: no git remote found',
+                        detail: `Project path: ${projectPath}. To enable: git remote add origin <url>`,
+                      })
+                      get().elonAddEvidence({
+                        id: crypto.randomUUID(),
+                        type: 'terminal',
+                        title: `[${agentId.toUpperCase()}] GitHub Skipped`,
+                        timestamp: Date.now(),
+                        relatedAgentId: agentId,
+                        summary: 'No git remote configured - GitHub actions not executed',
+                        verdict: 'warning',
+                        data: {
+                          command: 'git remote check',
+                          exitCode: 1,
+                          stdout: '',
+                          stderr: 'No git remote found. Configure with: git remote add origin <url>',
+                          duration: 0,
+                        },
+                      })
+                    } else {
                     // Process GitHub actions only if remote exists
                     for (const ghAction of agentOutput.githubActions) {
                       // High-risk write ops that need CEO approval
