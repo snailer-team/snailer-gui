@@ -131,6 +131,14 @@ fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
 }
 
 fn default_project_path() -> PathBuf {
+    // Try current working directory first (likely the project root)
+    if let Ok(cwd) = std::env::current_dir() {
+        // Check if it looks like a git repo
+        if cwd.join(".git").exists() {
+            return cwd;
+        }
+    }
+    // Fallback to home directory
     home_dir()
 }
 
