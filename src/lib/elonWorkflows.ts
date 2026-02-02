@@ -72,6 +72,7 @@ export const CPO_WORKFLOW: AgentWorkflow = {
   name: 'CPO',
   description: 'Product roadmap prioritization, feature broadcasts, value measurement',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Skeptical reasoning: 데이터 검증',
     'Macro judgment: 큰 그림 제품 판단',
   ],
@@ -90,6 +91,7 @@ export const CRO_WORKFLOW: AgentWorkflow = {
   name: 'CRO',
   description: 'Revenue analysis, growth strategy, campaign execution, ROI inspection',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Talent-dense: impact-focused 마케팅',
     'Fun: inspired 캠페인',
   ],
@@ -196,6 +198,7 @@ export const VISUAL_WORKFLOW: AgentWorkflow = {
   name: 'UI/Visual Designer (Brand)',
   description: 'Brand identity, icons/illustration, motion assets for launches',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Intellectual honesty: straight feedback',
     'Fast iteration: ship assets daily',
   ],
@@ -213,6 +216,7 @@ export const MOTION_WORKFLOW: AgentWorkflow = {
   name: 'Motion Designer / Animator',
   description: 'Grok demos, launch motion, UI animation clips',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Does motion increase comprehension?',
     'Ship rough cut fast, polish only if it matters',
   ],
@@ -230,6 +234,7 @@ export const ANALYST_WORKFLOW: AgentWorkflow = {
   name: 'Product Analyst',
   description: 'Metrics analysis, growth insights, A/B execution',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Data-driven reasoning',
     'All-Hands 스타일 그래프 중점',
   ],
@@ -269,6 +274,7 @@ export const SWE_2_WORKFLOW: AgentWorkflow = {
   name: 'Software Engineer #2',
   description: 'Parallel delivery: pick a bottleneck, ship minimal diff, keep CI green',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Extreme autonomy + speed',
     'High leverage: unblock the org',
     'Delete culture: remove unnecessary code/steps',
@@ -288,6 +294,7 @@ export const SWE_3_WORKFLOW: AgentWorkflow = {
   name: 'Software Engineer #3',
   description: 'Verification-first: harden CI, prevent regressions, evidence loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Proof > opinions',
     'Automate verification',
     'War-room readiness: failures become playbooks',
@@ -303,18 +310,24 @@ export const SWE_3_WORKFLOW: AgentWorkflow = {
 
 export const AI_ML_WORKFLOW: AgentWorkflow = {
   agentId: 'ai-ml',
-  name: 'AI/ML Engineer',
-  description: 'Model optimization, Grok integration, benchmark loops',
+  name: 'AI/ML Research & Scaling Agent',
+  description: 'SOTA research, model optimization, prompt engineering, multi-agent orchestration, inference cost analysis, benchmark evaluation, and agentic workflow R&D using Grok 4.1 Fast with web search',
   xaiPrinciples: [
-    'High leverage: SOTA 초월',
-    'Macro judgment: 큰 그림 AI 판단',
+    'High leverage: SOTA 초월, 최소 비용으로 최대 성능',
+    'Macro judgment: 큰 그림 AI/ML 전략 판단',
+    'First Principles: 모델 선택·프롬프트·아키텍처 가정 도전',
+    'Fast iteration: 일 단위 벤치마크·프로토타입 사이클',
+    'Skeptical reasoning: 논문/벤치 결과 교차 검증',
+    'Delete culture: ROI 없는 실험 즉시 중단',
   ],
+  revenueImpact: 'AI 비용 최적화, 모델 성능 향상으로 제품 경쟁력 + 매출 극대화',
   steps: [
-    { phase: 'observe', action: 'Reasoning 태스크 분석', detail: 'Grok 통합 확인', duration: 1500 },
-    { phase: 'plan', action: '모델 최적화 계획', detail: 'SOTA 분석', duration: 2000 },
-    { phase: 'act', action: '모델 훈련', detail: 'Daily iterations', duration: 3000, github: { type: 'pr', title: 'feat: Agentic workflow for video generation' } },
-    { phase: 'act', action: 'CI 벤치마크', detail: 'Grok 4.1 스타일', duration: 2000, github: { type: 'ci', title: 'Benchmark: Model evaluation' } },
-    { phase: 'evaluate', action: '벤치 루프', detail: 'Iteration 완료', duration: 1500, output: 'Accuracy: 94.2%, Latency: -18%' },
+    { phase: 'observe', action: 'SOTA 리서치 & 벤치마크 분석', detail: 'arxiv, HumanEval, SWE-bench, MMLU 최신 결과 웹 검색', duration: 1500 },
+    { phase: 'observe', action: '추론 비용 & 스케일링 분석', detail: '모델별 토큰 비용, 레이턴시, throughput 비교', duration: 1200 },
+    { phase: 'plan', action: '모델 최적화 & 프롬프트 엔지니어링 계획', detail: 'CoT, ToT, self-critique, reward shaping 패턴 설계', duration: 2000 },
+    { phase: 'act', action: '멀티에이전트 오케스트레이션 R&D', detail: 'Agentic workflow 패턴 연구 및 프로토타입', duration: 3000, github: { type: 'pr', title: 'feat: Multi-agent orchestration optimization' } },
+    { phase: 'act', action: 'CI 벤치마크 & 비용 분석', detail: 'Grok 4.1 Fast 기반 성능/비용 평가', duration: 2000, github: { type: 'ci', title: 'Benchmark: Model evaluation + cost analysis' } },
+    { phase: 'evaluate', action: '벤치마크 루프 & 보고', detail: 'Daily iteration 완료, CEO에 결과 보고', duration: 1500, output: 'Accuracy: +5%, Inference cost: -30%, Latency: -18%' },
   ],
 }
 
@@ -323,6 +336,7 @@ export const PLATFORM_WORKFLOW: AgentWorkflow = {
   name: 'Platform Engineer',
   description: 'Scaling observation, pipeline design, server control, stability loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Efficiency max',
     'Challenge requirements: "Why isn\'t it done already?"',
   ],
@@ -340,6 +354,7 @@ export const FRONTEND_WORKFLOW: AgentWorkflow = {
   name: 'Frontend Engineer',
   description: 'UI task analysis, component development, GUI control, simulation loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Fast rollout',
     'Inspired 분위기',
   ],
@@ -357,6 +372,7 @@ export const SRE_WORKFLOW: AgentWorkflow = {
   name: 'DevOps/SRE',
   description: 'System monitoring, scaling strategy, CI/CD/recovery, downtime loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Min downtime',
     'War room surges for fires',
   ],
@@ -374,6 +390,7 @@ export const SECURITY_WORKFLOW: AgentWorkflow = {
   name: 'Security Engineer',
   description: 'Vulnerability observation, audit planning, isolation/defense, hardening loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Skeptical sources',
     'Macro judgment for risks',
   ],
@@ -410,6 +427,7 @@ export const ML_RESEARCH_WORKFLOW: AgentWorkflow = {
   name: 'ML Researcher',
   description: 'SOTA trend observation, research planning, prototype development',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Game studio-like',
     'Applied research judgment',
   ],
@@ -428,6 +446,7 @@ export const MARKETING_WORKFLOW: AgentWorkflow = {
   name: 'Marketing',
   description: 'Community analysis, campaign strategy, X posts, engagement loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Community-driven',
     'Fun & inspired',
   ],
@@ -445,6 +464,7 @@ export const SALES_WORKFLOW: AgentWorkflow = {
   name: 'Sales Engineer',
   description: 'Enterprise requirements, demo design, simulation/presentation, conversion loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Customer obsession',
     'Macro judgment for deals',
   ],
@@ -462,6 +482,7 @@ export const SUPPORT_WORKFLOW: AgentWorkflow = {
   name: 'Customer Success',
   description: 'User issue observation, onboarding strategy, resolution/guide, churn loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Fast resolution',
     'Challenge requirements for issues',
   ],
@@ -481,6 +502,7 @@ export const FINANCE_WORKFLOW: AgentWorkflow = {
   name: 'Finance/Ops',
   description: 'Spend analysis, budget allocation, payout/legal, compliance loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Compliance automation',
     'High leverage budgeting',
   ],
@@ -498,6 +520,7 @@ export const RECRUITER_WORKFLOW: AgentWorkflow = {
   name: 'Recruiter',
   description: 'Contributor analysis, hiring strategy, interview/conversion, onboarding loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Contributor → full-time',
     'Vibe check in interviews',
   ],
@@ -514,6 +537,7 @@ export const HR_WORKFLOW: AgentWorkflow = {
   name: 'HR/People Ops',
   description: 'Performance analysis, culture reinforcement, policy execution, satisfaction loops',
   xaiPrinciples: [
+    'First Principles: 왜 이게 필요한가? 기본 가정 깨기',
     'Autonomy culture',
     'Inspired & fun elements (e.g., sleeping pods)',
   ],

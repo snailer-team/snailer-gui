@@ -1,17 +1,25 @@
 import { useState, useMemo } from 'react'
 import { BroadcastTimeline } from './BroadcastTimeline'
+import { AgentInputRequestTimeline } from './AgentInputRequestTimeline'
+import { SelfCorrectionPanel } from './SelfCorrectionPanel'
+import { KnowledgeBasePanel } from './KnowledgeBasePanel'
+import { MeetingSessionPanel } from './MeetingSessionPanel'
 
 export function ElonRightPanel() {
-  const [activeTab, setActiveTab] = useState<'broadcasts' | 'evidence' | 'culture' | 'setup'>('broadcasts')
+  const [activeTab, setActiveTab] = useState<'broadcasts' | 'evidence' | 'culture' | 'setup' | 'requests' | 'corrections' | 'knowledge' | 'meetings'>('broadcasts')
+  const pendingRequestCount = useAppStore((s) => s.elonX.agentInputRequests.filter((r) => r.status === 'pending').length)
 
   return (
     <div className="h-full flex flex-col rounded-2xl border border-black/10 bg-white/50 overflow-hidden">
       {/* Tab Header */}
-      <div className="shrink-0 flex items-center border-b border-black/5 px-2 pt-2">
+      <div
+        className="shrink-0 flex items-center border-b border-black/5 px-2 pt-2 overflow-x-auto"
+        style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}
+      >
         <button
           type="button"
           onClick={() => setActiveTab('broadcasts')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
             activeTab === 'broadcasts'
               ? 'border-black/40 text-black/80 bg-white/50'
               : 'border-transparent text-black/40 hover:text-black/60'
@@ -22,8 +30,61 @@ export function ElonRightPanel() {
         </button>
         <button
           type="button"
+          onClick={() => setActiveTab('requests')}
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+            activeTab === 'requests'
+              ? 'border-black/40 text-black/80 bg-white/50'
+              : 'border-transparent text-black/40 hover:text-black/60'
+          }`}
+        >
+          <span>📋</span>
+          Requests
+          {pendingRequestCount > 0 && (
+            <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">
+              {pendingRequestCount}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('corrections')}
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+            activeTab === 'corrections'
+              ? 'border-black/40 text-black/80 bg-white/50'
+              : 'border-transparent text-black/40 hover:text-black/60'
+          }`}
+        >
+          <span>🔄</span>
+          Corrections
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('knowledge')}
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+            activeTab === 'knowledge'
+              ? 'border-black/40 text-black/80 bg-white/50'
+              : 'border-transparent text-black/40 hover:text-black/60'
+          }`}
+        >
+          <span>🧠</span>
+          Knowledge
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('meetings')}
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+            activeTab === 'meetings'
+              ? 'border-black/40 text-black/80 bg-white/50'
+              : 'border-transparent text-black/40 hover:text-black/60'
+          }`}
+        >
+          <span>🤝</span>
+          Meetings
+        </button>
+        <button
+          type="button"
           onClick={() => setActiveTab('evidence')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
             activeTab === 'evidence'
               ? 'border-black/40 text-black/80 bg-white/50'
               : 'border-transparent text-black/40 hover:text-black/60'
@@ -35,7 +96,7 @@ export function ElonRightPanel() {
         <button
           type="button"
           onClick={() => setActiveTab('culture')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
             activeTab === 'culture'
               ? 'border-black/40 text-black/80 bg-white/50'
               : 'border-transparent text-black/40 hover:text-black/60'
@@ -47,7 +108,7 @@ export function ElonRightPanel() {
         <button
           type="button"
           onClick={() => setActiveTab('setup')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
+          className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold rounded-t-lg border-b-2 transition ${
             activeTab === 'setup'
               ? 'border-black/40 text-black/80 bg-white/50'
               : 'border-transparent text-black/40 hover:text-black/60'
@@ -61,6 +122,10 @@ export function ElonRightPanel() {
       {/* Content */}
       <div className="flex-1 min-h-0">
         {activeTab === 'broadcasts' ? <BroadcastTimeline /> : null}
+        {activeTab === 'requests' ? <AgentInputRequestTimeline /> : null}
+        {activeTab === 'corrections' ? <SelfCorrectionPanel /> : null}
+        {activeTab === 'knowledge' ? <KnowledgeBasePanel /> : null}
+        {activeTab === 'meetings' ? <MeetingSessionPanel /> : null}
         {activeTab === 'evidence' ? <ElonEvidencePanelContent /> : null}
         {activeTab === 'culture' ? <ElonCulturePanelContent /> : null}
         {activeTab === 'setup' ? <ElonSetupPanelContent /> : null}

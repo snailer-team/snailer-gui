@@ -4,6 +4,15 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use walkdir::WalkDir;
 
+/// LLM API response with token usage information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmCompletionResponse {
+    pub content: String,
+    pub model: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GitHubCliStatusResponse {
     pub installed: bool,
@@ -1843,12 +1852,13 @@ fn read_env_key(key: &str) -> Result<String, String> {
 pub async fn xai_chat_completion(
     system_prompt: String,
     user_prompt: String,
-) -> Result<String, String> {
+) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let api_key = read_env_key("XAI_API_KEY")?;
+        let model_name = "grok-4";
 
         let body = serde_json::json!({
-            "model": "grok-4",
+            "model": model_name,
             "messages": [
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": user_prompt }
@@ -1879,7 +1889,23 @@ pub async fn xai_chat_completion(
                 )
             })?;
 
-        Ok(content.to_string())
+        // Extract usage info
+        let usage = resp_json.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
+        Ok(LlmCompletionResponse {
+            content: content.to_string(),
+            model: model_name.to_string(),
+            input_tokens,
+            output_tokens,
+        })
     })
     .await
     .map_err(|e| format!("xAI task failed: {}", e))?
@@ -1890,12 +1916,13 @@ pub async fn xai_chat_completion(
 pub async fn openai_chat_completion(
     system_prompt: String,
     user_prompt: String,
-) -> Result<String, String> {
+) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let api_key = read_env_key("OPENAI_API_KEY")?;
+        let model_name = "gpt-4o";
 
         let body = serde_json::json!({
-            "model": "gpt-4o",
+            "model": model_name,
             "messages": [
                 { "role": "system", "content": system_prompt },
                 { "role": "user", "content": user_prompt }
@@ -1926,13 +1953,29 @@ pub async fn openai_chat_completion(
                 )
             })?;
 
-        Ok(content.to_string())
+        // Extract usage info
+        let usage = resp_json.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
+        Ok(LlmCompletionResponse {
+            content: content.to_string(),
+            model: model_name.to_string(),
+            input_tokens,
+            output_tokens,
+        })
     })
     .await
     .map_err(|e| format!("OpenAI task failed: {}", e))?
 }
 
-/// Call Kimi K2.5 chat completions API with built-in `$web_search` tool.
+/// Call Kimi chat completions API with built-in `$web_search` tool.
 ///
 /// Uses a tool_calls loop: if `finish_reason == "tool_calls"`, the assistant message and
 /// tool results (arguments echoed back) are appended and a follow-up request is made.
@@ -1941,10 +1984,26 @@ pub async fn openai_chat_completion(
 pub async fn kimi_web_search_completion(
     system_prompt: String,
     user_prompt: String,
-) -> Result<String, String> {
+) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let api_key = read_env_key("MOONSHOT_API_KEY")?;
 
+        // Use MOONSHOT_API_BASE env var, default to global endpoint (api.moonshot.ai)
+        // Both endpoints support web search with kimi-k2-turbo-preview
+        let api_base = std::env::var("MOONSHOT_API_BASE")
+            .unwrap_or_else(|_| "https://api.moonshot.ai".to_string());
+        let api_url = format!("{}/v1/chat/completions", api_base);
+
+        // Use kimi-k2-turbo-preview for web search (works on both endpoints)
+        let model_name = std::env::var("MOONSHOT_MODEL")
+            .unwrap_or_else(|_| "kimi-k2-turbo-preview".to_string());
+
+        let mut messages = vec![
+            serde_json::json!({ "role": "system", "content": system_prompt }),
+            serde_json::json!({ "role": "user", "content": user_prompt }),
+        ];
+
+        // Web search tools (same format for both endpoints)
         let tools = serde_json::json!([
             {
                 "type": "builtin_function",
@@ -1952,24 +2011,21 @@ pub async fn kimi_web_search_completion(
             }
         ]);
 
-        let mut messages = vec![
-            serde_json::json!({ "role": "system", "content": system_prompt }),
-            serde_json::json!({ "role": "user", "content": user_prompt }),
-        ];
-
         const MAX_ITERATIONS: usize = 5;
+
+        // Track cumulative token usage across iterations
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
 
         for _iter in 0..MAX_ITERATIONS {
             let body = serde_json::json!({
-                "model": "kimi-k2.5",
+                "model": model_name,
                 "messages": messages,
                 "tools": tools,
-                "max_tokens": 8192,
-                "temperature": 0.3,
-                "thinking": { "enabled": false }
+                "temperature": 0.6
             });
 
-            let resp = ureq::post("https://api.moonshot.cn/v1/chat/completions")
+            let resp = ureq::post(&api_url)
                 .set("Authorization", &format!("Bearer {}", api_key))
                 .set("Content-Type", "application/json")
                 .send_json(body)
@@ -1978,6 +2034,17 @@ pub async fn kimi_web_search_completion(
             let resp_json: serde_json::Value = resp
                 .into_json()
                 .map_err(|e| format!("Failed to parse Kimi API response: {}", e))?;
+
+            // Extract usage from this iteration
+            let usage = resp_json.get("usage");
+            total_input_tokens += usage
+                .and_then(|u| u.get("prompt_tokens"))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
+            total_output_tokens += usage
+                .and_then(|u| u.get("completion_tokens"))
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
 
             let choice = resp_json
                 .get("choices")
@@ -1997,19 +2064,21 @@ pub async fn kimi_web_search_completion(
             let message = choice.get("message").cloned().unwrap_or(serde_json::json!({}));
 
             if finish_reason == "stop" {
-                // Final response
                 let content = message
                     .get("content")
                     .and_then(|c| c.as_str())
                     .unwrap_or("");
-                return Ok(content.to_string());
+                return Ok(LlmCompletionResponse {
+                    content: content.to_string(),
+                    model: model_name.clone(),
+                    input_tokens: total_input_tokens,
+                    output_tokens: total_output_tokens,
+                });
             }
 
             if finish_reason == "tool_calls" {
-                // Append assistant message (contains tool_calls)
                 messages.push(message.clone());
 
-                // Extract tool_calls and echo arguments back as tool results
                 if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
                     for tc in tool_calls {
                         let tool_call_id = tc
@@ -2034,18 +2103,20 @@ pub async fn kimi_web_search_completion(
                         }));
                     }
                 }
-
-                // Continue loop for next request
                 continue;
             }
 
-            // Unknown finish_reason — try to extract content anyway
             let content = message
                 .get("content")
                 .and_then(|c| c.as_str())
                 .unwrap_or("");
             if !content.is_empty() {
-                return Ok(content.to_string());
+                return Ok(LlmCompletionResponse {
+                    content: content.to_string(),
+                    model: model_name.clone(),
+                    input_tokens: total_input_tokens,
+                    output_tokens: total_output_tokens,
+                });
             }
 
             return Err(format!(
@@ -2054,10 +2125,85 @@ pub async fn kimi_web_search_completion(
             ));
         }
 
-        Err("Kimi web search exceeded maximum iterations (5)".to_string())
+        Err("Kimi API: Max iterations reached without final response".to_string())
     })
     .await
-    .map_err(|e| format!("Kimi task failed: {}", e))?
+    .map_err(|e| format!("Task join error: {}", e))?
+}
+
+/// Call xAI Responses API with grok-4-1-fast model + web_search tool.
+/// Used by the AI/ML Research agent for real-time AI/ML research.
+#[tauri::command]
+pub async fn xai_web_search_completion(
+    system_prompt: String,
+    user_prompt: String,
+) -> Result<LlmCompletionResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("XAI_API_KEY")?;
+        let model_name = "grok-4-1-fast";
+
+        let body = serde_json::json!({
+            "model": model_name,
+            "input": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ],
+            "tools": [{ "type": "web_search" }]
+        });
+
+        let resp = ureq::post("https://api.x.ai/v1/responses")
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| format!("xAI Responses API request failed: {}", e))?;
+
+        let resp_json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse xAI Responses API response: {}", e))?;
+
+        // Extract usage from xAI Responses API (uses input_tokens/output_tokens)
+        let usage = resp_json.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
+        // Extract text from output[].type=="message" → content[].type=="output_text" → .text
+        let output = resp_json.get("output").and_then(|o| o.as_array());
+        if let Some(items) = output {
+            for item in items {
+                if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+                    if let Some(content) = item.get("content").and_then(|c| c.as_array()) {
+                        for block in content {
+                            if block.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                                    if !text.is_empty() {
+                                        return Ok(LlmCompletionResponse {
+                                            content: text.to_string(),
+                                            model: model_name.to_string(),
+                                            input_tokens,
+                                            output_tokens,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(format!(
+            "Unexpected xAI Responses API response structure: {}",
+            serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+        ))
+    })
+    .await
+    .map_err(|e| format!("xAI web search task failed: {}", e))?
 }
 
 /// Call Anthropic Messages API directly with claude-sonnet-4-20250514 model (used by SWE agents).
@@ -2065,12 +2211,13 @@ pub async fn kimi_web_search_completion(
 pub async fn anthropic_chat_completion(
     system_prompt: String,
     user_prompt: String,
-) -> Result<String, String> {
+) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let api_key = read_env_key("ANTHROPIC_API_KEY")?;
+        let model_name = "claude-sonnet-4-20250514";
 
         let body = serde_json::json!({
-            "model": "claude-sonnet-4-20250514",
+            "model": model_name,
             "max_tokens": 4096,
             "system": system_prompt,
             "messages": [
@@ -2101,7 +2248,23 @@ pub async fn anthropic_chat_completion(
                 )
             })?;
 
-        Ok(content.to_string())
+        // Extract usage from Anthropic API (uses input_tokens/output_tokens)
+        let usage = resp_json.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
+        Ok(LlmCompletionResponse {
+            content: content.to_string(),
+            model: model_name.to_string(),
+            input_tokens,
+            output_tokens,
+        })
     })
     .await
     .map_err(|e| format!("Anthropic task failed: {}", e))?

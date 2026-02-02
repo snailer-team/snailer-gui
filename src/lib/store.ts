@@ -265,6 +265,53 @@ export interface ElonMetrics {
   totalTasks: number
   estimatedCost: number
   interventions: number // Human interventions count
+  // Token usage tracking
+  totalInputTokens: number
+  totalOutputTokens: number
+}
+
+// LLM API response with token usage (matches Rust struct)
+export interface LlmCompletionResponse {
+  content: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+}
+
+// Per-agent token usage tracking
+export interface AgentTokenUsage {
+  agentId: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  cost: number
+  timestamp: number
+  cycleRunId?: string
+}
+
+// Model pricing (USD per 1M tokens)
+export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+  // xAI
+  'grok-4': { input: 3.0, output: 15.0 },
+  'grok-4-1-fast': { input: 1.0, output: 5.0 },
+  // OpenAI
+  'gpt-4o': { input: 2.5, output: 10.0 },
+  'gpt-4o-mini': { input: 0.15, output: 0.6 },
+  // Anthropic
+  'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
+  'claude-opus-4-20250514': { input: 15.0, output: 75.0 },
+  // Moonshot/Kimi
+  'kimi-k2-turbo-preview': { input: 0.5, output: 2.0 },
+  'kimi-k2.5': { input: 0.5, output: 2.0 },
+  'moonshot-v1-128k': { input: 0.8, output: 3.2 },
+}
+
+// Calculate cost from token usage
+export function calculateTokenCost(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = MODEL_PRICING[model] || { input: 1.0, output: 3.0 } // fallback pricing
+  const inputCost = (inputTokens / 1_000_000) * pricing.input
+  const outputCost = (outputTokens / 1_000_000) * pricing.output
+  return inputCost + outputCost
 }
 
 export interface ElonApprovalRequest {
@@ -299,6 +346,24 @@ export interface ElonXState {
   autoCycle: AutoCycleState
   broadcasts: Broadcast[]
   cycleRuns: CycleRun[]
+
+  // Agent Input Requests
+  agentInputRequests: AgentInputRequest[]
+
+  // Self-Correction
+  reasoningTraces: ReasoningTrace[]
+
+  // Knowledge Sharing
+  knowledgeBase: KnowledgeEntry[]
+
+  // Meeting Simulation
+  meetingSessions: MeetingSession[]
+
+  // Direct Messages (peer-to-peer)
+  directMessages: DirectMessage[]
+
+  // Token Usage Tracking
+  agentTokenUsages: AgentTokenUsage[]
 
   // GitHub Integration (M2)
   githubStatus: GitHubReadStatus
@@ -372,6 +437,98 @@ export interface GitHubReadStatus {
 }
 
 // ==================== End CEO Auto-Cycle Types ====================
+
+// ==================== Agent Input Request Types ====================
+
+export type AgentInputType = 'text' | 'password' | 'select'
+export type AgentInputRequestStatus = 'pending' | 'resolved' | 'dismissed'
+
+export interface AgentInputRequestOption {
+  value: string
+  label: string
+}
+
+export interface AgentInputRequest {
+  id: string
+  agentId: string
+  cycleRunId: string
+  label: string
+  why: string
+  inputType: AgentInputType
+  options?: AgentInputRequestOption[]
+  placeholder?: string
+  createdAt: number
+  status: AgentInputRequestStatus
+  response?: string
+  resolvedAt?: number
+}
+
+// ==================== End Agent Input Request Types ====================
+
+// ==================== Self-Correction Types ====================
+
+export interface ReasoningTrace {
+  id: string
+  agentId: string
+  cycleRunId: string
+  broadcastId: string
+  attempt: number          // 1, 2, 3
+  timestamp: number
+  systemPrompt: string
+  userPrompt: string
+  rawResponse: string
+  errorMessage?: string
+  verdict: 'success' | 'failed' | 'corrected'
+}
+
+// ==================== Knowledge Sharing Types ====================
+
+export interface KnowledgeEntry {
+  id: string
+  agentId: string
+  cycleRunId: string
+  topic: string
+  insight: string
+  context: string
+  reasoning: string
+  createdAt: number
+  useCount: number
+  successRate: number      // 0~1
+  tags: string[]
+}
+
+// ==================== Meeting Simulation Types ====================
+
+export interface MeetingMessage {
+  agentId: string
+  content: string
+  timestamp: number
+  roundNumber: number
+}
+
+export interface MeetingSession {
+  id: string
+  cycleRunId: string
+  topic: string
+  participants: string[]
+  startedAt: number
+  endedAt: number | null
+  status: 'running' | 'completed' | 'failed'
+  messages: MeetingMessage[]
+  decision: string | null
+  consensusLevel: number   // 0~1
+}
+
+// ==================== Direct Message Types ====================
+
+export interface DirectMessage {
+  id: string
+  fromAgentId: string
+  toAgentId: string
+  message: string
+  cycleRunId: string
+  timestamp: number
+}
 
 // ==================== End ElonX HARD Types ====================
 
@@ -480,6 +637,29 @@ interface AppState {
   elonAddEvidence: (evidence: Evidence) => void
   elonUpdatePlanNode: (nodeId: string, patch: Partial<PlanNode>) => void
 
+  // Agent Input Request actions
+  agentRequestInput: (params: { agentId: string; cycleRunId: string; label: string; why: string; inputType: AgentInputType; options?: AgentInputRequestOption[]; placeholder?: string }) => Promise<string>
+  agentSubmitInput: (requestId: string, value: string) => void
+  agentDismissInput: (requestId: string) => void
+
+  // Self-Correction actions
+  elonAddReasoningTrace: (trace: ReasoningTrace) => void
+
+  // Knowledge Sharing actions
+  elonAddKnowledge: (entry: KnowledgeEntry) => void
+  elonIncrementKnowledgeUse: (knowledgeId: string) => void
+
+  // Meeting Simulation actions
+  elonStartMeeting: (params: { topic: string; participants: string[]; cycleRunId: string }) => Promise<MeetingSession>
+  elonAddMeetingMessage: (sessionId: string, message: MeetingMessage) => void
+  elonCompleteMeeting: (sessionId: string, decision: string, consensusLevel: number) => void
+
+  // Direct Message actions (peer-to-peer)
+  elonDirectMessage: (fromId: string, toId: string, message: string, cycleRunId: string) => void
+
+  // Token Usage Tracking actions
+  elonRecordTokenUsage: (usage: AgentTokenUsage) => void
+
   // CEO Auto-Cycle actions (M0)
   autoCycleToggle: (enabled: boolean) => void
   autoCycleSetInterval: (intervalMs: AutoCycleInterval) => void
@@ -495,6 +675,8 @@ type PendingApprovalDecision =
   | 'request_change'
   | 'reject'
   | 'cancel'
+
+const inputRequestResolvers = new Map<string, (value: string) => void>()
 
 function now() {
   return Date.now()
@@ -622,6 +804,8 @@ export const useAppStore = create<AppState>()(
           totalTasks: 0,
           estimatedCost: 0,
           interventions: 0,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
         },
         elonApprovals: [],
         // CEO Auto-Cycle (M0)
@@ -635,6 +819,17 @@ export const useAppStore = create<AppState>()(
         },
         broadcasts: [],
         cycleRuns: [],
+        agentInputRequests: [],
+        // Self-Correction
+        reasoningTraces: [],
+        // Knowledge Sharing
+        knowledgeBase: [],
+        // Meeting Simulation
+        meetingSessions: [],
+        // Direct Messages (peer-to-peer)
+        directMessages: [],
+        // Token Usage Tracking
+        agentTokenUsages: [],
         // GitHub Integration (M2)
         githubStatus: {
           installed: false,
@@ -1739,9 +1934,6 @@ export const useAppStore = create<AppState>()(
             },
           },
         })
-        if (uiMode === 'elon') {
-          get().clearElonFrame()
-        }
         try {
           // Ensure daemon session settings match GUI state.
           // `run.start` uses daemon session settings (not per-call params) for mode/model/workMode/prMode/teamConfigName.
@@ -2002,6 +2194,100 @@ export const useAppStore = create<AppState>()(
         }))
       },
 
+      // ==================== Agent Input Request Actions ====================
+
+      agentRequestInput: (params) => {
+        const id = crypto.randomUUID()
+        const request: AgentInputRequest = {
+          id,
+          agentId: params.agentId,
+          cycleRunId: cycleRunId,
+          label: params.label,
+          why: params.why,
+          inputType: params.inputType,
+          options: params.options,
+          placeholder: params.placeholder,
+          createdAt: Date.now(),
+          status: 'pending',
+        }
+
+        // Add request to store and mark agent as blocked
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            agentInputRequests: [request, ...st.elonX.agentInputRequests],
+            agentStatuses: {
+              ...st.elonX.agentStatuses,
+              [params.agentId]: {
+                id: params.agentId,
+                status: 'blocked',
+                currentTask: params.label,
+                startedAt: st.elonX.agentStatuses[params.agentId]?.startedAt,
+              },
+            },
+          },
+        }))
+
+        // Return a Promise that resolves when user submits input
+        return new Promise<string>((resolve) => {
+          inputRequestResolvers.set(id, resolve)
+        })
+      },
+
+      agentSubmitInput: (requestId, value) => {
+        const resolver = inputRequestResolvers.get(requestId)
+        if (resolver) {
+          resolver(value)
+          inputRequestResolvers.delete(requestId)
+        }
+
+        set((st) => {
+          const request = st.elonX.agentInputRequests.find((r) => r.id === requestId)
+          return {
+            elonX: {
+              ...st.elonX,
+              agentInputRequests: st.elonX.agentInputRequests.map((r) =>
+                r.id === requestId
+                  ? { ...r, status: 'resolved' as const, response: value, resolvedAt: Date.now() }
+                  : r,
+              ),
+              agentStatuses: request
+                ? {
+                    ...st.elonX.agentStatuses,
+                    [request.agentId]: {
+                      id: request.agentId,
+                      status: 'evaluating',
+                      currentTask: st.elonX.agentStatuses[request.agentId]?.currentTask,
+                      startedAt: st.elonX.agentStatuses[request.agentId]?.startedAt,
+                    },
+                  }
+                : st.elonX.agentStatuses,
+            },
+          }
+        })
+      },
+
+      agentDismissInput: (requestId) => {
+        const resolver = inputRequestResolvers.get(requestId)
+        if (resolver) {
+          resolver('')
+          inputRequestResolvers.delete(requestId)
+        }
+
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            agentInputRequests: st.elonX.agentInputRequests.map((r) =>
+              r.id === requestId
+                ? { ...r, status: 'dismissed' as const, resolvedAt: Date.now() }
+                : r,
+            ),
+          },
+        }))
+      },
+
+      // ==================== End Agent Input Request Actions ====================
+
       elonUpdateAgentStatus: (agentId, status, task) => {
         set((st) => ({
           elonX: {
@@ -2072,6 +2358,205 @@ export const useAppStore = create<AppState>()(
 
       // ==================== End ElonX HARD Actions ====================
 
+      // ==================== Self-Correction Actions ====================
+
+      elonAddReasoningTrace: (trace) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            reasoningTraces: [trace, ...st.elonX.reasoningTraces].slice(0, 500),
+          },
+        }))
+      },
+
+      // ==================== Knowledge Sharing Actions ====================
+
+      elonAddKnowledge: (entry) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            knowledgeBase: [entry, ...st.elonX.knowledgeBase].slice(0, 200),
+          },
+        }))
+      },
+
+      elonIncrementKnowledgeUse: (knowledgeId) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            knowledgeBase: st.elonX.knowledgeBase.map((k) =>
+              k.id === knowledgeId ? { ...k, useCount: k.useCount + 1 } : k,
+            ),
+          },
+        }))
+      },
+
+      // ==================== Meeting Simulation Actions ====================
+
+      elonStartMeeting: async ({ topic, participants, cycleRunId }) => {
+        const sessionId = crypto.randomUUID()
+        const startedAt = Date.now()
+
+        const session: MeetingSession = {
+          id: sessionId,
+          cycleRunId,
+          topic,
+          participants,
+          startedAt,
+          endedAt: null,
+          status: 'running',
+          messages: [],
+          decision: null,
+          consensusLevel: 0,
+        }
+
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            meetingSessions: [session, ...st.elonX.meetingSessions].slice(0, 50),
+          },
+        }))
+
+        try {
+          const { buildMeetingPrompt, buildMeetingSynthesisPrompt, parseMeetingDecision } = await import('./ceoLlm')
+          const { invoke } = await import('@tauri-apps/api/core')
+
+          const MAX_ROUNDS = 2
+          const allMessages: MeetingMessage[] = []
+
+          for (let round = 1; round <= MAX_ROUNDS; round++) {
+            for (const agentId of participants) {
+              const { systemPrompt, userPrompt } = buildMeetingPrompt(agentId, topic, allMessages, round)
+
+              let llmResp: LlmCompletionResponse
+              if (agentId === 'pm' || agentId === 'ai-ml') {
+                llmResp = await invoke<LlmCompletionResponse>('xai_web_search_completion', { systemPrompt, userPrompt })
+              } else if (agentId.startsWith('swe')) {
+                llmResp = await invoke<LlmCompletionResponse>('anthropic_chat_completion', { systemPrompt, userPrompt })
+              } else {
+                llmResp = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt, userPrompt })
+              }
+
+              // Record token usage for meeting participant
+              const meetingCost = calculateTokenCost(llmResp.model, llmResp.input_tokens, llmResp.output_tokens)
+              get().elonRecordTokenUsage({
+                agentId,
+                model: llmResp.model,
+                inputTokens: llmResp.input_tokens,
+                outputTokens: llmResp.output_tokens,
+                cost: meetingCost,
+                timestamp: Date.now(),
+                cycleRunId: cycleRunId,
+              })
+
+              const msg: MeetingMessage = {
+                agentId,
+                content: llmResp.content.slice(0, 1000),
+                timestamp: Date.now(),
+                roundNumber: round,
+              }
+              allMessages.push(msg)
+
+              // Add message to store
+              get().elonAddMeetingMessage(sessionId, msg)
+            }
+          }
+
+          // Synthesis
+          const { systemPrompt: synSys, userPrompt: synUsr } = buildMeetingSynthesisPrompt(topic, allMessages)
+          const synthesisResp = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt: synSys, userPrompt: synUsr })
+
+          // Record synthesis token usage
+          const synthesisCost = calculateTokenCost(synthesisResp.model, synthesisResp.input_tokens, synthesisResp.output_tokens)
+          get().elonRecordTokenUsage({
+            agentId: 'ceo-synthesis',
+            model: synthesisResp.model,
+            inputTokens: synthesisResp.input_tokens,
+            outputTokens: synthesisResp.output_tokens,
+            cost: synthesisCost,
+            timestamp: Date.now(),
+            cycleRunId: cycleRunId,
+          })
+
+          const decision = parseMeetingDecision(synthesisResp.content)
+
+          get().elonCompleteMeeting(sessionId, decision.decision, decision.consensusLevel)
+
+          return get().elonX.meetingSessions.find((s) => s.id === sessionId)!
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          set((st) => ({
+            elonX: {
+              ...st.elonX,
+              meetingSessions: st.elonX.meetingSessions.map((s) =>
+                s.id === sessionId ? { ...s, status: 'failed' as const, endedAt: Date.now(), decision: `[Error] ${errMsg}` } : s,
+              ),
+            },
+          }))
+          return get().elonX.meetingSessions.find((s) => s.id === sessionId)!
+        }
+      },
+
+      elonAddMeetingMessage: (meetingSessionId, message) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            meetingSessions: st.elonX.meetingSessions.map((s) =>
+              s.id === meetingSessionId ? { ...s, messages: [...s.messages, message] } : s,
+            ),
+          },
+        }))
+      },
+
+      elonCompleteMeeting: (meetingSessionId, decision, consensusLevel) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            meetingSessions: st.elonX.meetingSessions.map((s) =>
+              s.id === meetingSessionId
+                ? { ...s, status: 'completed' as const, endedAt: Date.now(), decision, consensusLevel }
+                : s,
+            ),
+          },
+        }))
+      },
+
+      // ==================== Direct Message Actions ====================
+
+      elonDirectMessage: (fromId, toId, message, cycleRunId) => {
+        const dm: DirectMessage = {
+          id: crypto.randomUUID(),
+          fromAgentId: fromId,
+          toAgentId: toId,
+          message,
+          cycleRunId,
+          timestamp: Date.now(),
+        }
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            directMessages: [dm, ...st.elonX.directMessages].slice(0, 500),
+          },
+        }))
+      },
+
+      // ==================== Token Usage Tracking Actions ====================
+
+      elonRecordTokenUsage: (usage) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            agentTokenUsages: [usage, ...st.elonX.agentTokenUsages].slice(0, 1000),
+            metrics: {
+              ...st.elonX.metrics,
+              totalInputTokens: st.elonX.metrics.totalInputTokens + usage.inputTokens,
+              totalOutputTokens: st.elonX.metrics.totalOutputTokens + usage.outputTokens,
+              estimatedCost: st.elonX.metrics.estimatedCost + usage.cost,
+            },
+          },
+        }))
+      },
+
       // ==================== CEO Auto-Cycle Actions (M0) ====================
 
       autoCycleToggle: (enabled) => {
@@ -2116,13 +2601,19 @@ export const useAppStore = create<AppState>()(
         const cycleId = crypto.randomUUID()
         const startedAt = Date.now()
 
-        // Mark cycle as running
+        // Mark cycle as running and reset metrics for this cycle
         set((st) => ({
           elonX: {
             ...st.elonX,
             autoCycle: {
               ...st.elonX.autoCycle,
               status: 'running',
+            },
+            metrics: {
+              ...st.elonX.metrics,
+              cycleStartMs: startedAt,
+              completedTasks: 0,
+              totalTasks: 0, // Will be updated when broadcasts are created
             },
             cycleRuns: [
               {
@@ -2148,7 +2639,20 @@ export const useAppStore = create<AppState>()(
           const { systemPrompt, userPrompt } = buildCeoMessages(observeContext)
 
           // Call xAI API directly via Rust backend (bypasses daemon)
-          const rawResponse = await invoke<string>('xai_chat_completion', { systemPrompt, userPrompt })
+          const ceoResponse = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt, userPrompt })
+          const rawResponse = ceoResponse.content
+
+          // Record CEO token usage
+          const ceoCost = calculateTokenCost(ceoResponse.model, ceoResponse.input_tokens, ceoResponse.output_tokens)
+          get().elonRecordTokenUsage({
+            agentId: 'ceo',
+            model: ceoResponse.model,
+            inputTokens: ceoResponse.input_tokens,
+            outputTokens: ceoResponse.output_tokens,
+            cost: ceoCost,
+            timestamp: Date.now(),
+            cycleRunId: cycleId,
+          })
 
           // Parse the CEO LLM output
           const llmOutput = parseCeoLlmOutput(rawResponse)
@@ -2172,7 +2676,8 @@ export const useAppStore = create<AppState>()(
             }
           })
 
-          // Mark previous active broadcasts as superseded
+          // Mark previous active broadcasts as superseded and update task count
+          const totalAgentTasks = newBroadcasts.reduce((sum, b) => sum + b.toAgentIds.length, 0)
           set((st) => ({
             elonX: {
               ...st.elonX,
@@ -2182,13 +2687,41 @@ export const useAppStore = create<AppState>()(
                   b.status === 'active' ? { ...b, status: 'superseded' as const } : b,
                 ),
               ].slice(0, 100), // Keep last 100 broadcasts
+              metrics: {
+                ...st.elonX.metrics,
+                totalTasks: totalAgentTasks,
+              },
             },
           }))
 
-          // Update agent statuses and call LLMs for each broadcast
-          const { buildAgentPrompt, parseAgentOutput } = await import('./ceoLlm')
+          // Phase 3: Meeting Simulation — check if meeting needed before agent execution
+          const {
+            buildAgentPrompt, parseAgentOutput,
+            shouldStartMeeting,
+            buildSelfReflectionPrompt, parseSelfReflectionOutput,
+            buildKnowledgeContext, extractKnowledgeFromOutput,
+          } = await import('./ceoLlm')
 
+          const allAgentIds = newBroadcasts.flatMap((b) => b.toAgentIds)
           for (const b of newBroadcasts) {
+            // Check if meeting is needed before executing this broadcast
+            const meetingParticipants = shouldStartMeeting(b, allAgentIds)
+            let meetingDecisionContext = ''
+            if (meetingParticipants) {
+              try {
+                const meetingResult = await get().elonStartMeeting({
+                  topic: b.message,
+                  participants: meetingParticipants,
+                  cycleRunId: cycleId,
+                })
+                if (meetingResult.decision) {
+                  meetingDecisionContext = `\n\n[Meeting Decision] ${meetingResult.decision}`
+                }
+              } catch {
+                // Meeting failed, continue without it
+              }
+            }
+
             for (const agentId of b.toAgentIds) {
               // Mark agent as evaluating
               set((st) => ({
@@ -2206,74 +2739,245 @@ export const useAppStore = create<AppState>()(
                 },
               }))
 
-              try {
-                const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(agentId, b.message)
+              // Phase 2: Knowledge Sharing — inject relevant knowledge into prompt
+              const knowledgeContext = buildKnowledgeContext(get().elonX.knowledgeBase, b.message, agentId)
 
-                let rawAgentResponse: string
-                if (agentId === 'pm') {
-                  // PM uses Kimi K2.5 with web search for real-time research
-                  rawAgentResponse = await invoke<string>('kimi_web_search_completion', {
-                    systemPrompt: agentSys,
-                    userPrompt: agentUsr,
-                  })
-                } else if (agentId.startsWith('swe')) {
-                  // SWE agents use Anthropic Claude Sonnet 4
-                  rawAgentResponse = await invoke<string>('anthropic_chat_completion', {
-                    systemPrompt: agentSys,
-                    userPrompt: agentUsr,
-                  })
-                } else {
-                  // Fallback: OpenAI GPT-4o
-                  rawAgentResponse = await invoke<string>('openai_chat_completion', {
-                    systemPrompt: agentSys,
-                    userPrompt: agentUsr,
-                  })
-                }
+              // Rule 6: Inject pending direct messages addressed to this agent
+              const pendingDMs = get().elonX.directMessages
+                .filter((dm) => dm.toAgentId === agentId && dm.cycleRunId === cycleId)
+                .slice(0, 5)
+              const dmContext = pendingDMs.length > 0
+                ? '\n\n[Direct Messages for you]\n' + pendingDMs.map((dm) => `From ${dm.fromAgentId}: ${dm.message}`).join('\n')
+                : ''
 
-                // Parse output and store results
-                let outputSummary: string
+              // Phase 1: Self-Correction Loop — retry up to 3 times with reflection
+              const MAX_ATTEMPTS = 3
+              let attempt = 0
+              let success = false
+              let currentPromptOverride: string | undefined
+
+              while (attempt < MAX_ATTEMPTS && !success) {
+                attempt++
+
                 try {
-                  const agentOutput = parseAgentOutput(rawAgentResponse)
-                  outputSummary = agentOutput.output
-                } catch {
-                  // If parsing fails, use raw response as summary
-                  outputSummary = rawAgentResponse.slice(0, 500)
-                }
+                  const broadcastWithContext = b.message + meetingDecisionContext + dmContext
+                  const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(
+                    agentId,
+                    currentPromptOverride ?? broadcastWithContext,
+                    undefined,
+                    knowledgeContext || undefined,
+                  )
 
-                // Mark agent as idle with last output
-                set((st) => ({
-                  elonX: {
-                    ...st.elonX,
-                    agentStatuses: {
-                      ...st.elonX.agentStatuses,
-                      [agentId]: {
-                        id: agentId,
-                        status: 'idle',
-                        currentTask: undefined,
-                        lastOutput: outputSummary,
-                        startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                  // Route to appropriate LLM and get response with usage
+                  let llmResponse: LlmCompletionResponse
+                  if (agentId === 'pm' || agentId === 'ai-ml') {
+                    llmResponse = await invoke<LlmCompletionResponse>('xai_web_search_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                    })
+                  } else if (agentId.startsWith('swe')) {
+                    llmResponse = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                    })
+                  } else {
+                    llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                    })
+                  }
+
+                  const rawAgentResponse = llmResponse.content
+
+                  // Record token usage
+                  const tokenCost = calculateTokenCost(llmResponse.model, llmResponse.input_tokens, llmResponse.output_tokens)
+                  get().elonRecordTokenUsage({
+                    agentId,
+                    model: llmResponse.model,
+                    inputTokens: llmResponse.input_tokens,
+                    outputTokens: llmResponse.output_tokens,
+                    cost: tokenCost,
+                    timestamp: Date.now(),
+                    cycleRunId: cycleId,
+                  })
+
+                  // Parse output and store results
+                  const agentOutput = parseAgentOutput(rawAgentResponse)
+                  const outputSummary = agentOutput.output
+
+                  // Rule 3: Validate improvements — empty = cycle fail → triggers retry
+                  if (agentOutput.improvements.length === 0) {
+                    throw new Error('No improvements reported — at least 1 improvement per cycle required (Rule 3: Daily iterations)')
+                  }
+
+                  // Record success trace
+                  get().elonAddReasoningTrace({
+                    id: crypto.randomUUID(),
+                    agentId,
+                    cycleRunId: cycleId,
+                    broadcastId: b.id,
+                    attempt,
+                    timestamp: Date.now(),
+                    systemPrompt: agentSys,
+                    userPrompt: agentUsr,
+                    rawResponse: rawAgentResponse.slice(0, 2000),
+                    verdict: attempt > 1 ? 'corrected' : 'success',
+                  })
+
+                  // Rule 8: Auto-generate Evidence from agent output
+                  const evidenceData: Record<string, unknown> = {}
+                  if (agentOutput.evidence) {
+                    if (agentOutput.evidence.log) evidenceData.log = agentOutput.evidence.log
+                    if (agentOutput.evidence.latencyMs != null) evidenceData.latencyMs = agentOutput.evidence.latencyMs
+                    if (agentOutput.evidence.costUsd != null) evidenceData.costUsd = agentOutput.evidence.costUsd
+                    if (agentOutput.evidence.screenshotUrl) evidenceData.screenshotUrl = agentOutput.evidence.screenshotUrl
+                  }
+                  evidenceData.improvements = agentOutput.improvements
+                  evidenceData.actionCount = agentOutput.actions.length
+
+                  get().elonAddEvidence({
+                    id: crypto.randomUUID(),
+                    type: 'api_response',
+                    title: `[${agentId.toUpperCase()}] ${agentOutput.actions[0]?.title ?? 'Task completed'}`,
+                    timestamp: Date.now(),
+                    relatedAgentId: agentId,
+                    summary: outputSummary.slice(0, 200),
+                    verdict: agentOutput.status === 'completed' ? 'pass' : agentOutput.status === 'blocked' ? 'warning' : 'info',
+                    data: { json: evidenceData },
+                  })
+
+                  // Rule 6: Process directMessages (peer-to-peer communication)
+                  if (agentOutput.directMessages && agentOutput.directMessages.length > 0) {
+                    for (const dm of agentOutput.directMessages) {
+                      get().elonDirectMessage(agentId, dm.to, dm.message, cycleId)
+                    }
+                  }
+
+                  // Phase 2: Extract knowledge from successful output
+                  if (agentOutput.actions.length >= 2 && agentOutput.output.length >= 100) {
+                    const knowledge = extractKnowledgeFromOutput(agentId, agentOutput, b.message, cycleId)
+                    if (knowledge) {
+                      get().elonAddKnowledge(knowledge)
+                    }
+                  }
+
+                  // Mark agent as idle with last output and increment completed tasks
+                  set((st) => ({
+                    elonX: {
+                      ...st.elonX,
+                      agentStatuses: {
+                        ...st.elonX.agentStatuses,
+                        [agentId]: {
+                          id: agentId,
+                          status: 'idle',
+                          currentTask: undefined,
+                          lastOutput: outputSummary,
+                          startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                        },
+                      },
+                      metrics: {
+                        ...st.elonX.metrics,
+                        completedTasks: st.elonX.metrics.completedTasks + 1,
                       },
                     },
-                  },
-                }))
-              } catch (agentErr) {
-                // Agent LLM call failed - mark as idle with error
-                const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr)
-                set((st) => ({
-                  elonX: {
-                    ...st.elonX,
-                    agentStatuses: {
-                      ...st.elonX.agentStatuses,
-                      [agentId]: {
-                        id: agentId,
-                        status: 'idle',
-                        currentTask: undefined,
-                        lastOutput: `[Error] ${errMsg}`,
-                        startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                  }))
+
+                  success = true
+                } catch (agentErr) {
+                  const errMsg = agentErr instanceof Error ? agentErr.message : String(agentErr)
+
+                  // Record failed trace
+                  get().elonAddReasoningTrace({
+                    id: crypto.randomUUID(),
+                    agentId,
+                    cycleRunId: cycleId,
+                    broadcastId: b.id,
+                    attempt,
+                    timestamp: Date.now(),
+                    systemPrompt: '',
+                    userPrompt: currentPromptOverride ?? b.message,
+                    rawResponse: '',
+                    errorMessage: errMsg,
+                    verdict: 'failed',
+                  })
+
+                  // Check credential errors — don't retry these
+                  const needsInput = /api.?key|credential|auth|token|secret|password|unauthorized|403|401/i.test(errMsg)
+                  if (needsInput) {
+                    const inputValue = await get().agentRequestInput({
+                      agentId,
+                      cycleRunId: cycleId,
+                      label: `API Key or credential needed for ${agentId}`,
+                      why: `${agentId} agent encountered: ${errMsg.slice(0, 200)}`,
+                      inputType: 'password',
+                      placeholder: 'Enter API key or credential...',
+                    })
+
+                    set((st) => ({
+                      elonX: {
+                        ...st.elonX,
+                        agentStatuses: {
+                          ...st.elonX.agentStatuses,
+                          [agentId]: {
+                            id: agentId,
+                            status: 'idle',
+                            currentTask: undefined,
+                            lastOutput: inputValue
+                              ? `[Input received] Credential provided, will retry next cycle`
+                              : `[Error] ${errMsg} (input dismissed)`,
+                            startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                          },
+                        },
                       },
-                    },
-                  },
-                }))
+                    }))
+                    break // Don't retry credential errors
+                  }
+
+                  // Self-Correction: if not last attempt, reflect and build improved prompt
+                  if (attempt < MAX_ATTEMPTS) {
+                    try {
+                      const reflectionPrompt = buildSelfReflectionPrompt(agentId, b.message, '', errMsg, attempt)
+                      const reflectionResp = await invoke<LlmCompletionResponse>('xai_chat_completion', {
+                        systemPrompt: reflectionPrompt.systemPrompt,
+                        userPrompt: reflectionPrompt.userPrompt,
+                      })
+
+                      // Record reflection token usage
+                      const reflectionCost = calculateTokenCost(reflectionResp.model, reflectionResp.input_tokens, reflectionResp.output_tokens)
+                      get().elonRecordTokenUsage({
+                        agentId: `${agentId}-reflection`,
+                        model: reflectionResp.model,
+                        inputTokens: reflectionResp.input_tokens,
+                        outputTokens: reflectionResp.output_tokens,
+                        cost: reflectionCost,
+                        timestamp: Date.now(),
+                        cycleRunId: cycleId,
+                      })
+
+                      const reflection = parseSelfReflectionOutput(reflectionResp.content)
+                      currentPromptOverride = reflection.revisedDirective
+                    } catch {
+                      // If reflection fails, retry with original prompt
+                    }
+                  } else {
+                    // Final attempt failed
+                    set((st) => ({
+                      elonX: {
+                        ...st.elonX,
+                        agentStatuses: {
+                          ...st.elonX.agentStatuses,
+                          [agentId]: {
+                            id: agentId,
+                            status: 'idle',
+                            currentTask: undefined,
+                            lastOutput: `[Error after ${MAX_ATTEMPTS} attempts] ${errMsg}`,
+                            startedAt: st.elonX.agentStatuses[agentId]?.startedAt,
+                          },
+                        },
+                      },
+                    }))
+                  }
+                }
               }
             }
           }
@@ -2327,6 +3031,18 @@ export const useAppStore = create<AppState>()(
       },
 
       autoCycleKillSwitch: () => {
+        // Resolve all pending input requests with empty string
+        const state = get()
+        for (const req of state.elonX.agentInputRequests) {
+          if (req.status === 'pending') {
+            const resolver = inputRequestResolvers.get(req.id)
+            if (resolver) {
+              resolver('')
+              inputRequestResolvers.delete(req.id)
+            }
+          }
+        }
+
         set((st) => ({
           elonX: {
             ...st.elonX,
@@ -2339,6 +3055,12 @@ export const useAppStore = create<AppState>()(
             // Abort any running cycle
             cycleRuns: st.elonX.cycleRuns.map((r) =>
               r.status === 'running' ? { ...r, status: 'aborted' as const, endedAt: Date.now() } : r,
+            ),
+            // Dismiss all pending input requests
+            agentInputRequests: st.elonX.agentInputRequests.map((r) =>
+              r.status === 'pending'
+                ? { ...r, status: 'dismissed' as const, resolvedAt: Date.now() }
+                : r,
             ),
           },
         }))

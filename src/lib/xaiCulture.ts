@@ -132,8 +132,11 @@ export const AGENT_DISCIPLINE: AgentDiscipline = {
   beforeTask: [
     'Ask "Why?" - decompose to first principles',
     'Check if this is the highest leverage work right now',
+    'Highest leverage gate: Is this throughput ×N? Skip if not',
     'Identify potential bottlenecks upfront',
     'Self-assign if you see a gap',
+    'If gap/hole found, create Issue first — ownership starts here',
+    '"Why isn\'t it done already?" — challenge all delays',
   ],
   duringTask: [
     'Own it end-to-end, no handoffs',

@@ -157,7 +157,7 @@ You MUST respond with valid JSON matching this exact schema:
   "topLeverage": [
     {
       "title": "short task title",
-      "assignee": "pm|swe-2|swe-3",
+      "assignee": "pm|swe-2|swe-3|ai-ml",
       "why": "1 line explaining leverage/impact",
       "risk": "low|medium|high",
       "evidenceIds": [],
@@ -174,7 +174,7 @@ You MUST respond with valid JSON matching this exact schema:
   "needsExternalData": false
 }
 
-Available agents: pm, swe-2, swe-3
+Available agents: pm, swe-2, swe-3, ai-ml
 Only output valid JSON. No markdown, no explanation.`
 
 export function buildCeoPrompt(observeContext: string): string {
@@ -269,6 +269,7 @@ export function parseCeoLlmOutput(rawOutput: string): CeoLlmOutput {
 // ─────────────────────────────────────────────────────────────
 
 import { getWorkflowByAgentId, type AgentWorkflow } from './elonWorkflows'
+import { AGENT_DISCIPLINE } from './xaiCulture'
 
 export interface AgentPromptMessages {
   systemPrompt: string
@@ -286,6 +287,7 @@ export function buildAgentPrompt(
   agentId: string,
   broadcastMessage: string,
   workflow?: AgentWorkflow,
+  knowledgeContext?: string,
 ): AgentPromptMessages {
   const wf = workflow ?? getWorkflowByAgentId(agentId)
 
@@ -294,6 +296,7 @@ export function buildAgentPrompt(
   const name = wf?.name ?? agentId
 
   const isPm = agentId === 'pm'
+  const isAiMl = agentId === 'ai-ml'
 
   const webSearchNote = isPm
     ? `\n\nYou have web search capability. When researching, actively search for:
@@ -302,9 +305,32 @@ export function buildAgentPrompt(
 - Pricing data, user reviews, and market positioning
 - Regulatory changes and industry benchmarks
 Cite specific sources and data points in your analysis.\n`
+    : isAiMl
+    ? `\n\nYou have web search capability. When researching, actively search for:
+- SOTA model architectures, benchmarks (MMLU, HumanEval, SWE-bench)
+- Latest AI/ML papers, arxiv preprints, and research breakthroughs
+- Model optimization techniques, inference costs, and scaling strategies
+- Prompt engineering patterns (CoT, ToT, self-critique, reward shaping)
+- Multi-agent orchestration patterns and agentic workflow research
+Cite specific sources, papers, and data points in your analysis.\n`
     : ''
 
-  const systemPrompt = `You are ${name}, an autonomous agent in an ElonX HARD organization.
+  // Build AGENT_DISCIPLINE block (common rulebook for ALL agents)
+  const disciplineBlock = `## xAI Engineer Rulebook (MUST FOLLOW)
+Before Task:
+${AGENT_DISCIPLINE.beforeTask.map((r) => `- ${r}`).join('\n')}
+During Task:
+${AGENT_DISCIPLINE.duringTask.map((r) => `- ${r}`).join('\n')}
+After Task:
+${AGENT_DISCIPLINE.afterTask.map((r) => `- ${r}`).join('\n')}
+When Blocked:
+${AGENT_DISCIPLINE.blocked.map((r) => `- ${r}`).join('\n')}
+Communication:
+${AGENT_DISCIPLINE.communication.map((r) => `- ${r}`).join('\n')}`
+
+  const systemPrompt = `${disciplineBlock}
+
+You are ${name}, an autonomous agent in an ElonX HARD organization.
 
 Role: ${description}${webSearchNote}
 
@@ -312,6 +338,16 @@ Principles:
 - ${principles}
 
 You receive directives from the CEO and must execute them autonomously.
+
+CRITICAL RULES:
+1. First Principles: Always ask "Why is this needed?" and "Could the assumption be wrong?"
+2. Highest Leverage: Before executing, confirm this is the throughput ×N task. Skip if not.
+3. Improvements Required: Every cycle MUST produce at least 1 improvement. Empty improvements = failure.
+4. Evidence Required: Every action MUST include evidence (log, latency, cost, or screenshot).
+5. Ownership: If you discover a gap/hole, create an Issue for it immediately.
+6. Challenge: Ask "Why isn't it done already?" for every delay.
+7. Direct Message: If you need another agent's help, send a directMessage instead of waiting.
+
 You MUST respond with valid JSON matching this schema:
 {
   "actions": [
@@ -323,18 +359,46 @@ You MUST respond with valid JSON matching this schema:
     }
   ],
   "status": "completed | in_progress | blocked",
-  "output": "1-3 sentence summary of your work and results"
+  "output": "1-3 sentence summary of your work and results",
+  "improvements": ["at least 1 improvement made this cycle (REQUIRED, cannot be empty)"],
+  "evidence": {
+    "log": "optional: relevant log output or test results",
+    "latencyMs": 0,
+    "costUsd": 0
+  },
+  "directMessages": [
+    {
+      "to": "agent-id (e.g., swe-2, pm)",
+      "message": "direct message to another agent (optional)"
+    }
+  ]
 }
 
 Only output valid JSON. No markdown, no explanation outside JSON.`
 
+  const knowledgeBlock = knowledgeContext
+    ? `\n\n## Relevant Knowledge from Previous Cycles\n${knowledgeContext}\n`
+    : ''
+
   const userPrompt = `CEO Broadcast Directive:
-${broadcastMessage}
+${broadcastMessage}${knowledgeBlock}
 
 Execute this directive now. Analyze what needs to be done, take action, and report results.
 Respond with JSON only.`
 
   return { systemPrompt, userPrompt }
+}
+
+export interface AgentOutputEvidence {
+  log?: string
+  screenshotUrl?: string
+  latencyMs?: number
+  costUsd?: number
+}
+
+export interface AgentOutputDirectMessage {
+  to: string
+  message: string
 }
 
 export interface AgentOutput {
@@ -346,6 +410,9 @@ export interface AgentOutput {
   }>
   status: 'completed' | 'in_progress' | 'blocked'
   output: string
+  improvements: string[]
+  evidence?: AgentOutputEvidence
+  directMessages?: AgentOutputDirectMessage[]
 }
 
 /**
@@ -389,10 +456,44 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
     ? parsed.status
     : 'completed') as AgentOutput['status']
 
+  // Parse improvements (Rule 3: required, empty = failure)
+  const improvements: string[] = Array.isArray(parsed.improvements)
+    ? parsed.improvements.map(String).filter(Boolean)
+    : []
+
+  // Parse evidence (Rule 8)
+  let evidence: AgentOutputEvidence | undefined
+  if (parsed.evidence && typeof parsed.evidence === 'object') {
+    const ev = parsed.evidence as Record<string, unknown>
+    evidence = {
+      log: typeof ev.log === 'string' ? ev.log : undefined,
+      screenshotUrl: typeof ev.screenshotUrl === 'string' ? ev.screenshotUrl : undefined,
+      latencyMs: typeof ev.latencyMs === 'number' ? ev.latencyMs : undefined,
+      costUsd: typeof ev.costUsd === 'number' ? ev.costUsd : undefined,
+    }
+  }
+
+  // Parse directMessages (Rule 6: peer-to-peer)
+  let directMessages: AgentOutputDirectMessage[] | undefined
+  if (Array.isArray(parsed.directMessages)) {
+    directMessages = parsed.directMessages
+      .filter((dm: unknown) => {
+        const d = dm as Record<string, unknown>
+        return typeof d.to === 'string' && typeof d.message === 'string'
+      })
+      .map((dm: unknown) => {
+        const d = dm as Record<string, unknown>
+        return { to: String(d.to), message: String(d.message) }
+      })
+  }
+
   return {
     actions,
     status,
     output: String(parsed.output),
+    improvements,
+    evidence,
+    directMessages,
   }
 }
 
@@ -443,4 +544,276 @@ export async function executeCeoLlmCall(
   const output = parseCeoLlmOutput(rawResponse)
 
   return { output, rawResponse, runId }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase 1: Self-Correction — Reflection Prompts
+// ─────────────────────────────────────────────────────────────
+
+export function buildSelfReflectionPrompt(
+  agentId: string,
+  originalPrompt: string,
+  rawResponse: string,
+  errorMessage: string,
+  attempt: number,
+): { systemPrompt: string; userPrompt: string } {
+  const systemPrompt = `You are a self-reflection module for agent "${agentId}".
+Your job is to analyze why a task failed and produce an improved directive.
+
+You MUST respond with valid JSON:
+{
+  "rootCause": "1 sentence describing why it failed",
+  "improvements": ["improvement 1", "improvement 2"],
+  "revisedDirective": "the full improved directive text for the agent to retry"
+}
+
+Only output valid JSON. No markdown, no explanation.`
+
+  const userPrompt = `Attempt ${attempt} of 3 failed.
+
+Original Directive:
+${originalPrompt}
+
+${rawResponse ? `Agent Response (before failure):\n${rawResponse.slice(0, 500)}\n` : ''}
+Error:
+${errorMessage}
+
+Analyze the failure root cause. Produce an improved directive that avoids this error.
+The revised directive should be self-contained and actionable.
+Respond with JSON only.`
+
+  return { systemPrompt, userPrompt }
+}
+
+export function parseSelfReflectionOutput(raw: string): {
+  rootCause: string
+  improvements: string[]
+  revisedDirective: string
+} {
+  let jsonStr = raw.trim()
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (jsonMatch) jsonStr = jsonMatch[1].trim()
+
+  try {
+    const parsed = JSON.parse(jsonStr)
+    return {
+      rootCause: String(parsed.rootCause ?? 'Unknown'),
+      improvements: Array.isArray(parsed.improvements) ? parsed.improvements.map(String) : [],
+      revisedDirective: String(parsed.revisedDirective ?? raw),
+    }
+  } catch {
+    // If JSON parse fails, use raw as revised directive
+    return {
+      rootCause: 'Failed to parse reflection output',
+      improvements: [],
+      revisedDirective: raw.slice(0, 1000),
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase 2: Knowledge Sharing — Extract & Inject
+// ─────────────────────────────────────────────────────────────
+
+import type { KnowledgeEntry, Broadcast, MeetingMessage } from './store'
+
+export function extractKnowledgeFromOutput(
+  agentId: string,
+  agentOutput: AgentOutput,
+  broadcastMessage: string,
+  cycleRunId: string,
+): KnowledgeEntry | null {
+  if (agentOutput.actions.length < 2 || agentOutput.output.length < 100) {
+    return null
+  }
+
+  // Extract topic from action types
+  const actionTypes = agentOutput.actions.map((a) => a.type).join(', ')
+  const words = broadcastMessage.toLowerCase().split(/\s+/)
+  const topicKeywords = words.filter((w) => w.length > 4).slice(0, 3)
+  const topic = topicKeywords.join('-') || actionTypes.split(',')[0]?.trim() || 'general'
+
+  // Build tags from action types and keywords
+  const tags = [
+    ...new Set([
+      ...agentOutput.actions.map((a) => a.type),
+      ...topicKeywords,
+    ]),
+  ].slice(0, 5)
+
+  return {
+    id: crypto.randomUUID(),
+    agentId,
+    cycleRunId,
+    topic,
+    insight: agentOutput.output.slice(0, 300),
+    context: broadcastMessage.slice(0, 200),
+    reasoning: agentOutput.actions.map((a) => `${a.type}: ${a.title}`).join('; ').slice(0, 300),
+    createdAt: Date.now(),
+    useCount: 0,
+    successRate: 1,
+    tags,
+  }
+}
+
+export function buildKnowledgeContext(
+  knowledgeBase: KnowledgeEntry[],
+  broadcastMessage: string,
+  currentAgentId: string,
+): string {
+  if (knowledgeBase.length === 0) return ''
+
+  const words = broadcastMessage.toLowerCase().split(/\s+/).filter((w) => w.length > 3)
+  if (words.length === 0) return ''
+
+  // Score each knowledge entry by keyword relevance
+  const scored = knowledgeBase.map((k) => {
+    const text = `${k.topic} ${k.insight} ${k.tags.join(' ')} ${k.context}`.toLowerCase()
+    let score = 0
+    for (const word of words) {
+      if (text.includes(word)) score++
+    }
+    // Boost entries from same agent
+    if (k.agentId === currentAgentId) score += 0.5
+    // Boost high success rate
+    score += k.successRate * 0.5
+    return { entry: k, score }
+  })
+
+  const relevant = scored
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+
+  if (relevant.length === 0) return ''
+
+  return relevant
+    .map((r) => `- [${r.entry.agentId}] ${r.entry.topic}: ${r.entry.insight} (success: ${Math.round(r.entry.successRate * 100)}%)`)
+    .join('\n')
+}
+
+// ─────────────────────────────────────────────────────────────
+// Phase 3: Meeting Simulation — Prompt Builders
+// ─────────────────────────────────────────────────────────────
+
+export function shouldStartMeeting(
+  broadcast: Broadcast,
+  allAgentIds: string[],
+): string[] | null {
+  const msg = broadcast.message.toLowerCase()
+  const isLong = broadcast.message.length > 300
+
+  // Design/architecture topics → PM + SWE + (UX if available)
+  if (/design|architect|refactor|restructur/i.test(msg)) {
+    const participants = ['pm', ...allAgentIds.filter((id) => id.startsWith('swe'))].slice(0, 4)
+    return [...new Set(participants)]
+  }
+
+  // Strategy topics → CEO-level discussion
+  if (/strateg|roadmap|pivot|priority|direction/i.test(msg)) {
+    const participants = ['pm', ...allAgentIds.filter((id) => id !== 'pm')].slice(0, 4)
+    return [...new Set(participants)]
+  }
+
+  // Complex tasks (long message) → broadcast targets + PM + SWE
+  if (isLong) {
+    const participants = [...broadcast.toAgentIds, 'pm', ...allAgentIds.filter((id) => id.startsWith('swe'))].slice(0, 4)
+    return [...new Set(participants)]
+  }
+
+  return null
+}
+
+export function buildMeetingPrompt(
+  agentId: string,
+  topic: string,
+  previousMessages: MeetingMessage[],
+  round: number,
+): { systemPrompt: string; userPrompt: string } {
+  const wf = getWorkflowByAgentId(agentId)
+  const roleName = wf?.name ?? agentId
+
+  const systemPrompt = `You are ${roleName} in a multi-agent meeting discussion.
+Your role perspective: ${wf?.description ?? `Agent ${agentId}`}
+
+Rules:
+- Share your perspective in 2-4 sentences
+- Reference previous speakers if relevant
+- Be constructive and solution-oriented
+- Focus on your area of expertise
+
+Respond with plain text (not JSON). Keep it concise.`
+
+  const previousContext = previousMessages.length > 0
+    ? `\nPrevious Discussion:\n${previousMessages.map((m) => `[${m.agentId} R${m.roundNumber}]: ${m.content}`).join('\n')}\n`
+    : ''
+
+  const userPrompt = `Meeting Topic: ${topic}
+Round: ${round}${previousContext}
+Share your perspective on this topic. What should we consider from your expertise area?`
+
+  return { systemPrompt, userPrompt }
+}
+
+export function buildMeetingSynthesisPrompt(
+  topic: string,
+  allMessages: MeetingMessage[],
+): { systemPrompt: string; userPrompt: string } {
+  const systemPrompt = `You are a meeting facilitator synthesizing discussion results.
+
+CRITICAL: Verify that the decision includes at least 1 concrete improvement over previous approach.
+Ask: "What specifically improved? If nothing improved, the meeting failed."
+
+You MUST respond with valid JSON:
+{
+  "decision": "the actionable decision (1-3 sentences)",
+  "consensusLevel": 0.85,
+  "keyPoints": ["point 1", "point 2"],
+  "dissent": "any disagreements or concerns, or null",
+  "improvementFromPrevious": "what specifically improved compared to before this meeting"
+}
+
+Only output valid JSON. No markdown, no explanation.`
+
+  const transcript = allMessages
+    .map((m) => `[${m.agentId} R${m.roundNumber}]: ${m.content}`)
+    .join('\n')
+
+  const userPrompt = `Meeting Topic: ${topic}
+
+Full Transcript:
+${transcript}
+
+Synthesize the discussion into a clear, actionable decision. Assess consensus level (0 to 1).
+Respond with JSON only.`
+
+  return { systemPrompt, userPrompt }
+}
+
+export function parseMeetingDecision(raw: string): {
+  decision: string
+  consensusLevel: number
+  keyPoints: string[]
+  dissent: string | null
+} {
+  let jsonStr = raw.trim()
+  const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (jsonMatch) jsonStr = jsonMatch[1].trim()
+
+  try {
+    const parsed = JSON.parse(jsonStr)
+    return {
+      decision: String(parsed.decision ?? 'No clear decision reached'),
+      consensusLevel: typeof parsed.consensusLevel === 'number' ? Math.max(0, Math.min(1, parsed.consensusLevel)) : 0.5,
+      keyPoints: Array.isArray(parsed.keyPoints) ? parsed.keyPoints.map(String) : [],
+      dissent: parsed.dissent ? String(parsed.dissent) : null,
+    }
+  } catch {
+    return {
+      decision: raw.slice(0, 500),
+      consensusLevel: 0.5,
+      keyPoints: [],
+      dissent: null,
+    }
+  }
 }

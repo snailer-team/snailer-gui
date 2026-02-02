@@ -8,6 +8,7 @@ import { ElonPlanTree } from './ElonPlanTree'
 import { ElonRightPanel } from './ElonRightPanel'
 import { ElonStatusBar } from './ElonStatusBar'
 import { ElonWorkflowPanel } from './ElonWorkflowPanel'
+import { AgentInputNotificationBar } from './AgentInputNotificationBar'
 
 export function ElonLayout() {
   const { elonX } = useAppStore()
@@ -98,6 +99,9 @@ export function ElonLayout() {
         </div>
       </div>
 
+      {/* Agent Input Notification Bar */}
+      <AgentInputNotificationBar />
+
       {/* Footer: Status Bar */}
       <div className="shrink-0">
         <ElonStatusBar />
@@ -121,3 +125,8 @@ export { ElonRightPanel } from './ElonRightPanel'
 export { ElonCulturePanel } from './ElonCulturePanel'
 export { ElonStatusBar } from './ElonStatusBar'
 export { ElonWorkflowPanel } from './ElonWorkflowPanel'
+export { AgentInputNotificationBar } from './AgentInputNotificationBar'
+export { AgentInputRequestTimeline } from './AgentInputRequestTimeline'
+export { SelfCorrectionPanel } from './SelfCorrectionPanel'
+export { KnowledgeBasePanel } from './KnowledgeBasePanel'
+export { MeetingSessionPanel } from './MeetingSessionPanel'

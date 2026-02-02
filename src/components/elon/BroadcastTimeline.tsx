@@ -85,14 +85,14 @@ function BroadcastCard({ broadcast }: { broadcast: Broadcast }) {
       </div>
 
       {/* Message */}
-      <p className={`text-sm leading-relaxed ${broadcast.status === 'active' ? 'text-black/80' : 'text-black/50'}`}>
+      <p className={`text-sm leading-relaxed break-words overflow-hidden ${broadcast.status === 'active' ? 'text-black/80' : 'text-black/50'}`}>
         {broadcast.message}
       </p>
 
       {/* Why (Rationale) */}
-      <div className="mt-2 flex items-start gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-black/40">Why:</span>
-        <span className="text-xs text-black/60">{broadcast.why}</span>
+      <div className="mt-2 flex items-start gap-1 overflow-hidden">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-black/40 shrink-0">Why:</span>
+        <span className="text-xs text-black/60 break-words min-w-0">{broadcast.why}</span>
       </div>
 
       {/* Evidence Links */}

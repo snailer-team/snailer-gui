@@ -117,6 +117,20 @@ export function ElonStatusBar() {
         {/* Separator */}
         <div className="h-4 w-px bg-black/10" />
 
+        {/* Tokens */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-black/40">Tokens</span>
+          <span className="text-xs font-medium tabular-nums text-black/60">
+            {metrics.totalInputTokens > 0 || metrics.totalOutputTokens > 0
+              ? `${(metrics.totalInputTokens / 1000).toFixed(1)}k in / ${(metrics.totalOutputTokens / 1000).toFixed(1)}k out`
+              : '-'
+            }
+          </span>
+        </div>
+
+        {/* Separator */}
+        <div className="h-4 w-px bg-black/10" />
+
         {/* Cost */}
         <div className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-black/40">Cost</span>
