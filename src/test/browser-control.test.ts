@@ -83,3 +83,4 @@ describe('BrowserController', () => {
       expect(true).toBe(true); // Placeholder for future extensibility tests
     });
   });
+});

@@ -85,5 +85,17 @@ class LLMRouter {
     this.metrics.push(metrics);
   }
 
-  getPerformanceStats() {
+  getPerformanceStats(): Record<string, { count: number; avgLatency: number; successRate: number }> {
     return this.metrics.reduce((acc, m) => {
+      if (!acc[m.modelId]) {
+        acc[m.modelId] = { count: 0, avgLatency: 0, successRate: 0 }
+      }
+      acc[m.modelId].count++
+      acc[m.modelId].avgLatency = (acc[m.modelId].avgLatency * (acc[m.modelId].count - 1) + m.latencyMs) / acc[m.modelId].count
+      if (m.success) acc[m.modelId].successRate++
+      return acc
+    }, {} as Record<string, { count: number; avgLatency: number; successRate: number }>)
+  }
+}
+
+export const llmRouter = new LLMRouter()

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { llmRouter, LLMModel } from '../lib/llmRouter'
+import { llmRouter } from '../lib/llmRouter'
 import useStore from '../lib/store'
 
 interface RouterStats {
@@ -65,3 +65,7 @@ export const LLMRouterDashboard: React.FC = () => {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
