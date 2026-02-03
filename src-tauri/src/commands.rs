@@ -65,12 +65,10 @@ fn run_cmd_capture(cmd: &str, args: &[&str], cwd: Option<&str>) -> Result<(i32, 
 pub fn github_cli_status(cwd: Option<String>) -> Result<GitHubCliStatusResponse, String> {
     let cwd_ref = cwd.as_deref();
 
-    // 1) gh --version (installed?)
-    let version_out = std::process::Command::new("gh")
-        .arg("--version")
-        .output();
+    // 1) gh --version (installed?) — use run_cmd_capture for PATH injection
+    let version_result = run_cmd_capture("gh", &["--version"], cwd_ref);
 
-    let Ok(version_out) = version_out else {
+    let Ok((ver_code, ver_text)) = version_result else {
         return Ok(GitHubCliStatusResponse {
             installed: false,
             version: None,
@@ -79,8 +77,8 @@ pub fn github_cli_status(cwd: Option<String>) -> Result<GitHubCliStatusResponse,
         });
     };
 
-    let installed = version_out.status.success();
-    let version_text = String::from_utf8_lossy(&version_out.stdout).lines().next().unwrap_or("").trim().to_string();
+    let installed = ver_code == 0;
+    let version_text = ver_text.lines().next().unwrap_or("").trim().to_string();
     let version = if version_text.is_empty() { None } else { Some(version_text) };
 
     if !installed {
@@ -3010,6 +3008,132 @@ pub async fn git_diff(
         return Err(format!("git diff failed (exit {}): {}", code, text));
     }
     Ok(GitDiffResponse { patch: text })
+}
+
+// ── PR/Issue Comment Reading ──────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrCommentItem {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub comment_type: String, // "review" | "comment"
+}
+
+/// Read PR comments and reviews via `gh pr view --json comments,reviews`.
+#[tauri::command]
+pub async fn gh_pr_view_comments(
+    cwd: String,
+    pr_number: i64,
+) -> Result<Vec<GhPrCommentItem>, String> {
+    let pr_str = pr_number.to_string();
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["pr", "view", &pr_str, "--json", "comments,reviews"],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        // Graceful fallback: PR not found or permission denied
+        return Ok(vec![]);
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+
+    let mut result: Vec<GhPrCommentItem> = Vec::new();
+
+    // Parse comments[]
+    if let Some(comments) = parsed.get("comments").and_then(|c| c.as_array()) {
+        for c in comments {
+            result.push(GhPrCommentItem {
+                author: c.get("author")
+                    .and_then(|a| a.get("login"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                body: c.get("body").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                created_at: c.get("createdAt").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                comment_type: "comment".to_string(),
+            });
+        }
+    }
+
+    // Parse reviews[]
+    if let Some(reviews) = parsed.get("reviews").and_then(|r| r.as_array()) {
+        for r in reviews {
+            let state = r.get("state").and_then(|s| s.as_str()).unwrap_or("");
+            let body = r.get("body").and_then(|s| s.as_str()).unwrap_or("");
+            // Skip reviews with empty body (just state changes)
+            if body.is_empty() && state.is_empty() {
+                continue;
+            }
+            let display_body = if body.is_empty() {
+                format!("[Review: {}]", state)
+            } else {
+                format!("[{}] {}", state, body)
+            };
+            result.push(GhPrCommentItem {
+                author: r.get("author")
+                    .and_then(|a| a.get("login"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                body: display_body,
+                created_at: r.get("createdAt").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                comment_type: "review".to_string(),
+            });
+        }
+    }
+
+    // Sort by created_at ascending
+    result.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    Ok(result)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhIssueCommentItem {
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// Read Issue comments via `gh issue view --json comments`.
+#[tauri::command]
+pub async fn gh_issue_view_comments(
+    cwd: String,
+    issue_number: i64,
+) -> Result<Vec<GhIssueCommentItem>, String> {
+    let issue_str = issue_number.to_string();
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["issue", "view", &issue_str, "--json", "comments"],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        // Graceful fallback: Issue not found
+        return Ok(vec![]);
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+
+    let mut result: Vec<GhIssueCommentItem> = Vec::new();
+
+    if let Some(comments) = parsed.get("comments").and_then(|c| c.as_array()) {
+        for c in comments {
+            result.push(GhIssueCommentItem {
+                author: c.get("author")
+                    .and_then(|a| a.get("login"))
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                body: c.get("body").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                created_at: c.get("createdAt").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            });
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]

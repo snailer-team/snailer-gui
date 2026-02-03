@@ -2710,7 +2710,33 @@ export const useAppStore = create<AppState>()(
           // Build CEO observe context and prompt
           const { buildObserveContext, buildCeoMessages, parseCeoLlmOutput } = await import('./ceoLlm')
           const { invoke } = await import('@tauri-apps/api/core')
-          const observeContext = buildObserveContext(get().elonX)
+
+          // Inject GitHub PR/Issue status into CEO context
+          let ceoGithubContext = ''
+          const ceoProjectPath = get().projectPath
+          if (ceoProjectPath) {
+            try {
+              const [ceoPRs, ceoIssues] = await Promise.all([
+                invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
+                invoke<Array<{ number: number; title: string; state: string; url: string; author: string }>>('gh_issue_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
+              ])
+              if (ceoPRs.length > 0 || ceoIssues.length > 0) {
+                const prSummaries = ceoPRs.map((pr) => {
+                  const flags: string[] = []
+                  if (pr.mergeable === 'CONFLICTING') flags.push('CONFLICT')
+                  if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('REVIEW_CHANGES')
+                  if (pr.reviewDecision === 'APPROVED') flags.push('APPROVED')
+                  return `  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} ${flags.join(' ')}`
+                })
+                const issueSummaries = ceoIssues.slice(0, 10).map(
+                  (i) => `  Issue #${i.number}: "${i.title}" by ${i.author}`
+                )
+                ceoGithubContext = `\n\n## GitHub Status\nOpen PRs (${ceoPRs.length}):\n${prSummaries.join('\n')}${issueSummaries.length > 0 ? `\nOpen Issues (${ceoIssues.length}):\n${issueSummaries.join('\n')}` : ''}`
+              }
+            } catch { /* GitHub context unavailable for CEO */ }
+          }
+
+          const observeContext = buildObserveContext(get().elonX) + ceoGithubContext
           const { systemPrompt, userPrompt } = buildCeoMessages(observeContext)
 
           // Call xAI API directly via Rust backend (bypasses daemon)
@@ -2865,16 +2891,16 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                 }
               }
 
-              // GitHub Pre-flight: scan open PRs/Issues for SWE/QA agents
+              // GitHub Pre-flight: scan open PRs/Issues for SWE/QA/PM agents
               let githubPreflightContext = ''
-              if (projectPath && (agentId.startsWith('swe') || agentId === 'qa')) {
+              if (projectPath && (agentId.startsWith('swe') || agentId === 'qa' || agentId === 'pm')) {
                 try {
                   const [openPRs, openIssues] = await Promise.all([
                     invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: projectPath, state: 'open', limit: 10 }).catch(() => []),
                     invoke<Array<{ number: number; title: string; state: string; url: string; author: string }>>('gh_issue_list', { cwd: projectPath, state: 'open', limit: 10 }).catch(() => []),
                   ])
 
-                  if (openPRs.length > 0) {
+                  if (openPRs.length > 0 || openIssues.length > 0) {
                     const prLines: string[] = []
                     for (const pr of openPRs) {
                       let ciStatus = 'UNKNOWN'
@@ -2891,7 +2917,23 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('🔄REVIEW_CHANGES')
                       if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
 
-                      prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
+                      let prLine = `  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`
+
+                      // Fetch recent comments for PRs needing attention (REVIEW_CHANGES or CI_FAILED)
+                      if (pr.reviewDecision === 'CHANGES_REQUESTED' || ciStatus === 'CI_FAILED') {
+                        try {
+                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string; commentType: string }>>('gh_pr_view_comments', { cwd: projectPath, prNumber: pr.number })
+                          const recentComments = comments.slice(-3)
+                          if (recentComments.length > 0) {
+                            const commentLines = recentComments.map(
+                              (c) => `      - @${c.author}: "${c.body.slice(0, 120)}${c.body.length > 120 ? '...' : ''}"`
+                            )
+                            prLine += `\n    💬 Recent comments:\n${commentLines.join('\n')}`
+                          }
+                        } catch { /* comment fetch failed, continue */ }
+                      }
+
+                      prLines.push(prLine)
                     }
 
                     const issueLines = openIssues.slice(0, 10).map(
@@ -2899,8 +2941,7 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                     )
 
                     githubPreflightContext = `\n\n[GitHub Pre-flight — Open PRs & Issues]
-Open PRs (${openPRs.length}):
-${prLines.join('\n')}
+${openPRs.length > 0 ? `Open PRs (${openPRs.length}):\n${prLines.join('\n')}` : ''}
 ${issueLines.length > 0 ? `\nOpen Issues (${issueLines.length}):\n${issueLines.join('\n')}` : ''}
 
 ACTION REQUIRED: Before starting main work, process any actionable PRs above per your Pre-flight Protocol.`
@@ -3210,6 +3251,9 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                         create_pr: `Creating PR: ${ghAction.params.title}...`,
                         comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
                         merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
+                        view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
+                        view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
+                        run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
                       }
                       get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
                       get().elonAddAgentLog(agentId, {
@@ -3272,6 +3316,24 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               method: ghAction.params.method ?? null,
                             }))
                             break
+                          case 'view_pr_comments':
+                            ghResult = JSON.stringify(await invoke('gh_pr_view_comments', {
+                              cwd: projectPath,
+                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
+                            }))
+                            break
+                          case 'view_issue_comments':
+                            ghResult = JSON.stringify(await invoke('gh_issue_view_comments', {
+                              cwd: projectPath,
+                              issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
+                            }))
+                            break
+                          case 'run_bash':
+                            ghResult = JSON.stringify(await invoke('run_bash', {
+                              cwd: projectPath,
+                              command: ghAction.params.command ?? '',
+                            }))
+                            break
                           default:
                             ghResult = `Unknown action: ${ghAction.type}`
                         }
@@ -3297,6 +3359,25 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             duration: 0,
                           },
                         })
+                        // Knowledge sharing: save PR/Issue comment data for cross-cycle reference
+                        if (ghAction.type === 'view_pr_comments' || ghAction.type === 'comment_pr' || ghAction.type === 'view_issue_comments') {
+                          get().elonAddEvidence({
+                            id: crypto.randomUUID(),
+                            type: 'terminal',
+                            title: `[Knowledge] ${ghAction.type} — PR/Issue Feedback`,
+                            timestamp: Date.now(),
+                            relatedAgentId: agentId,
+                            summary: `Review feedback captured: ${ghResult.slice(0, 200)}`,
+                            verdict: 'info',
+                            data: {
+                              command: `knowledge:${ghAction.type}`,
+                              exitCode: 0,
+                              stdout: ghResult.slice(0, 2000),
+                              stderr: '',
+                              duration: 0,
+                            },
+                          })
+                        }
                       } catch (ghErr) {
                         const ghErrMsg = ghErr instanceof Error ? ghErr.message : String(ghErr)
                         get().elonAddAgentLog(agentId, {
