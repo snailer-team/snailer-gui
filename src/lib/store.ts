@@ -3246,6 +3246,8 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                       // Update live activity for GitHub ops
                       const ghActivityLabels: Record<string, string> = {
                         create_issue: 'Creating GitHub issue...',
+                        close_issue: `Closing Issue #${ghAction.params.issue_number}...`,
+                        comment_issue: `Commenting on Issue #${ghAction.params.issue_number}...`,
                         create_branch: `Creating branch: ${ghAction.params.branch_name || ghAction.params.branchName}...`,
                         commit_push: `Committing & pushing to ${ghAction.params.branch || 'main'}...`,
                         create_pr: `Creating PR: ${ghAction.params.title}...`,
@@ -3328,6 +3330,21 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
                             }))
                             break
+                          case 'close_issue':
+                            ghResult = JSON.stringify(await invoke('gh_issue_close', {
+                              cwd: projectPath,
+                              issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
+                              reason: ghAction.params.reason ?? null,
+                              comment: ghAction.params.comment ?? null,
+                            }))
+                            break
+                          case 'comment_issue':
+                            ghResult = JSON.stringify(await invoke('gh_issue_comment', {
+                              cwd: projectPath,
+                              issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
+                              body: ghAction.params.body ?? '',
+                            }))
+                            break
                           case 'run_bash':
                             ghResult = JSON.stringify(await invoke('run_bash', {
                               cwd: projectPath,
@@ -3360,7 +3377,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                           },
                         })
                         // Knowledge sharing: save PR/Issue comment data for cross-cycle reference
-                        if (ghAction.type === 'view_pr_comments' || ghAction.type === 'comment_pr' || ghAction.type === 'view_issue_comments') {
+                        if (ghAction.type === 'view_pr_comments' || ghAction.type === 'comment_pr' || ghAction.type === 'view_issue_comments' || ghAction.type === 'comment_issue' || ghAction.type === 'close_issue') {
                           get().elonAddEvidence({
                             id: crypto.randomUUID(),
                             type: 'terminal',

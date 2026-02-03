@@ -70,7 +70,9 @@ pub fn run() {
       commands::gh_pr_merge,
       commands::git_diff,
       commands::gh_pr_view_comments,
-      commands::gh_issue_view_comments
+      commands::gh_issue_view_comments,
+      commands::gh_issue_close,
+      commands::gh_issue_comment
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

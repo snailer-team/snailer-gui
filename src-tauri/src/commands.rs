@@ -3110,6 +3110,67 @@ pub struct GhIssueCommentItem {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhIssueCloseResponse {
+    pub success: bool,
+    pub number: i64,
+}
+
+/// Close a GitHub issue via `gh issue close`.
+#[tauri::command]
+pub async fn gh_issue_close(
+    cwd: String,
+    issue_number: i64,
+    reason: Option<String>,
+    comment: Option<String>,
+) -> Result<GhIssueCloseResponse, String> {
+    let issue_str = issue_number.to_string();
+    let mut args = vec!["issue".to_string(), "close".to_string(), issue_str];
+    if let Some(r) = reason {
+        if !r.trim().is_empty() {
+            args.push("--reason".to_string());
+            args.push(r);
+        }
+    }
+    if let Some(c) = comment {
+        if !c.trim().is_empty() {
+            args.push("--comment".to_string());
+            args.push(c);
+        }
+    }
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (code, text) = run_cmd_capture("gh", &args_ref, Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("gh issue close failed (exit {}): {}", code, text));
+    }
+    Ok(GhIssueCloseResponse {
+        success: true,
+        number: issue_number,
+    })
+}
+
+/// Comment on a GitHub issue via `gh issue comment`.
+#[tauri::command]
+pub async fn gh_issue_comment(
+    cwd: String,
+    issue_number: i64,
+    body: String,
+) -> Result<GhCommentResponse, String> {
+    let issue_str = issue_number.to_string();
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["issue", "comment", &issue_str, "--body", &body],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("gh issue comment failed (exit {}): {}", code, text));
+    }
+    Ok(GhCommentResponse {
+        id: text.lines().last().unwrap_or("").trim().to_string(),
+    })
+}
+
 /// Read Issue comments via `gh issue view --json comments`.
 #[tauri::command]
 pub async fn gh_issue_view_comments(

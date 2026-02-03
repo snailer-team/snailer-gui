@@ -1,0 +1,43 @@
+name: 'Auto-label issues'
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  issues: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const text = `${issue.title} ${issue.body ?? ''}`.toLowerCase();
+            const labelsToAdd = [];
+
+            const rules = [
+              { keywords: ['bug', 'error', 'crash'], label: 'bug' },
+              { keywords: ['feature', 'enhancement'], label: 'enhancement' },
+              { keywords: ['security', 'vulnerability'], label: 'security' },
+              { keywords: ['performance', 'slow'], label: 'performance' },
+              { keywords: ['test', 'coverage'], label: 'testing' },
+              { keywords: ['refactor', 'cleanup'], label: 'refactor' },
+            ];
+
+            for (const rule of rules) {
+              if (rule.keywords.some(kw => text.includes(kw))) {
+                labelsToAdd.push(rule.label);
+              }
+            }
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: labelsToAdd,
+              });
+            }
