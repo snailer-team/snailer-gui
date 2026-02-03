@@ -419,18 +419,77 @@ WORKFLOW - Execute this sequence for every code change:
 1. Write codeDiff with valid unified diff targeting real files
 2. githubActions: [{type: "create_branch", params: {branch_name: "feat/your-feature"}}]
 3. githubActions: [{type: "commit_push", params: {branch: "feat/your-feature", message: "description", files: "."}}]
-4. githubActions: [{type: "create_pr", params: {base: "main", head: "feat/your-feature", title: "PR title", body: "description"}}]
+4. githubActions: [{type: "create_pr", params: {base: "main", head: "feat/your-feature", title: "PR title", body: "<PR_TEMPLATE>"}}]
+
+[PR Template - MANDATORY for create_pr body]
+PR body MUST follow this exact template:
+
+## What & Why (First Principles)
+- 문제: (기존 가정/문제점을 기본 원리 수준에서 1-2문장)
+- 해결: (어떻게 재구성했는지 핵심 변경점)
+- 영향: (성능/안정성/UX 변화 — 가능하면 숫자로)
+
+## Changes
+- (파일/기능별 변경점 bullet list, 최대 5-7개)
+- (추가/제거된 주요 diff 요약)
+
+## Testing
+- [ ] Unit tests 추가/수정 (커버리지 변화가 있으면 기입)
+- [ ] Manual test 시나리오 (edge case 포함)
+- [ ] Sandbox/VM 내 실행 확인
+
+## AI Assistance
+- Model: (사용한 모델 명시)
+- 나는 코드의 모든 부분에 대해 책임짐 (hallucination 포함)
+
+## Related Issues
+- Fixes #(이슈 번호)
+- Related to #(이슈 번호)
+
+Keep it short & sharp. Self-review 필수.
+
+[Pre-Commit Quality Gate - MANDATORY]
+커밋 전에 반드시 아래 순서로 실행:
+1. githubActions: [{type: "run_check", params: {command: "pnpm lint"}}] → 0 errors 필수
+2. githubActions: [{type: "run_check", params: {command: "pnpm build"}}] → 성공 필수
+3. githubActions: [{type: "run_check", params: {command: "pnpm test"}}] → all pass 필수
+하나라도 실패하면 codeDiff로 수정 후 재실행. 통과할 때까지 commit_push 금지.
+
+[PR Code Review Feedback Loop - AUTONOMOUS]
+PR 생성 후 GitHub Actions claude-pr-review가 코멘트를 달면:
+1. 리뷰 코멘트를 직접 읽고 분류:
+   - MUST FIX: 보안, 버그, breaking change → 즉시 codeDiff로 수정 + commit_push
+   - SHOULD FIX: 코드 품질, 성능 → 수정 후 commit_push
+   - OPTIONAL: 스타일 → 판단하여 수정 또는 코멘트로 이유 설명
+2. 수정 후 같은 브랜치에 commit_push → CI 재실행 대기
+3. 모든 MUST FIX/SHOULD FIX 해결 확인
+
+[Conflict Resolution - AUTONOMOUS]
+PR에서 merge conflict 발생 시:
+1. githubActions: [{type: "run_bash", params: {command: "git fetch origin main && git merge origin/main"}}]
+2. conflict 파일 확인 → codeDiff로 conflict 해결 (<<<< ==== >>>> 마커 제거)
+3. 해결 후 commit_push → CI 재실행
+4. conflict 해결 불가 시 → create_issue로 보고 + CEO에게 directMessage
+
+[Self-Merge Rules]
+QA agent가 approve하고 CI 모두 통과하면:
+1. githubActions: [{type: "merge_pr", params: {pr_number: "<number>", method: "squash"}, requiresCeoApproval: false}]
+CEO 승인 없이 자율 머지 가능한 조건:
+- QA agent verdict: "approved"
+- CI: lint + build + test 모두 PASS
+- Claude review: 모든 MUST FIX 해결됨
+- No merge conflicts
+위 조건 하나라도 미충족 시 → requiresCeoApproval: true
 
 [GitHub Workflow - Self-Judgment Rules]
 You can autonomously trigger GitHub operations by including "githubActions" in your output.
 These execute REAL git and gh CLI commands on the actual repository.
 Rules:
 1. Bug/bottleneck found -> githubActions: [{type: "create_issue", params: {title, body, labels}, requiresCeoApproval: false}]
-2. Code written -> MUST follow the WORKFLOW above (create_branch + commit_push + create_pr)
+2. Code written -> MUST follow the WORKFLOW above (create_branch + commit_push + create_pr with template)
 3. CI failure feedback -> fix code via new codeDiff, then commit_push to same branch
-4. CEO approves merge -> githubActions: [{type: "merge_pr", params: {pr_number, method}, requiresCeoApproval: true}]
-All write operations (commit_push, create_pr, merge_pr) MUST have requiresCeoApproval: true.
-Read operations (create_issue, create_branch) can set requiresCeoApproval: false.\n`
+4. QA approved + CI green -> self-merge allowed (requiresCeoApproval: false)
+5. Merge conflicts -> resolve autonomously, commit_push, re-run CI\n`
     : isAiMl
     ? `\n\nYou have web search capability. When researching, actively search for:
 - SOTA model architectures, benchmarks (MMLU, HumanEval, SWE-bench)
