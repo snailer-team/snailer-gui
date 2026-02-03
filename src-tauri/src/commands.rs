@@ -131,6 +131,14 @@ fn wait_for_port(port: u16, timeout: Duration) -> Result<(), String> {
 }
 
 fn default_project_path() -> PathBuf {
+    // Try current working directory first (likely the project root)
+    if let Ok(cwd) = std::env::current_dir() {
+        // Check if it looks like a git repo
+        if cwd.join(".git").exists() {
+            return cwd;
+        }
+    }
+    // Fallback to home directory
     home_dir()
 }
 
@@ -1000,50 +1008,6 @@ pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, Stri
     let max = max_bytes.min(data.len()).max(0);
     let slice = &data[..max];
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
-}
-
-/// Write text to a file (for agent code execution).
-#[tauri::command]
-pub async fn fs_write_text(path: String, content: String) -> Result<String, String> {
-    let path_buf = PathBuf::from(&path);
-
-    // Create parent directories if needed
-    if let Some(parent) = path_buf.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
-    }
-
-    std::fs::write(&path_buf, &content).map_err(|e| format!("write failed: {}", e))?;
-    Ok(format!("Written {} bytes to {}", content.len(), path))
-}
-
-/// Apply a unified diff patch using git apply.
-#[tauri::command]
-pub async fn git_apply_patch(cwd: String, patch: String) -> Result<String, String> {
-    // Write patch to temp file
-    let patch_file = format!("/tmp/agent_patch_{}.patch", std::process::id());
-    std::fs::write(&patch_file, &patch).map_err(|e| format!("Failed to write patch file: {}", e))?;
-
-    // Apply patch
-    let (code, text) = run_cmd_capture("git", &["apply", "--verbose", &patch_file], Some(&cwd))?;
-
-    // Clean up
-    let _ = std::fs::remove_file(&patch_file);
-
-    if code != 0 {
-        return Err(format!("git apply failed (exit {}): {}", code, text));
-    }
-
-    Ok(format!("Patch applied: {}", text))
-}
-
-/// Run a bash command in a directory.
-#[tauri::command]
-pub async fn run_bash(cwd: String, command: String) -> Result<String, String> {
-    let (code, text) = run_cmd_capture("bash", &["-c", &command], Some(&cwd))?;
-    if code != 0 {
-        return Err(format!("bash failed (exit {}): {}", code, text));
-    }
-    Ok(text)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2315,50 +2279,306 @@ pub async fn anthropic_chat_completion(
 }
 
 // ============================================================================
-// GitHub Workflow Commands (for agent autonomous operations)
+// File System Commands (Agent Execution)
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitBranchResponse {
-    pub success: bool,
-    pub branch_name: String,
+/// Write text content to a file (creates parent dirs if needed).
+#[tauri::command]
+pub async fn fs_write_text(path: String, content: String) -> Result<String, String> {
+    let file_path = PathBuf::from(&path);
+    if let Some(parent) = file_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+    std::fs::write(&file_path, content.as_bytes()).map_err(|e| format!("write failed: {}", e))?;
+    Ok(path)
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitCommitPushResponse {
-    pub success: bool,
-    pub sha: String,
-    pub message: Option<String>,
+/// Apply a unified diff patch string to the working directory.
+/// Uses `git apply` for robust patch handling.
+#[tauri::command]
+pub async fn git_apply_patch(cwd: String, patch: String) -> Result<String, String> {
+    // Write patch to a temp file
+    let patch_dir = PathBuf::from(&cwd).join(".snailer-patches");
+    std::fs::create_dir_all(&patch_dir).map_err(|e| format!("mkdir failed: {}", e))?;
+    let patch_file = patch_dir.join(format!("patch-{}.diff", uuid::Uuid::new_v4()));
+    std::fs::write(&patch_file, patch.as_bytes()).map_err(|e| format!("write patch failed: {}", e))?;
+
+    // Try git apply
+    let (_code, text) = run_cmd_capture(
+        "git",
+        &["apply", "--stat", &patch_file.to_string_lossy()],
+        Some(&cwd),
+    )?;
+
+    let (apply_code, apply_text) = run_cmd_capture(
+        "git",
+        &["apply", "--allow-empty", &patch_file.to_string_lossy()],
+        Some(&cwd),
+    )?;
+
+    // Clean up
+    let _ = std::fs::remove_file(&patch_file);
+    let _ = std::fs::remove_dir(&patch_dir); // Only removes if empty
+
+    if apply_code != 0 {
+        return Err(format!("git apply failed (exit {}): {}", apply_code, apply_text));
+    }
+
+    Ok(format!("Patch applied successfully. Stats: {}", text.trim()))
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GhPrResponse {
-    pub number: i64,
-    pub url: String,
+/// Run an arbitrary shell command in the project directory (for agent execution).
+/// Returns (exit_code, combined stdout+stderr).
+#[tauri::command]
+pub async fn shell_execute(cwd: String, command: String, args: Vec<String>) -> Result<(i32, String), String> {
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_cmd_capture(&command, &args_ref, Some(&cwd))
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// Run a bash command string in a directory (convenience wrapper).
+#[tauri::command]
+pub async fn run_bash(cwd: String, command: String) -> Result<String, String> {
+    let (code, text) = run_cmd_capture("bash", &["-c", &command], Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("bash failed (exit {}): {}", code, text));
+    }
+    Ok(text)
+}
+
+/// Get git status summary for the project (for agent context).
+#[tauri::command]
+pub async fn git_status_summary(cwd: String) -> Result<String, String> {
+    let mut result = String::new();
+
+    // Current branch
+    let (_, branch) = run_cmd_capture("git", &["branch", "--show-current"], Some(&cwd))?;
+    result.push_str(&format!("Branch: {}\n", branch.trim()));
+
+    // Short status
+    let (_, status) = run_cmd_capture("git", &["status", "--short"], Some(&cwd))?;
+    if status.trim().is_empty() {
+        result.push_str("Working tree: clean\n");
+    } else {
+        result.push_str(&format!("Changes:\n{}\n", status.trim()));
+    }
+
+    // Recent commits (last 5)
+    let (_, log) = run_cmd_capture(
+        "git",
+        &["log", "--oneline", "-5"],
+        Some(&cwd),
+    )?;
+    if !log.trim().is_empty() {
+        result.push_str(&format!("Recent commits:\n{}\n", log.trim()));
+    }
+
+    // Remote
+    let (_, remote) = run_cmd_capture("git", &["remote", "-v"], Some(&cwd))?;
+    if !remote.trim().is_empty() {
+        let first_line = remote.lines().next().unwrap_or("").trim();
+        result.push_str(&format!("Remote: {}\n", first_line));
+    }
+
+    Ok(result)
+}
+
+// ============================================================================
+// GitHub / Git CLI Commands (Autonomous Workflow)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GhIssueResponse {
     pub number: i64,
     pub url: String,
 }
 
-/// Create a new git branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhIssueItem {
+    pub number: i64,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchResponse {
+    pub success: bool,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitPushResponse {
+    pub success: bool,
+    pub sha: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrResponse {
+    pub number: i64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrItem {
+    pub number: i64,
+    pub title: String,
+    pub state: String,
+    pub url: String,
+    pub head_branch: String,
+    pub author: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrCheckItem {
+    pub name: String,
+    pub status: String,
+    pub conclusion: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrChecksResponse {
+    pub status: String,
+    pub checks: Vec<GhPrCheckItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhCommentResponse {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhMergeResponse {
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffResponse {
+    pub patch: String,
+}
+
+/// Create a GitHub issue via `gh issue create`.
 #[tauri::command]
-pub async fn git_branch_create(cwd: String, branch_name: String) -> Result<GitBranchResponse, String> {
-    // Sanitize branch name
-    let sanitized: String = branch_name
+pub async fn gh_issue_create(
+    cwd: String,
+    title: String,
+    body: String,
+    labels: Option<String>,
+    assignees: Option<String>,
+) -> Result<GhIssueResponse, String> {
+    let mut args = vec![
+        "issue".to_string(),
+        "create".to_string(),
+        "--title".to_string(),
+        title,
+        "--body".to_string(),
+        body,
+    ];
+    if let Some(l) = labels {
+        if !l.trim().is_empty() {
+            args.push("--label".to_string());
+            args.push(l);
+        }
+    }
+    if let Some(a) = assignees {
+        if !a.trim().is_empty() {
+            args.push("--assignee".to_string());
+            args.push(a);
+        }
+    }
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let (code, text) = run_cmd_capture("gh", &args_ref, Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("gh issue create failed (exit {}): {}", code, text));
+    }
+    // gh outputs the issue URL on success
+    let url = text.lines().last().unwrap_or("").trim().to_string();
+    let number = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
+    Ok(GhIssueResponse { number, url })
+}
+
+/// List GitHub issues via `gh issue list`.
+#[tauri::command]
+pub async fn gh_issue_list(
+    cwd: String,
+    state: Option<String>,
+    labels: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<GhIssueItem>, String> {
+    let limit_str = limit.unwrap_or(20).to_string();
+    let state_str = state.unwrap_or_else(|| "open".to_string());
+    let mut args = vec![
+        "issue", "list",
+        "--state", &state_str,
+        "--limit", &limit_str,
+        "--json", "number,title,state,url,author",
+    ];
+    let labels_owned;
+    if let Some(ref l) = labels {
+        if !l.trim().is_empty() {
+            labels_owned = l.clone();
+            args.push("--label");
+            args.push(&labels_owned);
+        }
+    }
+    let (code, text) = run_cmd_capture("gh", &args, Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("gh issue list failed (exit {}): {}", code, text));
+    }
+    let items: Vec<serde_json::Value> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+    let result = items
+        .iter()
+        .map(|v| GhIssueItem {
+            number: v.get("number").and_then(|n| n.as_i64()).unwrap_or(0),
+            title: v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            state: v.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            url: v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            author: v
+                .get("author")
+                .and_then(|a| a.get("login"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect();
+    Ok(result)
+}
+
+/// Create a git branch and switch to it. If branch already exists, just switch to it.
+#[tauri::command]
+pub async fn git_branch_create(
+    cwd: String,
+    branch_name: String,
+) -> Result<GitBranchResponse, String> {
+    // Sanitize branch name: replace spaces and invalid chars with dashes
+    let sanitized = branch_name
         .trim()
         .replace(' ', "-")
-        .replace('\'', "")
-        .replace('"', "")
+        .replace("'", "")
+        .replace("\"", "")
+        .replace(":", "-")
+        .replace("..", "-")
         .chars()
         .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '/')
-        .collect();
+        .collect::<String>();
 
     if sanitized.is_empty() {
         return Err("Invalid branch name".to_string());
@@ -2366,17 +2586,30 @@ pub async fn git_branch_create(cwd: String, branch_name: String) -> Result<GitBr
 
     let (code, text) = run_cmd_capture("git", &["checkout", "-b", &sanitized], Some(&cwd))?;
     if code != 0 {
-        // Try switching to existing branch
-        let (code2, text2) = run_cmd_capture("git", &["checkout", &sanitized], Some(&cwd))?;
-        if code2 != 0 {
-            return Err(format!("git branch failed: {} / {}", text, text2));
+        // If branch already exists, try to just checkout
+        if text.contains("already exists") || text.contains("already exist") {
+            let (code2, text2) = run_cmd_capture("git", &["checkout", &sanitized], Some(&cwd))?;
+            if code2 != 0 {
+                return Err(format!("git checkout failed (exit {}): {}", code2, text2));
+            }
+            return Ok(GitBranchResponse {
+                success: true,
+                branch: format!("{} (switched to existing)", sanitized),
+            });
         }
+        // Also handle "is not a valid branch name"
+        if text.contains("not a valid branch name") {
+            return Err(format!("Invalid branch name '{}': {}", branch_name, text));
+        }
+        return Err(format!("git checkout -b failed (exit {}): {}", code, text));
     }
-
-    Ok(GitBranchResponse { success: true, branch_name: sanitized })
+    Ok(GitBranchResponse {
+        success: true,
+        branch: sanitized,
+    })
 }
 
-/// Commit staged changes and push to remote.
+/// Stage files, commit, and push to remote.
 #[tauri::command]
 pub async fn git_commit_and_push(
     cwd: String,
@@ -2385,23 +2618,34 @@ pub async fn git_commit_and_push(
     files: Vec<String>,
 ) -> Result<GitCommitPushResponse, String> {
     // Stage files
-    for file in &files {
-        let _ = run_cmd_capture("git", &["add", file], Some(&cwd));
+    if files.is_empty() {
+        let (code, text) = run_cmd_capture("git", &["add", "-A"], Some(&cwd))?;
+        if code != 0 {
+            return Err(format!("git add -A failed (exit {}): {}", code, text));
+        }
+    } else {
+        let mut args = vec!["add"];
+        let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+        args.extend(file_refs);
+        let (code, text) = run_cmd_capture("git", &args, Some(&cwd))?;
+        if code != 0 {
+            return Err(format!("git add failed (exit {}): {}", code, text));
+        }
     }
-    // Fallback: stage all if specific files fail
-    let _ = run_cmd_capture("git", &["add", "-A"], Some(&cwd));
 
-    // Commit
+    // Commit (handle "nothing to commit" gracefully)
     let (code, text) = run_cmd_capture("git", &["commit", "-m", &message], Some(&cwd))?;
     if code != 0 {
+        // Check if it's just "nothing to commit"
         if text.contains("nothing to commit") || text.contains("working tree clean") {
+            // Not an error - just no changes to commit
             return Ok(GitCommitPushResponse {
                 success: true,
                 sha: "no-changes".to_string(),
-                message: Some("No changes to commit".to_string()),
+                message: Some("No changes to commit (working tree clean)".to_string()),
             });
         }
-        return Err(format!("git commit failed: {}", text));
+        return Err(format!("git commit failed (exit {}): {}", code, text));
     }
 
     // Get SHA
@@ -2409,15 +2653,24 @@ pub async fn git_commit_and_push(
     let sha = sha_text.trim().to_string();
 
     // Push
-    let (code, text) = run_cmd_capture("git", &["push", "-u", "origin", &branch], Some(&cwd))?;
-    if code != 0 && !text.contains("Everything up-to-date") {
-        return Err(format!("git push failed: {}", text));
+    let (code, text) = run_cmd_capture(
+        "git",
+        &["push", "-u", "origin", &branch],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("git push failed (exit {}): {}", code, text));
     }
 
-    Ok(GitCommitPushResponse { success: true, sha, message: None })
+    Ok(GitCommitPushResponse {
+        success: true,
+        sha,
+        message: None,
+    })
 }
 
-/// Create a pull request via gh CLI. Auto-pushes branch first.
+/// Create a pull request via `gh pr create`.
+/// Automatically pushes the branch first if needed.
 #[tauri::command]
 pub async fn gh_pr_create(
     cwd: String,
@@ -2426,65 +2679,211 @@ pub async fn gh_pr_create(
     title: String,
     body: String,
 ) -> Result<GhPrResponse, String> {
-    // Auto-push branch before PR creation
-    let _ = run_cmd_capture("git", &["push", "-u", "origin", &head], Some(&cwd));
+    // First, ensure the branch is pushed to remote
+    let branch_to_push = if head.is_empty() {
+        // Get current branch name
+        let (_, current_branch) = run_cmd_capture("git", &["branch", "--show-current"], Some(&cwd))?;
+        current_branch.trim().to_string()
+    } else {
+        head.clone()
+    };
 
+    // Push the branch (ignore errors if already up to date)
+    let _ = run_cmd_capture(
+        "git",
+        &["push", "-u", "origin", &branch_to_push],
+        Some(&cwd),
+    );
+
+    // Now create the PR
+    let head_ref = if head.is_empty() { &branch_to_push } else { &head };
     let (code, text) = run_cmd_capture(
         "gh",
-        &["pr", "create", "--base", &base, "--head", &head, "--title", &title, "--body", &body],
+        &[
+            "pr", "create",
+            "--base", &base,
+            "--head", head_ref,
+            "--title", &title,
+            "--body", &body,
+        ],
         Some(&cwd),
     )?;
-
     if code != 0 {
-        return Err(format!("gh pr create failed: {}", text));
+        return Err(format!("gh pr create failed (exit {}): {}", code, text));
     }
-
     let url = text.lines().last().unwrap_or("").trim().to_string();
-    let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-
+    let number = url
+        .rsplit('/')
+        .next()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0);
     Ok(GhPrResponse { number, url })
 }
 
-/// Create a GitHub issue via gh CLI.
+/// List pull requests via `gh pr list`.
 #[tauri::command]
-pub async fn gh_issue_create(
+pub async fn gh_pr_list(
     cwd: String,
-    title: String,
-    body: String,
-    labels: Option<String>,
-) -> Result<GhIssueResponse, String> {
-    let mut args = vec!["issue", "create", "--title", &title, "--body", &body];
-    let label_str;
-    if let Some(l) = &labels {
-        label_str = l.clone();
-        args.push("--label");
-        args.push(&label_str);
-    }
-
-    let (code, text) = run_cmd_capture("gh", &args, Some(&cwd))?;
-
+    state: Option<String>,
+    limit: Option<u32>,
+) -> Result<Vec<GhPrItem>, String> {
+    let limit_str = limit.unwrap_or(20).to_string();
+    let state_str = state.unwrap_or_else(|| "open".to_string());
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &[
+            "pr", "list",
+            "--state", &state_str,
+            "--limit", &limit_str,
+            "--json", "number,title,state,url,headRefName,author",
+        ],
+        Some(&cwd),
+    )?;
     if code != 0 {
-        // Retry without labels if label error
-        if text.contains("label") && labels.is_some() {
-            let (code2, text2) = run_cmd_capture(
-                "gh",
-                &["issue", "create", "--title", &title, "--body", &body],
-                Some(&cwd),
-            )?;
-            if code2 != 0 {
-                return Err(format!("gh issue create failed: {}", text2));
-            }
-            let url = text2.lines().last().unwrap_or("").trim().to_string();
-            let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            return Ok(GhIssueResponse { number, url });
-        }
-        return Err(format!("gh issue create failed: {}", text));
+        return Err(format!("gh pr list failed (exit {}): {}", code, text));
     }
+    let items: Vec<serde_json::Value> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+    let result = items
+        .iter()
+        .map(|v| GhPrItem {
+            number: v.get("number").and_then(|n| n.as_i64()).unwrap_or(0),
+            title: v.get("title").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            state: v.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            url: v.get("url").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            head_branch: v
+                .get("headRefName")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            author: v
+                .get("author")
+                .and_then(|a| a.get("login"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect();
+    Ok(result)
+}
 
-    let url = text.lines().last().unwrap_or("").trim().to_string();
-    let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+/// Get PR checks status via `gh pr checks`.
+#[tauri::command]
+pub async fn gh_pr_checks(
+    cwd: String,
+    pr_number: i64,
+) -> Result<GhPrChecksResponse, String> {
+    let pr_str = pr_number.to_string();
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["pr", "checks", &pr_str, "--json", "name,state,conclusion"],
+        Some(&cwd),
+    )?;
+    // gh pr checks may return non-zero if checks haven't started
+    if code != 0 && !text.contains("no checks") {
+        return Err(format!("gh pr checks failed (exit {}): {}", code, text));
+    }
+    if text.trim().is_empty() || text.contains("no checks") {
+        return Ok(GhPrChecksResponse {
+            status: "no_checks".to_string(),
+            checks: vec![],
+        });
+    }
+    let items: Vec<serde_json::Value> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+    let checks: Vec<GhPrCheckItem> = items
+        .iter()
+        .map(|v| GhPrCheckItem {
+            name: v.get("name").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            status: v.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+            conclusion: v
+                .get("conclusion")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+        .collect();
+    let all_pass = checks.iter().all(|c| c.conclusion == "SUCCESS" || c.conclusion == "success");
+    let any_fail = checks.iter().any(|c| c.conclusion == "FAILURE" || c.conclusion == "failure");
+    let status = if any_fail {
+        "failure"
+    } else if all_pass {
+        "success"
+    } else {
+        "pending"
+    };
+    Ok(GhPrChecksResponse {
+        status: status.to_string(),
+        checks,
+    })
+}
 
-    Ok(GhIssueResponse { number, url })
+/// Comment on a PR via `gh pr comment`.
+#[tauri::command]
+pub async fn gh_pr_comment(
+    cwd: String,
+    pr_number: i64,
+    body: String,
+) -> Result<GhCommentResponse, String> {
+    let pr_str = pr_number.to_string();
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["pr", "comment", &pr_str, "--body", &body],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("gh pr comment failed (exit {}): {}", code, text));
+    }
+    Ok(GhCommentResponse {
+        id: text.lines().last().unwrap_or("").trim().to_string(),
+    })
+}
+
+/// Merge a PR via `gh pr merge`.
+#[tauri::command]
+pub async fn gh_pr_merge(
+    cwd: String,
+    pr_number: i64,
+    method: Option<String>,
+) -> Result<GhMergeResponse, String> {
+    let pr_str = pr_number.to_string();
+    let merge_method = match method.as_deref() {
+        Some("rebase") => "--rebase",
+        Some("squash") => "--squash",
+        _ => "--merge",
+    };
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["pr", "merge", &pr_str, merge_method, "--auto"],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("gh pr merge failed (exit {}): {}", code, text));
+    }
+    Ok(GhMergeResponse { success: true })
+}
+
+/// Get git diff between two refs.
+#[tauri::command]
+pub async fn git_diff(
+    cwd: String,
+    base: Option<String>,
+    head: Option<String>,
+) -> Result<GitDiffResponse, String> {
+    let mut args = vec!["diff"];
+    let base_owned = base.unwrap_or_default();
+    let head_owned = head.unwrap_or_default();
+    if !base_owned.is_empty() {
+        args.push(&base_owned);
+    }
+    if !head_owned.is_empty() {
+        args.push(&head_owned);
+    }
+    let (code, text) = run_cmd_capture("git", &args, Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("git diff failed (exit {}): {}", code, text));
+    }
+    Ok(GitDiffResponse { patch: text })
 }
 
 #[cfg(test)]

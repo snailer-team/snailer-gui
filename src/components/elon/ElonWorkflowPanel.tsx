@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { useAppStore, type Broadcast, type CycleRun, type ElonAgentStatus } from '../../lib/store'
+import { useMemo, useState } from 'react'
+import { useAppStore, type Broadcast, type CycleRun, type ElonAgentStatus, type AgentActivityLog } from '../../lib/store'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from '../ui/scroll-area'
 
 function getStatusIcon(status: ElonAgentStatus): string {
@@ -36,19 +36,50 @@ function formatTimeAgo(timestamp: number): string {
   return 'just now'
 }
 
+function getLogIcon(type: AgentActivityLog['type']): string {
+  switch (type) {
+    case 'thinking': return '🧠'
+    case 'action': return '⚡'
+    case 'ceo_feedback': return '👔'
+    case 'error': return '❌'
+    case 'success': return '✅'
+    case 'github': return '🔗'
+  }
+}
+
+function getLogColor(type: AgentActivityLog['type']): string {
+  switch (type) {
+    case 'thinking': return 'text-blue-600'
+    case 'action': return 'text-amber-600'
+    case 'ceo_feedback': return 'text-violet-600'
+    case 'error': return 'text-red-600'
+    case 'success': return 'text-emerald-600'
+    case 'github': return 'text-purple-600'
+  }
+}
+
 function AgentCard({
   agentId,
   status,
   currentTask,
   startedAt,
   activeBroadcast,
+  liveActivity,
+  activityLogs,
+  ceoFeedback,
 }: {
   agentId: string
   status: ElonAgentStatus
   currentTask?: string
   startedAt?: number
   activeBroadcast?: Broadcast
+  liveActivity?: string
+  activityLogs?: AgentActivityLog[]
+  ceoFeedback?: string
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const recentLogs = activityLogs?.slice(0, 5) || []
+
   return (
     <div className={`rounded-xl border p-3 ${getStatusColor(status)} transition-all`}>
       <div className="flex items-start gap-2">
@@ -66,6 +97,15 @@ function AgentCard({
             <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/50 font-medium">
               {status}
             </span>
+            {recentLogs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setExpanded(!expanded)}
+                className="ml-auto text-[9px] px-1.5 py-0.5 rounded bg-black/10 hover:bg-black/20 transition"
+              >
+                {expanded ? '▼' : '▶'} {recentLogs.length} logs
+              </button>
+            )}
           </div>
 
           {/* Current Task */}
@@ -79,6 +119,45 @@ function AgentCard({
           {activeBroadcast && (
             <div className="mt-2 text-[10px] opacity-60">
               <span className="font-medium">Why:</span> {activeBroadcast.why}
+            </div>
+          )}
+
+          {/* CEO Feedback - prominently displayed */}
+          {ceoFeedback && (
+            <div className="mt-2 p-2 rounded-lg bg-violet-500/10 border border-violet-500/20">
+              <div className="flex items-center gap-1 text-[9px] font-medium text-violet-600">
+                <span>👔</span> CEO Feedback
+              </div>
+              <div className="mt-0.5 text-[10px] text-violet-800">{ceoFeedback}</div>
+            </div>
+          )}
+
+          {/* Live Activity - real-time status */}
+          {liveActivity && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-emerald-600 font-medium">
+              <span className="animate-pulse">●</span>
+              <span className="truncate">{liveActivity}</span>
+            </div>
+          )}
+
+          {/* Activity Logs - expandable */}
+          {expanded && recentLogs.length > 0 && (
+            <div className="mt-2 space-y-1 border-t border-black/10 pt-2">
+              <div className="text-[9px] font-medium opacity-50 uppercase">Activity Log</div>
+              {recentLogs.map((log, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[10px]">
+                  <span>{getLogIcon(log.type)}</span>
+                  <div className="flex-1 min-w-0">
+                    <span className={getLogColor(log.type)}>{log.message}</span>
+                    {log.detail && (
+                      <div className="text-[9px] opacity-50 truncate">{log.detail}</div>
+                    )}
+                  </div>
+                  <span className="text-[8px] opacity-40 shrink-0">
+                    {formatTimeAgo(log.timestamp)}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
 
@@ -185,6 +264,9 @@ export function ElonWorkflowPanel() {
       currentTask: agentStatuses[id]?.currentTask,
       startedAt: agentStatuses[id]?.startedAt,
       activeBroadcast: activeBroadcastsByAgent.get(id),
+      liveActivity: agentStatuses[id]?.liveActivity,
+      activityLogs: agentStatuses[id]?.activityLogs,
+      ceoFeedback: agentStatuses[id]?.ceoFeedback,
     }))
   }, [agentStatuses, broadcasts, activeBroadcastsByAgent])
 
@@ -289,6 +371,9 @@ export function ElonWorkflowPanel() {
                     currentTask={agent.currentTask}
                     startedAt={agent.startedAt}
                     activeBroadcast={agent.activeBroadcast}
+                    liveActivity={agent.liveActivity}
+                    activityLogs={agent.activityLogs}
+                    ceoFeedback={agent.ceoFeedback}
                   />
                 ))}
               </div>

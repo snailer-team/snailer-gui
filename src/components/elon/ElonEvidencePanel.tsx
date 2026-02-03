@@ -9,6 +9,7 @@ import {
 } from '../../lib/elonEvidence'
 import { ELON_AGENTS } from '../../lib/elonOrg'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from '../ui/scroll-area'
+import { DiffViewer } from '../DiffViewer'
 
 function getAgentTitle(agentId: string): string {
   const agent = ELON_AGENTS.find((a) => a.id === agentId)
@@ -38,9 +39,9 @@ function EvidenceCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="font-medium">{getVerdictIcon(evidence.verdict)}</span>
-            <span className="truncate text-sm font-medium">{evidence.title}</span>
+            <span className="text-sm font-medium break-words line-clamp-2">{evidence.title}</span>
           </div>
-          <div className="mt-0.5 text-xs opacity-70">{evidence.summary}</div>
+          <div className="mt-0.5 text-xs opacity-70 break-words">{evidence.summary}</div>
           <div className="mt-1 flex items-center gap-2 text-[10px] opacity-50">
             <span>[{getAgentTitle(evidence.relatedAgentId)}]</span>
             <span>·</span>
@@ -133,10 +134,9 @@ function EvidenceDetail({ evidence }: { evidence: Evidence }) {
               </div>
             </div>
             {data.patch && (
-              <pre className="rounded-lg bg-black/5 p-2 text-[10px] text-black/70 overflow-auto max-h-40 font-mono">
-                {data.patch.slice(0, 500)}
-                {data.patch.length > 500 && '...'}
-              </pre>
+              <div className="h-[200px]">
+                <DiffViewer patch={data.patch} />
+              </div>
             )}
           </div>
         )

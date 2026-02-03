@@ -73,7 +73,8 @@ function summarizeAgentStatuses(statuses: Record<string, ElonAgentState>): strin
   const summary = agents.slice(0, 10).map((a) => {
     const task = a.currentTask ? ` | task: ${a.currentTask.slice(0, 80)}` : ''
     const output = a.lastOutput ? ` | lastOutput: ${a.lastOutput.slice(0, 200)}` : ''
-    return `- ${a.id}: ${a.status}${task}${output}`
+    const quality = a.lastOutputQuality ? ` | quality: ${a.lastOutputQuality}` : ''
+    return `- ${a.id}: ${a.status}${quality}${task}${output}`
   })
 
   return `Agent Status (${agents.length} agents):
@@ -150,6 +151,9 @@ Principles:
 - Short & Sharp: No fluff, direct communication
 - Revenue-first: Prioritize actions that impact business
 - Daily iteration: Ship fast, iterate faster
+- Macro Judge (Elon role): Agents show you demos/results. Say "good" to accelerate or "wrong" to trigger war room surge
+- Delete First: Kill bad ideas/code immediately. No dead features
+- Bottom-up: Trust agents to self-start. Only intervene when direction is wrong
 
 You MUST respond with valid JSON matching this exact schema:
 {
@@ -175,6 +179,13 @@ You MUST respond with valid JSON matching this exact schema:
 }
 
 Available agents: pm, swe-2, swe-3, ai-ml
+
+Quality Enforcement Rules:
+- If an SWE agent has quality "text_only", they failed to produce code. Re-assign with explicit instruction: "You MUST include codeDiff in write_code actions."
+- If an SWE agent has quality "code_verified", they produced real code. Build on their work.
+- If a PM agent has quality "actionable", their analysis was strong. Reference their findings.
+- Check pending GitHub approval requests in broadcasts and approve/reject as needed.
+
 Only output valid JSON. No markdown, no explanation.`
 
 export function buildCeoPrompt(observeContext: string): string {
@@ -296,6 +307,7 @@ export function buildAgentPrompt(
   const name = wf?.name ?? agentId
 
   const isPm = agentId === 'pm'
+  const isSwe = agentId.startsWith('swe')
   const isAiMl = agentId === 'ai-ml'
 
   const webSearchNote = isPm
@@ -305,6 +317,49 @@ export function buildAgentPrompt(
 - Pricing data, user reviews, and market positioning
 - Regulatory changes and industry benchmarks
 Cite specific sources and data points in your analysis.\n`
+    : isSwe
+    ? `\n\n[SWE Code Output Rules - MANDATORY - YOUR CODE GETS EXECUTED ON REAL FILES]
+⚠️ CRITICAL: Your codeDiff is applied to REAL files via "git apply". Your githubActions execute REAL git/gh commands.
+This is NOT a simulation. Every codeDiff you write modifies actual source code on disk.
+
+When you perform a "write_code" action, you MUST include a "codeDiff" field in unified diff format.
+If codeDiff is missing from a write_code action, your output will be REJECTED and you must retry.
+
+REQUIREMENTS for codeDiff (must pass "git apply"):
+1. File paths must match ACTUAL files in the project (check the [Project Context] section)
+2. Context lines (unchanged lines) must match the REAL file content EXACTLY
+3. Line numbers in @@ hunks must be accurate
+4. Include 3 lines of context before and after each change
+5. Use proper unified diff headers: --- a/path and +++ b/path
+
+codeDiff format example:
+--- a/src/example.ts
++++ b/src/example.ts
+@@ -10,6 +10,8 @@
+ import { foo } from './foo'
++import { bar } from './bar'
+
+ export function example() {
++  const result = bar()
+   return foo()
+ }
+
+WORKFLOW - Execute this sequence for every code change:
+1. Write codeDiff with valid unified diff targeting real files
+2. githubActions: [{type: "create_branch", params: {branch_name: "feat/your-feature"}}]
+3. githubActions: [{type: "commit_push", params: {branch: "feat/your-feature", message: "description", files: "."}}]
+4. githubActions: [{type: "create_pr", params: {base: "main", head: "feat/your-feature", title: "PR title", body: "description"}}]
+
+[GitHub Workflow - Self-Judgment Rules]
+You can autonomously trigger GitHub operations by including "githubActions" in your output.
+These execute REAL git and gh CLI commands on the actual repository.
+Rules:
+1. Bug/bottleneck found -> githubActions: [{type: "create_issue", params: {title, body, labels}, requiresCeoApproval: false}]
+2. Code written -> MUST follow the WORKFLOW above (create_branch + commit_push + create_pr)
+3. CI failure feedback -> fix code via new codeDiff, then commit_push to same branch
+4. CEO approves merge -> githubActions: [{type: "merge_pr", params: {pr_number, method}, requiresCeoApproval: true}]
+All write operations (commit_push, create_pr, merge_pr) MUST have requiresCeoApproval: true.
+Read operations (create_issue, create_branch) can set requiresCeoApproval: false.\n`
     : isAiMl
     ? `\n\nYou have web search capability. When researching, actively search for:
 - SOTA model architectures, benchmarks (MMLU, HumanEval, SWE-bench)
@@ -348,6 +403,15 @@ CRITICAL RULES:
 6. Challenge: Ask "Why isn't it done already?" for every delay.
 7. Direct Message: If you need another agent's help, send a directMessage instead of waiting.
 
+[xAI Idea Development Process — INTERNALIZE THIS]
+- Bottom-up ownership: You see a problem or opportunity? START IMMEDIATELY. No permission needed.
+- No formal process: Ideas flow through code, demos, direct messages — not proposals or tickets.
+- Same-day execution: Good idea → prototype same day → show results → iterate.
+- CEO as macro judge: Show your work to CEO (via broadcasts). "Good" = accelerate. "Wrong" = war room fix.
+- Delete first: If something isn't working, DELETE IT. No dead code, no dead ideas. Simplify.
+- "Everything was always overdue yesterday": Urgency is the default. Ship fast, iterate faster.
+- Multiple daily iterations: idea → prototype → test → feedback → fix → deploy, repeat.
+
 You MUST respond with valid JSON matching this schema:
 {
   "actions": [
@@ -355,7 +419,8 @@ You MUST respond with valid JSON matching this schema:
       "type": "string (e.g., create_issue, write_code, review_pr, analyze, plan, report)",
       "title": "short action title",
       "detail": "what you did or will do",
-      "files": ["optional list of file paths affected"]
+      "files": ["optional list of file paths affected"],
+      "codeDiff": "optional: unified diff for write_code actions (REQUIRED for SWE write_code)"
     }
   ],
   "status": "completed | in_progress | blocked",
@@ -370,6 +435,13 @@ You MUST respond with valid JSON matching this schema:
     {
       "to": "agent-id (e.g., swe-2, pm)",
       "message": "direct message to another agent (optional)"
+    }
+  ],
+  "githubActions": [
+    {
+      "type": "create_issue | create_branch | commit_push | create_pr | comment_pr | merge_pr",
+      "params": {"key": "value"},
+      "requiresCeoApproval": true
     }
   ]
 }
@@ -401,18 +473,28 @@ export interface AgentOutputDirectMessage {
   message: string
 }
 
+export type OutputQuality = 'code_verified' | 'text_only' | 'actionable'
+
+export interface GitHubAction {
+  type: 'create_issue' | 'create_branch' | 'commit_push' | 'create_pr' | 'comment_pr' | 'merge_pr'
+  params: Record<string, string>
+  requiresCeoApproval: boolean
+}
+
 export interface AgentOutput {
   actions: Array<{
     type: string
     title: string
     detail: string
     files?: string[]
+    codeDiff?: string
   }>
   status: 'completed' | 'in_progress' | 'blocked'
   output: string
   improvements: string[]
   evidence?: AgentOutputEvidence
   directMessages?: AgentOutputDirectMessage[]
+  githubActions?: GitHubAction[]
 }
 
 /**
@@ -449,6 +531,7 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
       title: String(a.title),
       detail: String(a.detail ?? ''),
       files: Array.isArray(a.files) ? a.files.map(String) : undefined,
+      codeDiff: typeof a.codeDiff === 'string' ? a.codeDiff : undefined,
     }
   })
 
@@ -487,6 +570,28 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
       })
   }
 
+  // Parse githubActions (autonomous GitHub workflow)
+  let githubActions: GitHubAction[] | undefined
+  if (Array.isArray(parsed.githubActions)) {
+    const validTypes = ['create_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr']
+    githubActions = parsed.githubActions
+      .filter((ga: unknown) => {
+        const g = ga as Record<string, unknown>
+        return typeof g.type === 'string' && validTypes.includes(g.type)
+      })
+      .map((ga: unknown) => {
+        const g = ga as Record<string, unknown>
+        return {
+          type: String(g.type) as GitHubAction['type'],
+          params: (typeof g.params === 'object' && g.params !== null)
+            ? Object.fromEntries(Object.entries(g.params as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+            : {},
+          requiresCeoApproval: g.requiresCeoApproval !== false, // default true for safety
+        }
+      })
+    if (githubActions.length === 0) githubActions = undefined
+  }
+
   return {
     actions,
     status,
@@ -494,6 +599,7 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
     improvements,
     evidence,
     directMessages,
+    githubActions,
   }
 }
 
@@ -641,12 +747,18 @@ export function extractKnowledgeFromOutput(
     ]),
   ].slice(0, 5)
 
+  // Enrich insight with codeDiff file names if present
+  const diffActions = agentOutput.actions.filter((a) => a.codeDiff)
+  const diffSummary = diffActions.length > 0
+    ? ` | Code changes: ${diffActions.map((a) => a.files?.join(', ') ?? a.title).join('; ').slice(0, 100)}`
+    : ''
+
   return {
     id: crypto.randomUUID(),
     agentId,
     cycleRunId,
     topic,
-    insight: agentOutput.output.slice(0, 300),
+    insight: agentOutput.output.slice(0, 300 - diffSummary.length) + diffSummary,
     context: broadcastMessage.slice(0, 200),
     reasoning: agentOutput.actions.map((a) => `${a.type}: ${a.title}`).join('; ').slice(0, 300),
     createdAt: Date.now(),

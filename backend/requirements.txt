@@ -1,0 +1,6 @@
+flask==3.0.3
+flask-socketio==5.3.6
+scikit-learn==1.5.1
+redis==5.0.7
+numpy==2.0.1
+eventlet==0.33.3

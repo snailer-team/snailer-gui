@@ -55,6 +55,7 @@ export function ElonGoalBar() {
   const isPaused = planStatus === 'paused'
   const canExecute = elonFrame.problem.trim() && !isRunning && !isPaused
 
+  // Display shortened path
   const displayPath = projectPath
     ? projectPath.length > 40
       ? '...' + projectPath.slice(-37)
