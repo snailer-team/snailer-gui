@@ -1,0 +1,62 @@
+name: ensure-required-labels
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  issues: write
+
+jobs:
+  ensure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure required labels exist (idempotent)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // Minimal required labels to support triage/automation.
+            // NOTE: If/when labels are fully managed elsewhere, delete this workflow.
+            const required = [
+              { name: 'revenue', color: '0e8a16', description: 'Revenue-impacting work' },
+              { name: 'qa', color: '5319e7', description: 'Quality assurance' },
+              { name: 'security', color: 'b60205', description: 'Security-related work' },
+              { name: 'ci', color: '1d76db', description: 'CI/CD and build pipeline' },
+              { name: 'prototype', color: 'fbca04', description: 'Fast prototype / spike' }
+            ];
+
+            for (const label of required) {
+              const name = label.name;
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+                await github.rest.issues.updateLabel({
+                  owner,
+                  repo,
+                  name,
+                  new_name: name,
+                  color: label.color,
+                  description: label.description
+                });
+                core.info(`Updated label: ${name}`);
+              } catch (e) {
+                if (e.status === 404) {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name,
+                    color: label.color,
+                    description: label.description
+                  });
+                  core.info(`Created label: ${name}`);
+                } else {
+                  core.setFailed(`Failed ensuring label ${name}: ${e.message}`);
+                  throw e;
+                }
+              }
+            }
+            core.info('Required labels ensured.');
