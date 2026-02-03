@@ -31,7 +31,7 @@ export function AutoCycleControl() {
   } = useAppStore()
 
   const { autoCycle, cycleRuns } = elonX
-  const [nowMs, setNowMs] = useState(Date.now())
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   // Timer for countdown and cycle tick
   useEffect(() => {

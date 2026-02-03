@@ -24,7 +24,7 @@ function formatCountdown(expiresAt: number): string {
 
 function BroadcastCard({ broadcast }: { broadcast: Broadcast }) {
   const { elonSelectEvidence } = useAppStore()
-  const [, setNow] = useState(Date.now())
+  const [, setNow] = useState(() => Date.now())
 
   // Update countdown every second
   useEffect(() => {
