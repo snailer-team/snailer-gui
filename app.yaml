@@ -1,0 +1,26 @@
+runtime: python39
+
+# App Engine configuration for xAI backend
+service: default
+
+# Auto scaling configuration
+automatic_scaling:
+  min_instances: 1
+  max_instances: 10
+  target_cpu_utilization: 0.6
+
+# Environment variables
+env_variables:
+  FLASK_ENV: production
+  PYTHONPATH: /srv
+
+# Health check endpoint
+health_check:
+  enable_health_check: true
+  check_interval_sec: 30
+  timeout_sec: 4
+  unhealthy_threshold: 2
+  healthy_threshold: 2
+  restart_threshold: 60
+
+# Static file serving (for API docs, etc.)
