@@ -21,7 +21,7 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           # Set this in GitHub Variables to your preferred Claude model ID.
-          MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-3-5-sonnet-20241022' }}
+          MODEL: ${{ vars.CLAUDE_REVIEW_MODEL || 'claude-haiku-4-5-20251001' }}
         run: |
           set -euo pipefail
 
@@ -104,7 +104,7 @@ jobs:
 
           echo "Calling Anthropic API (model=$MODEL)..."
           if ! call_anthropic > anthropic.out.json; then
-            FALLBACK_MODEL="claude-3-5-sonnet-20241022"
+            FALLBACK_MODEL="claude-haiku-4-5-20251001"
             echo "Claude call failed. Retrying with fallback model=$FALLBACK_MODEL..."
             jq -n --arg model "$FALLBACK_MODEL" --arg system "You are a senior code reviewer." --arg content "$REVIEW_INPUT" '{
               model: $model,

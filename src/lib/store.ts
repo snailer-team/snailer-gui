@@ -3289,6 +3289,88 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                     }
                   }
 
+                  // ── REAL EXECUTION: Apply codeDiffs to actual filesystem ──
+                  const projectPath = get().projectPath
+                  const executionResults: Array<{ action: string; success: boolean; detail: string }> = []
+
+                  for (const action of agentOutput.actions) {
+                    if (action.codeDiff && projectPath) {
+                      // Check if this is a NEW FILE creation (diff shows /dev/null as source)
+                      const isNewFile = action.codeDiff.includes('--- /dev/null') || action.codeDiff.includes('--- a/dev/null')
+
+                      if (isNewFile && action.files && action.files.length > 0) {
+                        // Extract new file content from diff
+                        try {
+                          const filePath = action.files[0]
+                          const normalizedPath = filePath.startsWith('/') ? filePath.slice(1) : filePath
+                          const fullPath = `${projectPath}/${normalizedPath}`
+
+                          // Extract content from diff
+                          const diffLines = action.codeDiff.split('\n')
+                          const contentLines: string[] = []
+                          let inHunk = false
+                          for (const line of diffLines) {
+                            if (line.startsWith('@@')) {
+                              inHunk = true
+                              continue
+                            }
+                            if (inHunk && line.startsWith('+') && !line.startsWith('+++')) {
+                              contentLines.push(line.slice(1))
+                            }
+                          }
+                          const newContent = contentLines.join('\n')
+
+                          await invoke<string>('fs_write_text', { path: fullPath, content: newContent })
+                          executionResults.push({ action: action.title, success: true, detail: `Created: ${filePath}` })
+                        } catch (err) {
+                          const errMsg = err instanceof Error ? err.message : String(err)
+                          executionResults.push({ action: action.title, success: false, detail: errMsg })
+                        }
+                      } else {
+                        // Existing file: use git apply
+                        try {
+                          await invoke<string>('git_apply_patch', { cwd: projectPath, patch: action.codeDiff })
+                          executionResults.push({ action: action.title, success: true, detail: 'Patch applied' })
+                        } catch (err) {
+                          const errMsg = err instanceof Error ? err.message : String(err)
+                          executionResults.push({ action: action.title, success: false, detail: errMsg })
+                        }
+                      }
+
+                      // Record diff Evidence
+                      const addedLines = (action.codeDiff.match(/^\+[^+]/gm) || []).length
+                      const removedLines = (action.codeDiff.match(/^-[^-]/gm) || []).length
+                      const filePath = action.files?.[0] ?? action.title
+                      const lastResult = executionResults[executionResults.length - 1]
+                      get().elonAddEvidence({
+                        id: crypto.randomUUID(),
+                        type: 'diff',
+                        title: `[${agentId.toUpperCase()}] ${action.title}`,
+                        timestamp: Date.now(),
+                        relatedAgentId: agentId,
+                        summary: `${lastResult?.success ? 'APPLIED' : 'FAILED'} +${addedLines} -${removedLines} ${filePath}`,
+                        verdict: lastResult?.success ? 'pass' : 'fail',
+                        data: { path: filePath, added: addedLines, removed: removedLines, patch: action.codeDiff },
+                      })
+                    }
+                  }
+
+                  // Record execution summary
+                  if (executionResults.length > 0) {
+                    const successCount = executionResults.filter((r) => r.success).length
+                    const failCount = executionResults.length - successCount
+                    get().elonAddEvidence({
+                      id: crypto.randomUUID(),
+                      type: 'build_log',
+                      title: `[${agentId.toUpperCase()}] Code Execution`,
+                      timestamp: Date.now(),
+                      relatedAgentId: agentId,
+                      summary: `${successCount} applied, ${failCount} failed`,
+                      verdict: failCount === 0 ? 'pass' : failCount === executionResults.length ? 'fail' : 'warning',
+                      data: { success: failCount === 0, errors: failCount, warnings: 0, output: executionResults.map((r) => `${r.success ? '✓' : '✗'} ${r.action}: ${r.detail}`).join('\n'), duration: 0 },
+                    })
+                  }
+
                   // Mark agent as idle with last output, quality flag, and increment completed tasks
                   set((st) => ({
                     elonX: {

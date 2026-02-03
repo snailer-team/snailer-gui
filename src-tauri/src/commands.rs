@@ -2335,6 +2335,16 @@ pub async fn shell_execute(cwd: String, command: String, args: Vec<String>) -> R
     run_cmd_capture(&command, &args_ref, Some(&cwd))
 }
 
+/// Run a bash command string in a directory (convenience wrapper).
+#[tauri::command]
+pub async fn run_bash(cwd: String, command: String) -> Result<String, String> {
+    let (code, text) = run_cmd_capture("bash", &["-c", &command], Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("bash failed (exit {}): {}", code, text));
+    }
+    Ok(text)
+}
+
 /// Get git status summary for the project (for agent context).
 #[tauri::command]
 pub async fn git_status_summary(cwd: String) -> Result<String, String> {
