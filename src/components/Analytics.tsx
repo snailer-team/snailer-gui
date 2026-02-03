@@ -107,17 +107,17 @@ const Analytics: React.FC = () => {
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Users</h3>
           <p className="text-3xl font-bold text-gray-900 mt-2">{metrics.total_users.toLocaleString()}</p>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Active Users</h3>
           <p className="text-3xl font-bold text-blue-600 mt-2">{metrics.active_users.toLocaleString()}</p>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Retention Rate</h3>
           <p className="text-3xl font-bold text-green-600 mt-2">{(metrics.retention_rate * 100).toFixed(1)}%</p>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wide">Conversion Rate</h3>
           <p className="text-3xl font-bold text-purple-600 mt-2">{(metrics.conversion_rate * 100).toFixed(1)}%</p>
@@ -125,3 +125,6 @@ const Analytics: React.FC = () => {
       </div>
     </div>
   );
+};
+
+export default Analytics;
