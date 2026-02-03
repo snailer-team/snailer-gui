@@ -52,8 +52,10 @@ pub fn run() {
       commands::anthropic_chat_completion,
       commands::kimi_web_search_completion,
       commands::xai_web_search_completion,
+      // Agent file/git operations
       commands::fs_write_text,
       commands::git_apply_patch,
+      commands::run_bash,
       commands::shell_execute,
       commands::git_status_summary,
       commands::gh_issue_create,
