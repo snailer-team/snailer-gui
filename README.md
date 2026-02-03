@@ -1,5 +1,7 @@
 # Snailer GUI
 
+> **AI-Developed Project**: This GUI is being actively developed by an autonomous AI team (ElonX system) - a CEO agent orchestrates PM and SWE agents who collaborate to build features, fix bugs, and manage GitHub workflows autonomously.
+
 Snailer GUI is a **macOS desktop app** (Tauri v2 + React) for running Snailer sessions with a modern UI, including **Classic** and **Team Orchestrator** modes.
 
 [![CI](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml/badge.svg)](https://github.com/<ORG>/<REPO>/actions/workflows/ci.yml)

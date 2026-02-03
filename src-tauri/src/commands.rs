@@ -1002,6 +1002,50 @@ pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, Stri
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
 }
 
+/// Write text to a file (for agent code execution).
+#[tauri::command]
+pub async fn fs_write_text(path: String, content: String) -> Result<String, String> {
+    let path_buf = PathBuf::from(&path);
+
+    // Create parent directories if needed
+    if let Some(parent) = path_buf.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+
+    std::fs::write(&path_buf, &content).map_err(|e| format!("write failed: {}", e))?;
+    Ok(format!("Written {} bytes to {}", content.len(), path))
+}
+
+/// Apply a unified diff patch using git apply.
+#[tauri::command]
+pub async fn git_apply_patch(cwd: String, patch: String) -> Result<String, String> {
+    // Write patch to temp file
+    let patch_file = format!("/tmp/agent_patch_{}.patch", std::process::id());
+    std::fs::write(&patch_file, &patch).map_err(|e| format!("Failed to write patch file: {}", e))?;
+
+    // Apply patch
+    let (code, text) = run_cmd_capture("git", &["apply", "--verbose", &patch_file], Some(&cwd))?;
+
+    // Clean up
+    let _ = std::fs::remove_file(&patch_file);
+
+    if code != 0 {
+        return Err(format!("git apply failed (exit {}): {}", code, text));
+    }
+
+    Ok(format!("Patch applied: {}", text))
+}
+
+/// Run a bash command in a directory.
+#[tauri::command]
+pub async fn run_bash(cwd: String, command: String) -> Result<String, String> {
+    let (code, text) = run_cmd_capture("bash", &["-c", &command], Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("bash failed (exit {}): {}", code, text));
+    }
+    Ok(text)
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvFindResponse {
@@ -2268,6 +2312,179 @@ pub async fn anthropic_chat_completion(
     })
     .await
     .map_err(|e| format!("Anthropic task failed: {}", e))?
+}
+
+// ============================================================================
+// GitHub Workflow Commands (for agent autonomous operations)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchResponse {
+    pub success: bool,
+    pub branch_name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitPushResponse {
+    pub success: bool,
+    pub sha: String,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhPrResponse {
+    pub number: i64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhIssueResponse {
+    pub number: i64,
+    pub url: String,
+}
+
+/// Create a new git branch.
+#[tauri::command]
+pub async fn git_branch_create(cwd: String, branch_name: String) -> Result<GitBranchResponse, String> {
+    // Sanitize branch name
+    let sanitized: String = branch_name
+        .trim()
+        .replace(' ', "-")
+        .replace('\'', "")
+        .replace('"', "")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '/')
+        .collect();
+
+    if sanitized.is_empty() {
+        return Err("Invalid branch name".to_string());
+    }
+
+    let (code, text) = run_cmd_capture("git", &["checkout", "-b", &sanitized], Some(&cwd))?;
+    if code != 0 {
+        // Try switching to existing branch
+        let (code2, text2) = run_cmd_capture("git", &["checkout", &sanitized], Some(&cwd))?;
+        if code2 != 0 {
+            return Err(format!("git branch failed: {} / {}", text, text2));
+        }
+    }
+
+    Ok(GitBranchResponse { success: true, branch_name: sanitized })
+}
+
+/// Commit staged changes and push to remote.
+#[tauri::command]
+pub async fn git_commit_and_push(
+    cwd: String,
+    branch: String,
+    message: String,
+    files: Vec<String>,
+) -> Result<GitCommitPushResponse, String> {
+    // Stage files
+    for file in &files {
+        let _ = run_cmd_capture("git", &["add", file], Some(&cwd));
+    }
+    // Fallback: stage all if specific files fail
+    let _ = run_cmd_capture("git", &["add", "-A"], Some(&cwd));
+
+    // Commit
+    let (code, text) = run_cmd_capture("git", &["commit", "-m", &message], Some(&cwd))?;
+    if code != 0 {
+        if text.contains("nothing to commit") || text.contains("working tree clean") {
+            return Ok(GitCommitPushResponse {
+                success: true,
+                sha: "no-changes".to_string(),
+                message: Some("No changes to commit".to_string()),
+            });
+        }
+        return Err(format!("git commit failed: {}", text));
+    }
+
+    // Get SHA
+    let (_, sha_text) = run_cmd_capture("git", &["rev-parse", "HEAD"], Some(&cwd))?;
+    let sha = sha_text.trim().to_string();
+
+    // Push
+    let (code, text) = run_cmd_capture("git", &["push", "-u", "origin", &branch], Some(&cwd))?;
+    if code != 0 && !text.contains("Everything up-to-date") {
+        return Err(format!("git push failed: {}", text));
+    }
+
+    Ok(GitCommitPushResponse { success: true, sha, message: None })
+}
+
+/// Create a pull request via gh CLI. Auto-pushes branch first.
+#[tauri::command]
+pub async fn gh_pr_create(
+    cwd: String,
+    base: String,
+    head: String,
+    title: String,
+    body: String,
+) -> Result<GhPrResponse, String> {
+    // Auto-push branch before PR creation
+    let _ = run_cmd_capture("git", &["push", "-u", "origin", &head], Some(&cwd));
+
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["pr", "create", "--base", &base, "--head", &head, "--title", &title, "--body", &body],
+        Some(&cwd),
+    )?;
+
+    if code != 0 {
+        return Err(format!("gh pr create failed: {}", text));
+    }
+
+    let url = text.lines().last().unwrap_or("").trim().to_string();
+    let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+
+    Ok(GhPrResponse { number, url })
+}
+
+/// Create a GitHub issue via gh CLI.
+#[tauri::command]
+pub async fn gh_issue_create(
+    cwd: String,
+    title: String,
+    body: String,
+    labels: Option<String>,
+) -> Result<GhIssueResponse, String> {
+    let mut args = vec!["issue", "create", "--title", &title, "--body", &body];
+    let label_str;
+    if let Some(l) = &labels {
+        label_str = l.clone();
+        args.push("--label");
+        args.push(&label_str);
+    }
+
+    let (code, text) = run_cmd_capture("gh", &args, Some(&cwd))?;
+
+    if code != 0 {
+        // Retry without labels if label error
+        if text.contains("label") && labels.is_some() {
+            let (code2, text2) = run_cmd_capture(
+                "gh",
+                &["issue", "create", "--title", &title, "--body", &body],
+                Some(&cwd),
+            )?;
+            if code2 != 0 {
+                return Err(format!("gh issue create failed: {}", text2));
+            }
+            let url = text2.lines().last().unwrap_or("").trim().to_string();
+            let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            return Ok(GhIssueResponse { number, url });
+        }
+        return Err(format!("gh issue create failed: {}", text));
+    }
+
+    let url = text.lines().last().unwrap_or("").trim().to_string();
+    let number = url.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+
+    Ok(GhIssueResponse { number, url })
 }
 
 #[cfg(test)]

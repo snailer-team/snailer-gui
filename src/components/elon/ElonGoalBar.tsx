@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../../lib/store'
 
 function StatusBadge({ status }: { status: 'idle' | 'running' | 'paused' | 'completed' | 'failed' }) {
@@ -34,15 +35,53 @@ export function ElonGoalBar() {
     elonResumeExecution,
     elonAbortExecution,
     currentRunStatus,
+    projectPath,
+    setProjectPath,
   } = useAppStore()
+
+  const handlePickFolder = async () => {
+    try {
+      const folder = await invoke<string | null>('pick_folder')
+      if (folder) {
+        setProjectPath(folder)
+      }
+    } catch (err) {
+      console.error('Failed to pick folder:', err)
+    }
+  }
 
   const planStatus = elonX.planTree?.status ?? 'idle'
   const isRunning = planStatus === 'running' || currentRunStatus === 'running'
   const isPaused = planStatus === 'paused'
   const canExecute = elonFrame.problem.trim() && !isRunning && !isPaused
 
+  const displayPath = projectPath
+    ? projectPath.length > 40
+      ? '...' + projectPath.slice(-37)
+      : projectPath
+    : 'No project selected'
+
   return (
     <div className="rounded-2xl border border-black/10 bg-white/80 p-4 shadow-sm backdrop-blur-sm">
+      {/* Project Path Row */}
+      <div className="flex items-center gap-2 mb-3 pb-3 border-b border-black/5">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Project</span>
+        <button
+          type="button"
+          onClick={() => void handlePickFolder()}
+          disabled={isRunning}
+          className="flex-1 flex items-center gap-2 rounded-lg border border-black/10 bg-black/5 px-3 py-1.5 text-left hover:bg-black/10 transition disabled:opacity-50"
+        >
+          <span className="text-[11px]">📁</span>
+          <span className={`text-xs truncate ${projectPath ? 'text-black/70' : 'text-black/40 italic'}`}>
+            {displayPath}
+          </span>
+        </button>
+        {projectPath && (
+          <span className="text-[9px] text-emerald-600 font-medium">✓ Set</span>
+        )}
+      </div>
+
       <div className="flex items-start gap-4">
         {/* Problem Input */}
         <div className="flex-1 min-w-0">

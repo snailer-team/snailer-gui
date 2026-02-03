@@ -51,7 +51,15 @@ pub fn run() {
       commands::openai_chat_completion,
       commands::anthropic_chat_completion,
       commands::kimi_web_search_completion,
-      commands::xai_web_search_completion
+      commands::xai_web_search_completion,
+      // Agent file/git operations
+      commands::fs_write_text,
+      commands::git_apply_patch,
+      commands::run_bash,
+      commands::git_branch_create,
+      commands::git_commit_and_push,
+      commands::gh_pr_create,
+      commands::gh_issue_create
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
