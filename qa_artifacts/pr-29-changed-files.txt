@@ -1,0 +1,13 @@
+src-tauri/Cargo.lock
+src/__tests__/browser-controller.test.ts
+src/__tests__/integration.test.ts
+src/__tests__/security/browser-security.test.ts
+src/__tests__/tool-manager.test.ts
+src/agents/position-agent.ts
+src/core/agent-router.ts
+src/core/browser-controller.ts
+src/core/tool-manager.ts
+src/types/browser.ts
+src/types/routing.ts
+src/utils/json-validator.ts
+src/utils/security-guard.ts

@@ -2865,6 +2865,51 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                 }
               }
 
+              // GitHub Pre-flight: scan open PRs/Issues for SWE/QA agents
+              let githubPreflightContext = ''
+              if (projectPath && (agentId.startsWith('swe') || agentId === 'qa')) {
+                try {
+                  const [openPRs, openIssues] = await Promise.all([
+                    invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: projectPath, state: 'open', limit: 10 }).catch(() => []),
+                    invoke<Array<{ number: number; title: string; state: string; url: string; author: string }>>('gh_issue_list', { cwd: projectPath, state: 'open', limit: 10 }).catch(() => []),
+                  ])
+
+                  if (openPRs.length > 0) {
+                    const prLines: string[] = []
+                    for (const pr of openPRs) {
+                      let ciStatus = 'UNKNOWN'
+                      try {
+                        const checks = await invoke<{ status: string; checks: Array<{ name: string; status: string; conclusion: string }> }>('gh_pr_checks', { cwd: projectPath, prNumber: pr.number })
+                        ciStatus = checks.status === 'success' ? 'CI_PASSED' : checks.status === 'failure' ? 'CI_FAILED' : checks.status === 'no_checks' ? 'NO_CI' : 'CI_PENDING'
+                      } catch { /* CI check unavailable */ }
+
+                      const flags: string[] = []
+                      if (pr.mergeable === 'CONFLICTING') flags.push('⚠️CONFLICT')
+                      if (ciStatus === 'CI_FAILED') flags.push('❌CI_FAILED')
+                      if (ciStatus === 'CI_PASSED') flags.push('✅CI_PASSED')
+                      if (ciStatus === 'CI_PENDING') flags.push('⏳CI_PENDING')
+                      if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('🔄REVIEW_CHANGES')
+                      if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
+
+                      prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
+                    }
+
+                    const issueLines = openIssues.slice(0, 10).map(
+                      (i) => `  Issue #${i.number}: "${i.title}" by ${i.author}`
+                    )
+
+                    githubPreflightContext = `\n\n[GitHub Pre-flight — Open PRs & Issues]
+Open PRs (${openPRs.length}):
+${prLines.join('\n')}
+${issueLines.length > 0 ? `\nOpen Issues (${issueLines.length}):\n${issueLines.join('\n')}` : ''}
+
+ACTION REQUIRED: Before starting main work, process any actionable PRs above per your Pre-flight Protocol.`
+                  }
+                } catch {
+                  // GitHub pre-flight unavailable, continue without it
+                }
+              }
+
               // Phase 1: Self-Correction Loop — retry up to 3 times with reflection
               const MAX_ATTEMPTS = 3
               let attempt = 0
@@ -2875,7 +2920,7 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                 attempt++
 
                 try {
-                  const broadcastWithContext = b.message + meetingDecisionContext + dmContext + projectContext
+                  const broadcastWithContext = b.message + meetingDecisionContext + dmContext + projectContext + githubPreflightContext
                   const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(
                     agentId,
                     currentPromptOverride ?? broadcastWithContext,

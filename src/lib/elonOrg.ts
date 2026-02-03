@@ -245,6 +245,7 @@ export const ELON_AGENTS: ElonAgent[] = [
   {
     id: 'qa',
     category: 'Engineering',
+<<<<<<< HEAD
     title: 'QA Engineer',
     subtitle: 'Quality gate: lint, build, test verification before merge',
     controls: ['repo', 'terminal'],
@@ -269,6 +270,40 @@ export const ELON_AGENTS: ElonAgent[] = [
       'Tests are non-negotiable',
     ],
     ownership: ['CI/CD gate', 'Code quality standards', 'PR verification', 'Claude review feedback loop'],
+=======
+    title: 'QA Engineer (xAI Style)',
+    subtitle: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy',
+    controls: ['repo', 'terminal', 'browser', 'api'],
+    loop: [
+      'Observe: 요구사항→First Principles 분해, high-leverage 버그/위험 식별',
+      'Plan: 테스트 전략 (기능·회귀·성능·보안·AI특화), "왜 이 테스트 필요?" 질문',
+      'Act: 자동화 스크립트 작성, CI/CD 통합, war room surge 대응',
+      'Evaluate: 메트릭 기반 판정 (coverage 95%+, latency, hallucination rate), delete 10%+',
+    ],
+    snailerNotes: [
+      'xAI talent-dense: 단순 테스트 X, 전체 라이프사이클 관여',
+      'GPT-5.2 high reasoning으로 root cause 분석 + 테스트 갭 식별',
+      'Extreme autonomy: 지시 없이 hole fill, 자동화 스크립트 추가',
+      'Delete first: 불필요 테스트 10% 이상 삭제 안 하면 삭제 부족',
+    ],
+    triadRole: 'engineer',
+    autonomyLevel: 'full',
+    iterationCycle: '1h',
+    firstPrinciples: [
+      '왜 이 테스트가 필요한가? 기본 가정 틀렸을 가능성은?',
+      'High leverage: throughput xN 또는 revenue impact xN 기준',
+      'Delete first: 불필요 테스트/프로세스 삭제',
+      'Why isn\'t it done already?',
+      'Yesterday보다 나아졌나? self-check 필수',
+    ],
+    ownership: [
+      '테스트 전략 수립 (기능·회귀·성능·보안·AI특화)',
+      '자동화 프레임워크 개발 (Playwright, CI/CD 통합)',
+      '버그 탐지·보고·협업 (short & sharp, no chain of command)',
+      '품질 게이트 & 릴리스 관리 (메트릭 기반)',
+      '지속 개선 & 메트릭 (coverage, latency, hallucination rate)',
+    ],
+>>>>>>> origin/main
   },
   {
     id: 'ai-ml',
