@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import { ToolConfig, ToolAction, ToolResult } from '../types/browser';
+import { ToolAction, ToolResult } from '../types/browser';
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
 
@@ -59,7 +59,7 @@ export class ToolManager {
     } catch (error) {
       return {
         success: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
         latencyMs: Date.now() - startTime,
         toolName
       };

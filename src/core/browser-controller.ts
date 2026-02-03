@@ -2,11 +2,10 @@ import { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
 import { JsonValidator } from '../utils/json-validator';
 
 export class BrowserController {
-  private config: BrowserConfig;
   private validator: JsonValidator;
 
-  constructor(config: BrowserConfig) {
-    this.config = config;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  constructor(_config: BrowserConfig) {
     this.validator = new JsonValidator();
   }
 
@@ -35,7 +34,7 @@ export class BrowserController {
     } catch (error) {
       return {
         success: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
         latencyMs: Date.now() - startTime,
         data: null
       };
@@ -100,7 +99,7 @@ export class BrowserController {
     return Buffer.from('mock-screenshot');
   }
 
-  async navigate(url: string): Promise<BrowserResult> {
+  async navigatePublic(url: string): Promise<BrowserResult> {
     // Check for SSRF
     if (url.includes('localhost') || url.match(/192\.168\.\d+\.\d+/)) {
       throw new Error('SecurityError: SSRF blocked');

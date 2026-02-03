@@ -76,7 +76,7 @@ export class SecurityGuard {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async validatePositionSize(size: number, symbol: string): Promise<boolean> {
+  async validatePositionSize(size: number, _symbol?: string): Promise<boolean> {
     // Check for reasonable position sizes
     if (size <= 0 || size > 1000000) {
       return false;
