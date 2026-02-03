@@ -2876,11 +2876,22 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
 
                   if (openPRs.length > 0) {
                     const prLines: string[] = []
+                    const actionableDetails: string[] = []
+
                     for (const pr of openPRs) {
                       let ciStatus = 'UNKNOWN'
+                      let ciFailureLog = ''
                       try {
                         const checks = await invoke<{ status: string; checks: Array<{ name: string; status: string; conclusion: string }> }>('gh_pr_checks', { cwd: projectPath, prNumber: pr.number })
                         ciStatus = checks.status === 'success' ? 'CI_PASSED' : checks.status === 'failure' ? 'CI_FAILED' : checks.status === 'no_checks' ? 'NO_CI' : 'CI_PENDING'
+
+                        // Fetch CI failure logs for failed PRs
+                        if (ciStatus === 'CI_FAILED') {
+                          try {
+                            const failedRun = await invoke<{ log: string }>('gh_run_view_failed_log', { cwd: projectPath, branch: pr.headBranch })
+                            ciFailureLog = failedRun.log?.slice(0, 2000) || ''
+                          } catch { /* CI log unavailable */ }
+                        }
                       } catch { /* CI check unavailable */ }
 
                       const flags: string[] = []
@@ -2892,6 +2903,28 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
 
                       prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
+
+                      // Fetch detailed context for actionable PRs (CI_FAILED or REVIEW_CHANGES)
+                      const needsAction = ciStatus === 'CI_FAILED' || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.mergeable === 'CONFLICTING'
+                      if (needsAction) {
+                        let prDetail = `\n--- PR #${pr.number} Details ---\nBranch: ${pr.headBranch}\nStatus: ${flags.join(' ')}`
+
+                        // Add CI failure log
+                        if (ciFailureLog) {
+                          prDetail += `\n\nCI Failure Log:\n\`\`\`\n${ciFailureLog}\n\`\`\``
+                        }
+
+                        // Fetch PR review comments
+                        try {
+                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string }>>('gh_pr_view_comments', { cwd: projectPath, prNumber: pr.number })
+                          if (comments.length > 0) {
+                            const recentComments = comments.slice(-5).map(c => `[${c.author}]: ${c.body.slice(0, 500)}`).join('\n\n')
+                            prDetail += `\n\nReview Comments:\n${recentComments}`
+                          }
+                        } catch { /* Comments unavailable */ }
+
+                        actionableDetails.push(prDetail)
+                      }
                     }
 
                     const issueLines = openIssues.slice(0, 10).map(
@@ -2902,8 +2935,9 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
 Open PRs (${openPRs.length}):
 ${prLines.join('\n')}
 ${issueLines.length > 0 ? `\nOpen Issues (${issueLines.length}):\n${issueLines.join('\n')}` : ''}
+${actionableDetails.length > 0 ? `\n\n[ACTIONABLE PR DETAILS - FIX THESE FIRST]${actionableDetails.join('\n')}` : ''}
 
-ACTION REQUIRED: Before starting main work, process any actionable PRs above per your Pre-flight Protocol.`
+ACTION REQUIRED: Before starting main work, process any actionable PRs above per your Pre-flight Protocol. For CI failures, read the error logs carefully and fix the specific issues mentioned.`
                   }
                 } catch {
                   // GitHub pre-flight unavailable, continue without it
