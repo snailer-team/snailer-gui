@@ -678,6 +678,13 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
 
         std::fs::create_dir_all(&prefix).map_err(|e| format!("Failed to create install dir: {}", e))?;
 
+        // Ensure package.json exists so npm installs into this directory
+        let pkg_json = prefix.join("package.json");
+        if !pkg_json.is_file() {
+            std::fs::write(&pkg_json, "{\"private\":true}")
+                .map_err(|e| format!("Failed to create package.json: {}", e))?;
+        }
+
         let mut npm_check = std::process::Command::new(&npm_cmd);
         if let Some(bin) = maybe_node_bin.as_ref() {
             npm_check.env("PATH", prepend_path(bin));
@@ -701,7 +708,6 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
                 "install",
                 "--no-fund",
                 "--no-audit",
-                "--silent",
                 "@snailer-team/snailer",
             ])
             .output()
@@ -732,7 +738,27 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
         }
 
         if !snailer_cli_is_installed(&prefix) {
-            return Err("npm install reported success, but Snailer CLI was not found after install.".to_string());
+            let expected_bin = snailer_cli_bin_path(&prefix);
+            let expected_pkg = prefix.join("node_modules").join("@snailer-team").join("snailer").join("package.json");
+            let mut diag = format!(
+                "npm install reported success, but Snailer CLI was not found after install.\n\
+                 Expected binary: {}\n\
+                 Binary exists: {}\n\
+                 package.json exists: {}",
+                expected_bin.display(),
+                expected_bin.is_file(),
+                expected_pkg.is_file(),
+            );
+            // Capture npm output for debugging
+            let stdout_str = String::from_utf8_lossy(&out.stdout);
+            let stderr_str = String::from_utf8_lossy(&out.stderr);
+            if !stdout_str.trim().is_empty() {
+                diag.push_str(&format!("\nnpm stdout: {}", &stdout_str[..stdout_str.len().min(2000)]));
+            }
+            if !stderr_str.trim().is_empty() {
+                diag.push_str(&format!("\nnpm stderr: {}", &stderr_str[..stderr_str.len().min(2000)]));
+            }
+            return Err(diag);
         }
 
         Ok(snailer_cli_bin_path(&prefix).to_string_lossy().to_string())

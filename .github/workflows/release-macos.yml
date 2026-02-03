@@ -126,6 +126,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY_EFFECTIVE }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SNAILER_AUTH_ADDR_DEFAULT: ${{ secrets.SNAILER_AUTH_ADDR }}
         run: pnpm tauri build --target universal-apple-darwin
 
       - name: Locate DMG
