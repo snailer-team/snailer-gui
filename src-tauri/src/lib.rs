@@ -49,6 +49,7 @@ pub fn run() {
       commands::github_cli_status,
       commands::xai_chat_completion,
       commands::openai_chat_completion,
+      commands::openai_gpt52_completion,
       commands::anthropic_chat_completion,
       commands::kimi_web_search_completion,
       commands::xai_web_search_completion,

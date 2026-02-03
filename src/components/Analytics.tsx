@@ -125,3 +125,6 @@ const Analytics: React.FC = () => {
       </div>
     </div>
   );
+};
+
+export default Analytics;

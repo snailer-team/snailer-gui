@@ -2009,6 +2009,84 @@ pub async fn openai_chat_completion(
     .map_err(|e| format!("OpenAI task failed: {}", e))?
 }
 
+/// Call OpenAI GPT-5.2 via Responses API with reasoning support (used by QA agent).
+#[tauri::command]
+pub async fn openai_gpt52_completion(
+    system_prompt: String,
+    user_prompt: String,
+    reasoning_effort: Option<String>,
+) -> Result<LlmCompletionResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_key = read_env_key("OPENAI_API_KEY")?;
+        let model_name = "gpt-5.2";
+        let effort = reasoning_effort.unwrap_or_else(|| "medium".to_string());
+
+        let body = serde_json::json!({
+            "model": model_name,
+            "input": format!("{}\n\n{}", system_prompt, user_prompt),
+            "reasoning": {
+                "effort": effort
+            },
+            "text": {
+                "verbosity": "medium"
+            }
+        });
+
+        let resp = ureq::post("https://api.openai.com/v1/responses")
+            .set("Authorization", &format!("Bearer {}", api_key))
+            .set("Content-Type", "application/json")
+            .send_json(body)
+            .map_err(|e| format!("OpenAI GPT-5.2 API request failed: {}", e))?;
+
+        let resp_json: serde_json::Value = resp
+            .into_json()
+            .map_err(|e| format!("Failed to parse OpenAI GPT-5.2 API response: {}", e))?;
+
+        // Responses API returns output array with text items
+        let content = resp_json
+            .get("output")
+            .and_then(|o| o.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("message"))
+            })
+            .and_then(|msg| msg.get("content"))
+            .and_then(|c| c.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|item| item.get("type").and_then(|t| t.as_str()) == Some("output_text"))
+            })
+            .and_then(|txt| txt.get("text"))
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "Unexpected OpenAI GPT-5.2 API response structure: {}",
+                    serde_json::to_string_pretty(&resp_json).unwrap_or_default()
+                )
+            })?;
+
+        // Extract usage info
+        let usage = resp_json.get("usage");
+        let input_tokens = usage
+            .and_then(|u| u.get("input_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .and_then(|u| u.get("output_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
+
+        Ok(LlmCompletionResponse {
+            content: content.to_string(),
+            model: model_name.to_string(),
+            input_tokens,
+            output_tokens,
+        })
+    })
+    .await
+    .map_err(|e| format!("OpenAI GPT-5.2 task failed: {}", e))?
+}
+
 /// Call Kimi chat completions API with built-in `$web_search` tool.
 ///
 /// Uses a tool_calls loop: if `finish_reason == "tool_calls"`, the assistant message and
