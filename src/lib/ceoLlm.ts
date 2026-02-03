@@ -388,7 +388,15 @@ export function buildAgentPrompt(
   "verdict": "approved|blocked",
   "fixRequests": [{"targetAgent": "swe", "issue": "구체적 문제", "suggestedFix": "수정 방법"}],
   "nextSteps": ["high-leverage 액션 3개 이하"]
-}\n`
+}
+
+[GitHub Pre-flight Protocol]
+매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 open PR을 확인하고:
+1. ✅CI_PASSED PR → 코드 리뷰 후 approve/reject 판단 (githubActions: [{type: "comment_pr"}])
+2. 🔄REVIEW_CHANGES PR → 수정 사항이 요청에 부합하는지 검증
+3. 👍APPROVED + ✅CI_PASSED PR → merge 승인 (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
+4. ❌CI_FAILED PR → 실패 원인 분석 후 SWE에게 fixRequest
+pre-flight 항목 없으면 바로 본업 진행.\n`
     : isPm
     ? `\n\nYou have web search capability. When researching, actively search for:
 - Real-time market data, competitor information, and industry trends
@@ -488,6 +496,15 @@ CEO 승인 없이 자율 머지 가능한 조건:
 - Claude review: 모든 MUST FIX 해결됨
 - No merge conflicts
 위 조건 하나라도 미충족 시 → requiresCeoApproval: true
+
+[GitHub Pre-flight Protocol - BEFORE MAIN WORK]
+매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 본업 전에 처리:
+1. ⚠️CONFLICT PR → fetch origin main, merge, conflict 해결 codeDiff, commit_push
+2. 🔄REVIEW_CHANGES PR → 리뷰 코멘트 기반 수정, commit_push
+3. ❌CI_FAILED PR → 에러 분석, codeDiff 수정, commit_push
+4. ✅CI_PASSED + 👍APPROVED PR → self-merge (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
+5. 관련 Issue → 현재 작업과 연관되면 참조하여 함께 해결
+pre-flight 항목 없으면 바로 본업 진행.
 
 [GitHub Workflow - Self-Judgment Rules]
 You can autonomously trigger GitHub operations by including "githubActions" in your output.

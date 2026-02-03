@@ -2549,6 +2549,8 @@ pub struct GhPrItem {
     pub url: String,
     pub head_branch: String,
     pub author: String,
+    pub review_decision: String,
+    pub mergeable: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2849,7 +2851,7 @@ pub async fn gh_pr_list(
             "pr", "list",
             "--state", &state_str,
             "--limit", &limit_str,
-            "--json", "number,title,state,url,headRefName,author",
+            "--json", "number,title,state,url,headRefName,author,reviewDecision,mergeable",
         ],
         Some(&cwd),
     )?;
@@ -2873,6 +2875,16 @@ pub async fn gh_pr_list(
             author: v
                 .get("author")
                 .and_then(|a| a.get("login"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            review_decision: v
+                .get("reviewDecision")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            mergeable: v
+                .get("mergeable")
                 .and_then(|s| s.as_str())
                 .unwrap_or("")
                 .to_string(),
