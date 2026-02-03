@@ -2695,7 +2695,7 @@ export const useAppStore = create<AppState>()(
                 id: cycleId,
                 startedAt,
                 endedAt: null,
-                status: 'running',
+                status: 'running' as const,
                 evidenceIds: [],
                 broadcastIds: [],
                 llmOutput: null,
