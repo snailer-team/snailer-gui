@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { LeaderboardEntry, LeaderboardFilters } from '../types/leaderboard';
+import type { LeaderboardEntry, LeaderboardFilters } from '../types/leaderboard';
 
 interface UseLeaderboardOptions extends LeaderboardFilters {
   refreshInterval?: number;
@@ -27,7 +27,7 @@ export const useLeaderboard = (options: UseLeaderboardOptions = {}): UseLeaderbo
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchLeaderboard = useCallback(async () => {
     try {

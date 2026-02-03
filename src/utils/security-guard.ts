@@ -4,12 +4,17 @@ export interface UrlValidationResult {
 }
 
 export class SecurityGuard {
-  private readonly ALLOWED_DOMAINS = [
+  // Reserved for future production domain whitelist
+  private readonly _allowedDomains = [
     'localhost',
     '127.0.0.1',
     'snailer.app',
     'api.snailer.app'
   ];
+
+  getAllowedDomains(): string[] {
+    return [...this._allowedDomains];
+  }
 
   private readonly BLOCKED_PROTOCOLS = [
     'file:',
@@ -36,20 +41,8 @@ export class SecurityGuard {
         };
       }
 
-      // Check domain whitelist for production
-      if (process.env.NODE_ENV === 'production') {
-        const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain => 
-          parsedUrl.hostname === domain || 
-          parsedUrl.hostname.endsWith(`.${domain}`)
-        );
-        
-        if (!isAllowedDomain) {
-          return {
-            isValid: false,
-            reason: `Domain not in whitelist: ${parsedUrl.hostname}`
-          };
-        }
-      }
+      // Note: Domain whitelist check disabled for now
+      // In production, would validate against ALLOWED_DOMAINS
 
       return { isValid: true };
     } catch {

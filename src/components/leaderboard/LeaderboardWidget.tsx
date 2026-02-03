@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLeaderboard } from '../../hooks/useLeaderboard';
-import { LeaderboardEntry } from '../../types/leaderboard';
+import type { LeaderboardEntry } from '../../types/leaderboard';
 
 interface LeaderboardWidgetProps {
   className?: string;

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import { ToolAction, ToolResult } from '../types/browser';
+import type { ToolAction, ToolResult } from '../types/browser';
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
 

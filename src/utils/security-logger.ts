@@ -42,10 +42,8 @@ export class SecurityLogger {
       this.events = this.events.slice(-this.maxEvents);
     }
 
-    // Log to console in development
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[Security] ${type}:`, event);
-    }
+    // Log to console for debugging
+    console.log(`[Security] ${type}:`, event);
   }
 
   getEvents(type?: SecurityEventType): SecurityEvent[] {

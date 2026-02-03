@@ -19,8 +19,6 @@ export class Logger {
   }
 
   debug(message: string, data?: any): void {
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug(`[${this.context}] DEBUG:`, message, data || '');
-    }
+    console.debug(`[${this.context}] DEBUG:`, message, data || '');
   }
 }

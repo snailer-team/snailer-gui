@@ -1,4 +1,4 @@
-import { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
+import type { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
 import { JsonValidator } from '../utils/json-validator';
 
 export class BrowserController {
@@ -95,8 +95,8 @@ export class BrowserController {
     // Cleanup
   }
 
-  async takeScreenshot(): Promise<Buffer> {
-    return Buffer.from('mock-screenshot');
+  async takeScreenshot(): Promise<Uint8Array> {
+    return new TextEncoder().encode('mock-screenshot');
   }
 
   async navigatePublic(url: string): Promise<BrowserResult> {

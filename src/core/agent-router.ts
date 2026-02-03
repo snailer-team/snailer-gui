@@ -1,4 +1,4 @@
-import { Agent, RoutingStrategy, RoutingContext, RoutingResult } from '../types/routing';
+import type { Agent, RoutingStrategy, RoutingContext, RoutingResult } from '../types/routing';
 import { loadBalanceStrategy } from '../utils/routing-strategies';
 
 export class AgentRouter {
