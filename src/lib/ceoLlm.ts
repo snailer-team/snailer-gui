@@ -589,7 +589,7 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
           requiresCeoApproval: g.requiresCeoApproval !== false, // default true for safety
         }
       })
-    if (githubActions.length === 0) githubActions = undefined
+    if (githubActions && githubActions.length === 0) githubActions = undefined
   }
 
   return {
@@ -721,7 +721,7 @@ export function parseSelfReflectionOutput(raw: string): {
 // Phase 2: Knowledge Sharing — Extract & Inject
 // ─────────────────────────────────────────────────────────────
 
-import type { KnowledgeEntry, Broadcast, MeetingMessage } from './store'
+import type { KnowledgeEntry, MeetingMessage } from './store'
 
 export function extractKnowledgeFromOutput(
   agentId: string,
