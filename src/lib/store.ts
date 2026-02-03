@@ -2904,6 +2904,13 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       systemPrompt: agentSys,
                       userPrompt: agentUsr,
                     })
+                  } else if (agentId === 'qa') {
+                    // QA agent uses GPT-5.2 with high reasoning for quality gate decisions
+                    llmResponse = await invoke<LlmCompletionResponse>('openai_gpt52_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                      reasoningEffort: 'high',
+                    })
                   } else {
                     llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {
                       systemPrompt: agentSys,
