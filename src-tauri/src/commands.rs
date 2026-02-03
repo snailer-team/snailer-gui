@@ -31,6 +31,16 @@ pub struct EngineStartResponse {
 fn run_cmd_capture(cmd: &str, args: &[&str], cwd: Option<&str>) -> Result<(i32, String), String> {
     let mut c = std::process::Command::new(cmd);
     c.args(args);
+    // macOS .app bundles have a limited PATH; inject common tool locations
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let extra_dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    let mut full_path = current_path.clone();
+    for dir in &extra_dirs {
+        if !current_path.contains(dir) {
+            full_path = format!("{}:{}", dir, full_path);
+        }
+    }
+    c.env("PATH", &full_path);
     if let Some(dir) = cwd {
         if !dir.trim().is_empty() {
             c.current_dir(dir);

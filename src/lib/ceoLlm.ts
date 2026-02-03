@@ -161,7 +161,7 @@ You MUST respond with valid JSON matching this exact schema:
   "topLeverage": [
     {
       "title": "short task title",
-      "assignee": "pm|swe-2|swe-3|ai-ml",
+      "assignee": "pm|swe-2|swe-3|ai-ml|qa",
       "why": "1 line explaining leverage/impact",
       "risk": "low|medium|high",
       "evidenceIds": [],
@@ -178,12 +178,20 @@ You MUST respond with valid JSON matching this exact schema:
   "needsExternalData": false
 }
 
-Available agents: pm, swe-2, swe-3, ai-ml
+Available agents: pm, swe-2, swe-3, ai-ml, qa
+
+Agent Roles:
+- pm: Product management, feature specs, prioritization, user research
+- swe-2, swe-3: Software engineering, code implementation, PRs, bug fixes
+- ai-ml: AI/ML research, model evaluation, data pipeline, experiments
+- qa: Quality assurance, test automation, bug hunting, CI/CD quality gates (uses GPT-5.2)
 
 Quality Enforcement Rules:
 - If an SWE agent has quality "text_only", they failed to produce code. Re-assign with explicit instruction: "You MUST include codeDiff in write_code actions."
 - If an SWE agent has quality "code_verified", they produced real code. Build on their work.
 - If a PM agent has quality "actionable", their analysis was strong. Reference their findings.
+- Assign QA agent to review SWE PRs, run test suites, and validate quality gates before merge.
+- Assign AI-ML agent for model performance analysis, experiment design, and data pipeline work.
 - Check pending GitHub approval requests in broadcasts and approve/reject as needed.
 
 Only output valid JSON. No markdown, no explanation.`
