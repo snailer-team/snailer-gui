@@ -1857,36 +1857,48 @@ fn load_system_ca_bundle() -> Option<Vec<u8>> {
 // xAI Direct API Call (CEO Auto-Cycle)
 // ============================================================================
 
+/// Known aliases: some keys have alternate names (e.g. CLAUDE_API_KEY ↔ ANTHROPIC_API_KEY).
+fn env_key_aliases(key: &str) -> Vec<&str> {
+    match key {
+        "ANTHROPIC_API_KEY" => vec!["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
+        "CLAUDE_API_KEY"    => vec!["CLAUDE_API_KEY", "ANTHROPIC_API_KEY"],
+        _ => vec![key],
+    }
+}
+
 fn read_env_key(key: &str) -> Result<String, String> {
     let env_path = snailer_home_dir().join(".env");
     let contents = std::fs::read_to_string(&env_path)
         .map_err(|e| format!("Failed to read ~/.snailer/.env: {}", e))?;
 
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = trimmed.strip_prefix(key) {
-            let rest = rest.trim_start();
-            if let Some(value) = rest.strip_prefix('=') {
-                let value = value.trim();
-                // Remove surrounding quotes if present
-                let value = if (value.starts_with('"') && value.ends_with('"'))
-                    || (value.starts_with('\'') && value.ends_with('\''))
-                {
-                    &value[1..value.len() - 1]
-                } else {
-                    value
-                };
-                if !value.is_empty() {
-                    return Ok(value.to_string());
+    let candidates = env_key_aliases(key);
+    for candidate in &candidates {
+        for line in contents.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix(candidate) {
+                let rest = rest.trim_start();
+                if let Some(value) = rest.strip_prefix('=') {
+                    let value = value.trim();
+                    // Remove surrounding quotes if present
+                    let value = if (value.starts_with('"') && value.ends_with('"'))
+                        || (value.starts_with('\'') && value.ends_with('\''))
+                    {
+                        &value[1..value.len() - 1]
+                    } else {
+                        value
+                    };
+                    if !value.is_empty() {
+                        return Ok(value.to_string());
+                    }
                 }
             }
         }
     }
 
-    Err(format!("{} not found in ~/.snailer/.env", key))
+    Err(format!("{} not found in ~/.snailer/.env (checked: {})", key, candidates.join(", ")))
 }
 
 /// Call xAI chat completions API directly with grok-4 model.

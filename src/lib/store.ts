@@ -3464,8 +3464,9 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                     verdict: 'failed',
                   })
 
-                  // Check credential errors — don't retry these
-                  const needsInput = /api.?key|credential|auth|token|secret|password|unauthorized|403|401/i.test(errMsg)
+                  // Check credential errors — only trigger for genuinely missing keys
+                  // (e.g. "XAI_API_KEY not found in ~/.snailer/.env"), NOT for generic auth/token errors from APIs
+                  const needsInput = /not found in ~\/.snailer\/.env|Failed to read ~\/.snailer\/.env/i.test(errMsg)
                   if (needsInput) {
                     const inputValue = await get().agentRequestInput({
                       agentId,

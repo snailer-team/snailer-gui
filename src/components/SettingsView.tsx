@@ -60,7 +60,7 @@ const PROVIDERS: Provider[] = [
   {
     id: 'anthropic',
     label: 'Anthropic (Claude)',
-    envVar: 'CLAUDE_API_KEY',
+    envVar: 'ANTHROPIC_API_KEY',
     placeholder: 'sk-ant-…',
     helper: 'Claude models (Explorer/Backend/etc depending on preset)',
   },
