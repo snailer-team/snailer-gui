@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 export interface BrowserConfig {
   headless?: boolean;
   timeout?: number;
@@ -13,6 +14,8 @@ export interface BrowserAction {
   selector?: string;
   value?: string;
   timeout?: number;
+  timestamp?: number;
+  text?: string;
   expectedOutput?: {
     format: 'json' | 'text' | 'html';
     schema?: any;
@@ -24,6 +27,7 @@ export interface BrowserResult {
   data?: any;
   error?: string;
   latencyMs: number;
+  timestamp?: number;
 }
 
 export interface ToolConfig {
@@ -46,9 +50,26 @@ export interface ToolResult {
   data?: any;
   error?: string;
   latencyMs: number;
-  toolName: string;
+  toolName?: string;
+  timestamp?: number;
 }
 
 export interface AgentToolIntegration {
   agentId: string;
   availableTools: string[];
+  permissions: string[];
+}
+
+export interface Tool {
+  id: string;
+  name: string;
+  description: string;
+  execute: (params: any) => Promise<ToolResult>;
+  validate: (params: any) => boolean;
+}
+
+export interface BrowserState {
+  url: string;
+  title: string;
+  isLoading: boolean;
+}

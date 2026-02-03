@@ -85,3 +85,10 @@ const LeaderboardRow: React.FC<LeaderboardRowProps> = ({ entry, rank }) => {
         <div className={`font-semibold ${entry.totalReturn >= 0 ? 'text-green-600' : 'text-red-600'}`}>
           {entry.totalReturn >= 0 ? '+' : ''}{(entry.totalReturn * 100).toFixed(2)}%
         </div>
+        <div className="text-xs text-gray-500">{entry.trades} trades</div>
+      </div>
+    </div>
+  );
+};
+
+export default LeaderboardWidget;

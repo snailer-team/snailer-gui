@@ -87,3 +87,24 @@ export class BrowserController {
   getMetrics() {
     return { actionsExecuted: 0, successRate: 100 };
   }
+
+  async initialize(): Promise<BrowserResult> {
+    return { success: true, data: { initialized: true }, latencyMs: 0 };
+  }
+
+  async close(): Promise<void> {
+    // Cleanup
+  }
+
+  async takeScreenshot(): Promise<Buffer> {
+    return Buffer.from('mock-screenshot');
+  }
+
+  async navigate(url: string): Promise<BrowserResult> {
+    // Check for SSRF
+    if (url.includes('localhost') || url.match(/192\.168\.\d+\.\d+/)) {
+      throw new Error('SecurityError: SSRF blocked');
+    }
+    return { success: true, data: { navigated: true, url }, latencyMs: 0 };
+  }
+}

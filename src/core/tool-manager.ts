@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { ToolConfig, ToolAction, ToolResult } from '../types/browser';
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
@@ -76,3 +77,23 @@ export class ToolManager {
       execute: async (action: ToolAction) => ({ data: { apiCall: true, action } })
     };
   }
+
+  registerTool(tool: any): boolean {
+    if (!tool.id || !tool.name || !tool.execute) {
+      return false;
+    }
+    if (this.tools.has(tool.id)) {
+      return false;
+    }
+    this.tools.set(tool.id, tool);
+    return true;
+  }
+
+  getTool(id: string): any {
+    return this.tools.get(id);
+  }
+
+  listTools(): any[] {
+    return Array.from(this.tools.values());
+  }
+}

@@ -3,7 +3,6 @@ import { LeaderboardEntry, LeaderboardFilters } from '../types/leaderboard';
 
 interface UseLeaderboardOptions extends LeaderboardFilters {
   refreshInterval?: number;
-  enableWebSocket?: boolean;
 }
 
 interface UseLeaderboardReturn {
@@ -21,15 +20,13 @@ export const useLeaderboard = (options: UseLeaderboardOptions = {}): UseLeaderbo
     timeframe = 'all',
     limit = 10,
     offset = 0,
-    refreshInterval = 5000,
-    enableWebSocket = true
+    refreshInterval = 5000
   } = options;
 
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const fetchLeaderboard = useCallback(async () => {
@@ -62,15 +59,18 @@ export const useLeaderboard = (options: UseLeaderboardOptions = {}): UseLeaderbo
     // Set up polling interval
     intervalRef.current = setInterval(fetchLeaderboard, refreshInterval);
     
-    // TODO: WebSocket implementation for real-time updates
-    // This will be implemented in next iteration
-    
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
     };
   }, [fetchLeaderboard, refreshInterval]);
+
+  return {
+    entries,
+    loading,
+    error,
+    lastUpdate,
+    refresh: fetchLeaderboard
+  };
+};

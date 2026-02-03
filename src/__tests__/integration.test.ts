@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { BrowserController } from '../core/browser-controller'
 import { ToolManager } from '../core/tool-manager'
 import { BrowserAction } from '../types/browser'
@@ -93,3 +94,5 @@ describe('Browser-Tool Integration E2E', () => {
     // Verify final state with screenshot
     const screenshot = await browserController.takeScreenshot()
     expect(screenshot).toBeDefined()
+  }, 30000)
+})

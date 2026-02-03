@@ -52,7 +52,7 @@ export class SecurityGuard {
       }
 
       return { isValid: true };
-    } catch (error) {
+    } catch {
       return {
         isValid: false,
         reason: 'Invalid URL format'
@@ -75,6 +75,7 @@ export class SecurityGuard {
     return symbolRegex.test(symbol.toUpperCase());
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async validatePositionSize(size: number, symbol: string): Promise<boolean> {
     // Check for reasonable position sizes
     if (size <= 0 || size > 1000000) {
@@ -87,3 +88,16 @@ export class SecurityGuard {
 
   sanitizeInput(input: string): string {
     return input.replace(/[<>"'&]/g, '');
+  }
+
+  async validateSize(size: number): Promise<boolean> {
+    return size > 0 && size <= 1000000;
+  }
+
+  async validateEndpoint(endpoint: string): Promise<boolean> {
+    if (endpoint.includes('localhost') || endpoint.match(/192\.168\.\d+\.\d+/)) {
+      return false;
+    }
+    return true;
+  }
+}

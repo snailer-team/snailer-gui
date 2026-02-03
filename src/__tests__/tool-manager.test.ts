@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { ToolManager } from '../core/tool-manager'
 import { Tool, ToolResult } from '../types/browser'
 
@@ -100,3 +101,6 @@ describe('ToolManager', () => {
       const tools = toolManager.listTools()
       expect(tools).toHaveLength(2)
       expect(tools.map(t => t.id)).toContain('test-tool')
+    })
+  })
+})

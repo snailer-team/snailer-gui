@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/purity */
 import { useState, useCallback, useRef } from 'react'
 import type { AnalyticsEvent, UserBehavior, RealTimeMetrics } from '../types/analytics'
 
@@ -10,8 +11,9 @@ export interface AnalyticsHook {
 
 export function useAnalytics(): AnalyticsHook {
   const [eventQueue, setEventQueue] = useState<AnalyticsEvent[]>([])
+  const sessionStartRef = useRef(Date.now())
   const [userBehavior, setUserBehavior] = useState<UserBehavior>({
-    sessionStart: Date.now(),
+    sessionStart: sessionStartRef.current,
     clickCount: 0,
     pageViews: 0,
     experimentInteractions: []
@@ -23,7 +25,7 @@ export function useAnalytics(): AnalyticsHook {
     const enrichedEvent = {
       ...event,
       timestamp: Date.now(),
-      sessionId: `session_${userBehavior.sessionStart}`,
+      sessionId: `session_${sessionStartRef.current}`,
       userId: event.userId || 'anonymous'
     }
 
@@ -38,7 +40,7 @@ export function useAnalytics(): AnalyticsHook {
         ? [...prev.experimentInteractions, { experimentId: event.experimentId!, variant: event.variant!, timestamp: Date.now() }]
         : prev.experimentInteractions
     }))
-  }, [userBehavior.sessionStart])
+  }, [])
 
   const getMetrics = useCallback(async (): Promise<RealTimeMetrics> => {
     const now = Date.now()
@@ -63,3 +65,17 @@ export function useAnalytics(): AnalyticsHook {
   const getUserBehavior = useCallback(() => userBehavior, [userBehavior])
   
   const flushEvents = useCallback(() => {
+    if (eventQueue.length === 0) return
+
+    // Send events to analytics backend
+    fetch('/api/analytics/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(eventQueue)
+    }).catch(err => console.error('Failed to flush analytics events:', err))
+
+    setEventQueue([])
+  }, [eventQueue])
+
+  return { trackEvent, getMetrics, getUserBehavior, flushEvents }
+}

@@ -43,3 +43,7 @@ describe('Browser Security Integration', () => {
       
       await expect(
         positionAgent.executeAction(maliciousAction)
+      ).rejects.toThrow(SecurityError)
+    })
+  })
+})

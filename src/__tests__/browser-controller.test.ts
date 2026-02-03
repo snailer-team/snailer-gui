@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/ban-ts-comment, @typescript-eslint/no-unused-vars */
 import { BrowserController } from '../core/browser-controller'
 import { BrowserAction, BrowserState } from '../types/browser'
 
@@ -87,3 +88,5 @@ describe('BrowserController', () => {
       expect(result.success).toBe(false)
       expect(result.error).toContain('Missing required')
     })
+  })
+})

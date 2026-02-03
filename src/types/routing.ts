@@ -9,7 +9,7 @@ export interface Agent {
   currentRequests: number;
   lastUsed?: Date;
   healthScore: number; // 0-100
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RoutingContext {
@@ -21,7 +21,7 @@ export interface RoutingContext {
   userTier: 'free' | 'pro' | 'enterprise';
   costBudget?: number;
   timeout?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RoutingResult {
@@ -52,3 +52,6 @@ export interface RouterConfig {
   defaultStrategy: string;
   maxRetries: number;
   timeoutMs: number;
+  healthCheckInterval: number;
+  enableFailover: boolean;
+}

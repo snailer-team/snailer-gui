@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { SecurityGuard } from '../utils/security-guard';
 import { Logger } from '../utils/logger';
 
@@ -85,3 +86,26 @@ export class PositionAgent {
     });
 
     // Size limits
+    checks.push({
+      check: 'size-limits',
+      passed: await this.securityGuard.validateSize(config.size)
+    });
+
+    return checks;
+  }
+
+  private async createPosition(config: PositionConfig): Promise<string> {
+    // Simulate position creation
+    return `pos_${Date.now()}_${config.symbol}`;
+  }
+
+  async executeAction(action: { type: string; endpoint?: string; [key: string]: any }): Promise<any> {
+    if (action.endpoint) {
+      const isValid = await this.securityGuard.validateEndpoint(action.endpoint);
+      if (!isValid) {
+        throw new Error('SecurityError: Invalid endpoint');
+      }
+    }
+    return { success: true };
+  }
+}
