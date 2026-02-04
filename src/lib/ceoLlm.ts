@@ -194,6 +194,13 @@ Quality Enforcement Rules:
 - Assign AI-ML agent for model performance analysis, experiment design, and data pipeline work.
 - Check pending GitHub approval requests in broadcasts and approve/reject as needed.
 
+GitHub PR/Issue Management:
+- Review open PRs in ## GitHub Status: blocked PRs, conflicts, CI failures → assign appropriate agent to fix
+- PR blocked by branch protection or required checks → broadcast to SWE: "fix branch protection issue on PR #X"
+- PR with unresolved review comments → broadcast to SWE: "address review feedback on PR #X"
+- CI_PASSED + APPROVED PR → broadcast to SWE/QA: "merge PR #X"
+- Open Issues with user feedback → broadcast to PM: "analyze and prioritize Issue #X"
+
 Only output valid JSON. No markdown, no explanation.`
 
 export function buildCeoPrompt(observeContext: string): string {
@@ -436,7 +443,7 @@ OUTPUT FORMAT for verification results:
 
 [GitHub Pre-flight Protocol]
 매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 open PR을 확인하고:
-1. ✅CI_PASSED PR → 코드 리뷰 후 approve/reject 판단 (githubActions: [{type: "comment_pr"}])
+1. ✅CI_PASSED PR → githubActions: [{type: "view_pr_comments", params: {pr_number: "<number>"}}]로 기존 리뷰/코멘트 확인 → 이전 피드백 해결 여부 검증 후 approve/reject 판단 (githubActions: [{type: "comment_pr"}])
 2. 🔄REVIEW_CHANGES PR → 수정 사항이 요청에 부합하는지 검증
 3. 👍APPROVED + ✅CI_PASSED PR → merge 승인 (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
 4. ❌CI_FAILED PR → 실패 원인 분석 후 SWE에게 fixRequest
@@ -451,7 +458,14 @@ pre-flight 항목 없으면 바로 본업 진행.\n`
 - Latest news, product launches, and technology updates
 - Pricing data, user reviews, and market positioning
 - Regulatory changes and industry benchmarks
-Cite specific sources and data points in your analysis.\n`
+Cite specific sources and data points in your analysis.
+
+[GitHub Issue Tracking Protocol]
+매 사이클 시작 시 [GitHub Pre-flight] context에 open Issues가 주어지면:
+1. 사용자 피드백 Issue → 분석하여 우선순위 판단, SWE에게 directMessage로 해결 요청
+2. 버그 리포트 Issue → 재현 조건 정리, SWE/QA에게 할당 제안
+3. 기능 요청 Issue → 타당성 분석 후 CEO에게 보고 (directMessage)
+4. 진행 중인 Issue → githubActions: [{type: "view_issue_comments", params: {issue_number: "<number>"}}] 로 상세 확인 후 진행 상황 업데이트\n`
     : isSwe
     ? `\n\n[SWE Code Output Rules - MANDATORY - YOUR CODE GETS EXECUTED ON REAL FILES]
 ⚠️ CRITICAL: Your codeDiff is applied to REAL files via "git apply". Your githubActions execute REAL git/gh commands.
@@ -550,6 +564,12 @@ CEO 승인 없이 자율 머지 가능한 조건:
 
 [GitHub Pre-flight Protocol - BEFORE MAIN WORK]
 매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 본업 전에 처리:
+<<<<<<< HEAD
+1. ⚠️CONFLICT PR → fetch origin main, merge, conflict 해결 codeDiff, commit_push
+2. 🔄REVIEW_CHANGES PR → githubActions: [{type: "view_pr_comments", params: {pr_number: "<number>"}}]로 리뷰 확인 → 각 피드백 반영 codeDiff → commit_push → comment_pr로 답변
+3. ❌CI_FAILED PR → 에러 분석, codeDiff 수정, commit_push
+4. ✅CI_PASSED + 👍APPROVED PR → self-merge (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
+=======
 
 ⚠️ CRITICAL: 기존 PR 수정 시 반드시 해당 브랜치로 먼저 checkout 해야 함!
 githubActions: [{type: "create_branch", params: {branch_name: "<PR의 headBranch>"}}]
@@ -576,6 +596,7 @@ githubActions: [{type: "create_branch", params: {branch_name: "<PR의 headBranch
 4. ✅CI_PASSED + 👍APPROVED PR → self-merge
    githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}]
 
+>>>>>>> origin/main
 5. 관련 Issue → 현재 작업과 연관되면 참조하여 함께 해결
 
 pre-flight 항목 없으면 바로 본업 진행.
@@ -668,7 +689,7 @@ You MUST respond with valid JSON matching this schema:
   ],
   "githubActions": [
     {
-      "type": "create_issue | create_branch | commit_push | create_pr | comment_pr | merge_pr",
+      "type": "create_issue | create_branch | commit_push | create_pr | comment_pr | merge_pr | view_pr_comments | view_issue_comments | run_bash",
       "params": {"key": "value"},
       "requiresCeoApproval": true
     }
@@ -705,7 +726,7 @@ export interface AgentOutputDirectMessage {
 export type OutputQuality = 'code_verified' | 'text_only' | 'actionable'
 
 export interface GitHubAction {
-  type: 'create_issue' | 'create_branch' | 'commit_push' | 'create_pr' | 'comment_pr' | 'merge_pr'
+  type: 'create_issue' | 'create_branch' | 'commit_push' | 'create_pr' | 'comment_pr' | 'merge_pr' | 'view_pr_comments' | 'view_issue_comments' | 'run_bash'
   params: Record<string, string>
   requiresCeoApproval: boolean
 }
@@ -802,7 +823,11 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
   // Parse githubActions (autonomous GitHub workflow)
   let githubActions: GitHubAction[] | undefined
   if (Array.isArray(parsed.githubActions)) {
+<<<<<<< HEAD
+    const validTypes = ['create_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'view_pr_comments', 'view_issue_comments', 'run_bash']
+=======
     const validTypes = ['create_issue', 'close_issue', 'comment_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'read_file', 'run_bash']
+>>>>>>> origin/main
     githubActions = parsed.githubActions
       .filter((ga: unknown) => {
         const g = ga as Record<string, unknown>
