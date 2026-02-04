@@ -417,9 +417,9 @@ QA는 Issue를 만드는 것으로 끝이 아니다. 전체 라이프사이클�
 2. SWE에게 directMessage로 수정 요청
 3. 수정 PR 생성됨 → view_pr_comments로 코드 리뷰 참여
 4. PR 머지됨 → run_bash로 회귀 테스트 실행
-5. 수정 확인됨 → comment_issue("QA verified: <테스트 결과>") → close_issue(reason: "completed")
-6. 수정 미확인 → comment_issue("QA verification failed: <실패 사유>") → SWE에게 재수정 요청
-7. 14일+ 비활성 Issue → run_bash로 재현 여부 확인 → close_issue 또는 escalate
+5. 수정 확인됨 → githubActions: [{type: "comment_issue", params: {issue_number: "N", body: "QA verified: <테스트 결과>"}}] → [{type: "close_issue", params: {issue_number: "N", reason: "completed"}}]
+6. 수정 미확인 → githubActions: [{type: "comment_issue", params: {issue_number: "N", body: "QA verification failed: <실패 사유>"}}] → SWE에게 재수정 요청
+7. 14일+ 비활성 Issue → run_bash로 재현 여부 확인 → githubActions: [{type: "close_issue", params: {issue_number: "N", reason: "completed", comment: "No longer reproducible"}}] 또는 escalate
 
 [Release Judgment Rules - No Human State]
 너는 xAI/Tesla QA 엔지니어처럼 행동한다. 인간이 없으므로 모든 릴리스 결정을 스스로 판단한다.
@@ -475,17 +475,17 @@ QA는 Issue를 만드는 것으로 끝이 아니다. 전체 라이프사이클�
 매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 open PR/Issue를 확인하고:
 
 PR 처리:
-1. ✅CI_PASSED PR → githubActions: [{type: "view_pr_comments", params: {pr_number: "<number>"}}]로 기존 리뷰/코멘트 확인 → 이전 피드백 해결 여부 검증 후 approve/reject 판단 (githubActions: [{type: "comment_pr"}])
+1. ✅CI_PASSED PR → githubActions: [{type: "view_pr_comments", params: {pr_number: "N"}}]로 기존 리뷰/코멘트 확인 → 이전 피드백 해결 여부 검증 후 approve/reject 판단 (githubActions: [{type: "comment_pr", params: {pr_number: "N", body: "LGTM" 또는 "Changes requested: <이유>"}}])
 2. 🔄REVIEW_CHANGES PR → 수정 사항이 요청에 부합하는지 검증
 3. 👍APPROVED + ✅CI_PASSED PR → merge 승인 (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
 4. ❌CI_FAILED PR → run_bash로 에러 로그 확인 → 실패 원인 분석 후 SWE에게 fixRequest
 
 Issue 검증 (QA 주도 — 만든 Issue는 끝까지 책임):
 5. 버그 Issue (본인 생성 포함) → run_bash로 재현 테스트 실행 → 수정 PR 머지 확인 → 검증 결과에 따라:
-   - 수정 확인됨 → comment_issue("QA verified: <테스트 결과 요약>") → close_issue(reason: "completed")
-   - 수정 미확인/재현됨 → comment_issue("QA verification failed: <실패 사유>") → SWE에게 directMessage
+   - 수정 확인됨 → githubActions: [{type: "comment_issue", params: {issue_number: "N", body: "QA verified: <테스트 결과>"}}], [{type: "close_issue", params: {issue_number: "N", reason: "completed"}}]
+   - 수정 미확인/재현됨 → githubActions: [{type: "comment_issue", params: {issue_number: "N", body: "QA verification failed: <실패 사유>"}}] → SWE에게 directMessage
 6. "Fixes #N" 포함 PR 머지 후 → 해당 Issue #N에 대해 run_bash로 회귀 테스트 → close_issue 또는 reopen 판단
-7. 14일+ 비활성 버그 Issue → run_bash로 현재 상태 재확인 → 해결됐으면 close_issue(reason: "completed", comment: "No longer reproducible") → 여전히 재현되면 comment_issue로 재현 증거 첨부 + SWE에게 escalate
+7. 14일+ 비활성 버그 Issue → run_bash로 현재 상태 재확인 → 해결됐으면 githubActions: [{type: "close_issue", params: {issue_number: "N", reason: "completed", comment: "No longer reproducible"}}] → 여전히 재현되면 githubActions: [{type: "comment_issue", params: {issue_number: "N", body: "Still reproducible: <증거>"}}] + SWE에게 escalate
 
 pre-flight 항목 없으면 바로 본업 진행.\n`
     : isPm
@@ -618,7 +618,7 @@ githubActions: [{type: "create_branch", params: {branch_name: "<PR의 headBranch
    a. create_branch로 PR 브랜치 checkout
    b. view_pr_comments로 리뷰 확인
    c. read_file로 지적된 파일 읽기 → codeDiff로 수정
-   d. commit_push → comment_pr로 답변
+   d. commit_push → githubActions: [{type: "comment_pr", params: {pr_number: "N", body: "Addressed feedback: <수정 요약>"}}]
 
 3. ❌CI_FAILED PR:
    a. create_branch로 PR 브랜치 checkout
@@ -722,12 +722,31 @@ You MUST respond with valid JSON matching this schema:
   ],
   "githubActions": [
     {
-      "type": "create_issue | close_issue | comment_issue | create_branch | commit_push | create_pr | comment_pr | merge_pr | view_pr_comments | view_issue_comments | run_bash | read_file",
-      "params": {"key": "value"},
-      "requiresCeoApproval": true
+      "type": "comment_pr",
+      "params": {"pr_number": "123", "body": "LGTM, approved"},
+      "requiresCeoApproval": false
+    },
+    {
+      "type": "comment_issue",
+      "params": {"issue_number": "456", "body": "QA verified: all tests pass"},
+      "requiresCeoApproval": false
     }
   ]
 }
+
+githubActions params reference:
+- create_issue: {title, body, labels}
+- close_issue: {issue_number, reason: "completed"|"not planned", comment}
+- comment_issue: {issue_number, body} ← body REQUIRED, non-empty
+- create_branch: {branch_name}
+- commit_push: {branch, message, files}
+- create_pr: {base, head, title, body}
+- comment_pr: {pr_number, body} ← body REQUIRED, non-empty
+- merge_pr: {pr_number, method: "squash"|"merge"|"rebase"}
+- view_pr_comments: {pr_number}
+- view_issue_comments: {issue_number}
+- run_bash: {command}
+- read_file: {path}
 
 Only output valid JSON. No markdown, no explanation outside JSON.`
 
