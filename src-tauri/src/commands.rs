@@ -31,6 +31,16 @@ pub struct EngineStartResponse {
 fn run_cmd_capture(cmd: &str, args: &[&str], cwd: Option<&str>) -> Result<(i32, String), String> {
     let mut c = std::process::Command::new(cmd);
     c.args(args);
+    // macOS .app bundles have a limited PATH; inject common tool locations
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    let extra_dirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    let mut full_path = current_path.clone();
+    for dir in &extra_dirs {
+        if !current_path.contains(dir) {
+            full_path = format!("{}:{}", dir, full_path);
+        }
+    }
+    c.env("PATH", &full_path);
     if let Some(dir) = cwd {
         if !dir.trim().is_empty() {
             c.current_dir(dir);
@@ -2539,6 +2549,8 @@ pub struct GhPrItem {
     pub url: String,
     pub head_branch: String,
     pub author: String,
+    pub review_decision: String,
+    pub mergeable: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2839,7 +2851,7 @@ pub async fn gh_pr_list(
             "pr", "list",
             "--state", &state_str,
             "--limit", &limit_str,
-            "--json", "number,title,state,url,headRefName,author",
+            "--json", "number,title,state,url,headRefName,author,reviewDecision,mergeable",
         ],
         Some(&cwd),
     )?;
@@ -2863,6 +2875,16 @@ pub async fn gh_pr_list(
             author: v
                 .get("author")
                 .and_then(|a| a.get("login"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            review_decision: v
+                .get("reviewDecision")
+                .and_then(|s| s.as_str())
+                .unwrap_or("")
+                .to_string(),
+            mergeable: v
+                .get("mergeable")
                 .and_then(|s| s.as_str())
                 .unwrap_or("")
                 .to_string(),
@@ -2965,6 +2987,59 @@ pub async fn gh_pr_merge(
         return Err(format!("gh pr merge failed (exit {}): {}", code, text));
     }
     Ok(GhMergeResponse { success: true })
+}
+
+/// Get failed CI run logs for a branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRunFailedLogResponse {
+    pub log: String,
+}
+
+#[tauri::command]
+pub async fn gh_run_view_failed_log(
+    cwd: String,
+    branch: String,
+) -> Result<GhRunFailedLogResponse, String> {
+    // First, find the latest failed run for the branch
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["run", "list", "--branch", &branch, "--status", "failure", "--limit", "1", "--json", "databaseId"],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("gh run list failed (exit {}): {}", code, text));
+    }
+    let runs: Vec<serde_json::Value> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+    if runs.is_empty() {
+        return Ok(GhRunFailedLogResponse {
+            log: "No failed runs found".to_string(),
+        });
+    }
+    let run_id = runs[0]
+        .get("databaseId")
+        .and_then(|v| v.as_i64())
+        .ok_or("No run ID found")?;
+
+    // Fetch the failed log (limit output to avoid huge logs)
+    let (log_code, log_text) = run_cmd_capture(
+        "gh",
+        &["run", "view", &run_id.to_string(), "--log-failed"],
+        Some(&cwd),
+    )?;
+    if log_code != 0 {
+        return Err(format!("gh run view --log-failed failed (exit {}): {}", log_code, log_text));
+    }
+
+    // Truncate to last 3000 chars to keep context manageable
+    let truncated_log = if log_text.len() > 3000 {
+        format!("...[truncated]...\n{}", &log_text[log_text.len() - 3000..])
+    } else {
+        log_text
+    };
+
+    Ok(GhRunFailedLogResponse { log: truncated_log })
 }
 
 /// Get git diff between two refs.
