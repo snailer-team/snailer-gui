@@ -328,6 +328,7 @@ export const SWE_3_WORKFLOW: AgentWorkflow = {
 export const QA_WORKFLOW: AgentWorkflow = {
   agentId: 'qa',
 <<<<<<< HEAD
+<<<<<<< HEAD
   name: 'QA Engineer (GPT-5.2)',
   description: 'Quality gate guardian: lint → build → test 필수 통과 후에만 PR 승인. Claude 리뷰 피드백 루프 관리',
   xaiPrinciples: [
@@ -349,6 +350,8 @@ export const QA_WORKFLOW: AgentWorkflow = {
     { phase: 'act', action: 'Claude 리뷰 피드백 처리', detail: '리뷰 코멘트 중 수정 필요 항목 → SWE에게 구체적 수정 요청', duration: 1500 },
     { phase: 'evaluate', action: 'Gate 판정', detail: '모든 체크 통과 → APPROVE + merge 허용 / 하나라도 실패 → REJECT + 수정 요청', duration: 800, output: 'Lint: PASS, Build: PASS, Test: PASS → PR Approved' },
 =======
+=======
+>>>>>>> origin/main
   name: 'QA Engineer (xAI Style · GPT-5.2)',
   description: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy, daily iterations',
   xaiPrinciples: [
@@ -372,6 +375,9 @@ export const QA_WORKFLOW: AgentWorkflow = {
     { phase: 'act', action: 'Claude 리뷰 피드백 처리', detail: '리뷰 코멘트 분류: MUST FIX (보안/버그) → SWE 즉시 수정 요청', duration: 1000 },
     { phase: 'evaluate', action: '메트릭 기반 품질 게이트', detail: 'coverage 95%+, latency <200ms, hallucination rate 추적. 통과 → APPROVE', duration: 800, output: 'Coverage: 96%, Lint: PASS, Build: PASS, Test: 47/47 → Approved' },
     { phase: 'evaluate', action: 'Delete & Improve', detail: '불필요 테스트 10% 삭제 확인. "yesterday보다 나아졌나?" self-check', duration: 600, output: 'Deleted 3 flaky tests, Added 5 high-leverage tests' },
+<<<<<<< HEAD
+>>>>>>> origin/main
+=======
 >>>>>>> origin/main
   ],
 }

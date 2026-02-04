@@ -3210,6 +3210,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                         create_pr: `Creating PR: ${ghAction.params.title}...`,
                         comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
                         merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
+                        read_file: `Reading file: ${ghAction.params.path}...`,
                       }
                       get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
                       get().elonAddAgentLog(agentId, {
@@ -3272,6 +3273,19 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               method: ghAction.params.method ?? null,
                             }))
                             break
+                          case 'read_file': {
+                            // Read file content so agent can generate accurate codeDiff
+                            const filePath = ghAction.params.path ?? ''
+                            const fullPath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`
+                            const content = await invoke<string>('fs_read_text', { path: fullPath })
+                            // Return first 5000 chars to avoid context overflow
+                            ghResult = JSON.stringify({
+                              path: filePath,
+                              content: content.slice(0, 5000),
+                              truncated: content.length > 5000,
+                            })
+                            break
+                          }
                           default:
                             ghResult = `Unknown action: ${ghAction.type}`
                         }
