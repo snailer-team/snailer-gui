@@ -571,11 +571,22 @@ PR body MUST follow this exact template:
 Keep it short & sharp. Self-review 필수.
 
 [Pre-Commit Quality Gate - MANDATORY]
-커밋 전에 반드시 아래 순서로 실행:
-1. githubActions: [{type: "run_check", params: {command: "pnpm lint"}}] → 0 errors 필수
-2. githubActions: [{type: "run_check", params: {command: "pnpm build"}}] → 성공 필수
-3. githubActions: [{type: "run_check", params: {command: "pnpm test"}}] → all pass 필수
+⚠️ commit_push 전에 반드시 아래 순서로 실행:
+
+STEP 0 (파일 존재 확인):
+- run_bash: "git status" → 수정하려는 파일이 실제로 존재하는지 확인
+- codeDiff로 생성한 파일이 "Untracked files" 또는 "Changes not staged"에 있어야 함
+- 없으면 codeDiff가 적용 안 된 것 → 다시 codeDiff 실행
+
+STEP 1-3 (품질 검증):
+1. run_bash: "pnpm lint" → 0 errors 필수 (warnings OK)
+2. run_bash: "pnpm build" → 성공 필수
+3. run_bash: "pnpm test" → all pass 필수
 하나라도 실패하면 codeDiff로 수정 후 재실행. 통과할 때까지 commit_push 금지.
+
+STEP 4 (커밋):
+- commit_push의 files 파라미터에는 실제 존재하는 파일만 포함
+- "git add -A" 대신 구체적 파일 경로 사용 권장
 
 [PR Code Review Feedback Loop - AUTONOMOUS]
 PR 생성 후 GitHub Actions claude-pr-review가 코멘트를 달면:
@@ -586,18 +597,30 @@ PR 생성 후 GitHub Actions claude-pr-review가 코멘트를 달면:
 2. 수정 후 같은 브랜치에 commit_push → CI 재실행 대기
 3. 모든 MUST FIX/SHOULD FIX 해결 확인
 
-[Conflict Prevention & Resolution - AUTONOMOUS]
+[Conflict Prevention & Resolution - AUTONOMOUS - CRITICAL]
+⚠️ MANDATORY: 모든 브랜치 작업 시작 전 반드시 실행:
+1. run_bash: "git fetch origin main"
+2. run_bash: "git merge origin/main --no-edit || true"
+3. conflict 발생 시 → 아래 RESOLUTION 절차 먼저 완료
+4. conflict 없으면 → 본 작업 진행
+
 PREVENTION (매 commit 전):
-- run_bash: "git fetch origin main && git diff --stat origin/main...HEAD"
-- 변경 파일이 main에서도 수정됐으면: 먼저 merge main → resolve → 그 다음 commit
+- run_bash: "git status" → Untracked/Modified 파일 확인
+- ⚠️ codeDiff로 생성한 파일만 commit — 존재하지 않는 파일 절대 commit 금지
+- run_bash: "git diff --stat origin/main...HEAD" → 변경 파일이 main과 겹치면 먼저 merge
 
 RESOLUTION (conflict 발생 시):
 1. run_bash: "git fetch origin main && git merge origin/main --no-commit || true"
 2. run_bash: "git diff --name-only --diff-filter=U" → 충돌 파일 목록
-3. 각 파일: read_file → codeDiff로 마커 제거 → 최종 코드 확정
+3. 각 파일: read_file → codeDiff로 마커(<<<<<<< ======= >>>>>>>)를 제거한 최종 코드 확정
 4. run_bash: "git add -A && git commit -m 'resolve merge conflicts with main'"
 5. commit_push → CI 확인
 6. 해결 불가 → create_issue + CEO directMessage
+
+⚠️ CRITICAL ERRORS TO AVOID:
+- "pathspec 'X' did not match any files" → 파일이 존재하지 않음. codeDiff 먼저 적용 후 commit
+- "Merge conflict" → 위 RESOLUTION 절차 실행
+- "non-fast-forward" → git pull --rebase origin <branch> 후 다시 push
 
 [Self-Merge Rules]
 QA agent가 approve하고 CI 모두 통과하면:
