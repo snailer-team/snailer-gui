@@ -68,6 +68,7 @@ pub fn run() {
       commands::gh_pr_checks,
       commands::gh_pr_comment,
       commands::gh_pr_merge,
+      commands::gh_run_view_failed_log,
       commands::git_diff
     ])
     .run(tauri::generate_context!())
