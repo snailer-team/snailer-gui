@@ -3323,13 +3323,18 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               body: ghAction.params.body ?? '',
                             }))
                             break
-                          case 'comment_pr':
+                          case 'comment_pr': {
+                            const commentBody = ghAction.params.body ?? ''
+                            if (!commentBody.trim()) {
+                              throw new Error('comment_pr requires non-empty body parameter')
+                            }
                             ghResult = JSON.stringify(await invoke('gh_pr_comment', {
                               cwd: projectPath,
                               prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
-                              body: ghAction.params.body ?? '',
+                              body: commentBody,
                             }))
                             break
+                          }
                           case 'merge_pr':
                             ghResult = JSON.stringify(await invoke('gh_pr_merge', {
                               cwd: projectPath,
@@ -3357,13 +3362,18 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               comment: ghAction.params.comment ?? null,
                             }))
                             break
-                          case 'comment_issue':
+                          case 'comment_issue': {
+                            const issueCommentBody = ghAction.params.body ?? ''
+                            if (!issueCommentBody.trim()) {
+                              throw new Error('comment_issue requires non-empty body parameter')
+                            }
                             ghResult = JSON.stringify(await invoke('gh_issue_comment', {
                               cwd: projectPath,
                               issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
-                              body: ghAction.params.body ?? '',
+                              body: issueCommentBody,
                             }))
                             break
+                          }
                           case 'run_bash':
                             ghResult = JSON.stringify(await invoke('run_bash', {
                               cwd: projectPath,
@@ -3374,7 +3384,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             // Read file content so agent can generate accurate codeDiff
                             const filePath = ghAction.params.path ?? ''
                             const fullPath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`
-                            const content = await invoke<string>('fs_read_text', { path: fullPath })
+                            const content = await invoke<string>('fs_read_text', { path: fullPath, maxBytes: 10000 })
                             // Return first 5000 chars to avoid context overflow
                             ghResult = JSON.stringify({
                               path: filePath,
