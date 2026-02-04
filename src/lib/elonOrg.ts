@@ -245,6 +245,35 @@ export const ELON_AGENTS: ElonAgent[] = [
   {
     id: 'qa',
     category: 'Engineering',
+<<<<<<< HEAD
+<<<<<<< HEAD
+    title: 'QA Engineer',
+    subtitle: 'Quality gate: lint, build, test verification before merge',
+    controls: ['repo', 'terminal'],
+    loop: [
+      'Observe: PR changes + agent outputs',
+      'Plan: verification checklist (lint → build → test)',
+      'Act: run checks, block if failing, request fixes',
+      'Evaluate: all gates green → approve',
+    ],
+    snailerNotes: [
+      'Gate keeper: nothing merges without passing checks.',
+      'Uses GPT-5.2 for reasoning about test coverage gaps.',
+      'Reports failing checks with fix suggestions.',
+    ],
+    triadRole: 'engineer',
+    autonomyLevel: 'high',
+    iterationCycle: '15m',
+    firstPrinciples: [
+      'No broken code in main',
+      'Lint errors = immediate rejection',
+      'Build must pass before review',
+      'Tests are non-negotiable',
+    ],
+    ownership: ['CI/CD gate', 'Code quality standards', 'PR verification', 'Claude review feedback loop'],
+=======
+=======
+>>>>>>> origin/main
     title: 'QA Engineer (xAI Style)',
     subtitle: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy',
     controls: ['repo', 'terminal', 'browser', 'api'],
@@ -277,6 +306,10 @@ export const ELON_AGENTS: ElonAgent[] = [
       '품질 게이트 & 릴리스 관리 (메트릭 기반)',
       '지속 개선 & 메트릭 (coverage, latency, hallucination rate)',
     ],
+<<<<<<< HEAD
+>>>>>>> origin/main
+=======
+>>>>>>> origin/main
   },
   {
     id: 'ai-ml',
