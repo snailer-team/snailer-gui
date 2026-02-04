@@ -2929,6 +2929,9 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
                       let prLine = `  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`
 
                       // Fetch recent comments for PRs needing attention (REVIEW_CHANGES or CI_FAILED)
@@ -2946,6 +2949,7 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       }
 
                       prLines.push(prLine)
+<<<<<<< HEAD
 =======
                       prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
 
@@ -2971,6 +2975,8 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                         actionableDetails.push(prDetail)
                       }
 >>>>>>> origin/main
+=======
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
                     }
 
                     const issueLines = openIssues.slice(0, 10).map(
@@ -3290,12 +3296,18 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                         comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
                         merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
 <<<<<<< HEAD
+<<<<<<< HEAD
                         view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
                         view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
                         run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
 =======
                         read_file: `Reading file: ${ghAction.params.path}...`,
 >>>>>>> origin/main
+=======
+                        view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
+                        view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
+                        run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
                       }
                       get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
                       get().elonAddAgentLog(agentId, {
@@ -3359,6 +3371,9 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             }))
                             break
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
                           case 'view_pr_comments':
                             ghResult = JSON.stringify(await invoke('gh_pr_view_comments', {
                               cwd: projectPath,
@@ -3377,6 +3392,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               command: ghAction.params.command ?? '',
                             }))
                             break
+<<<<<<< HEAD
 =======
                           case 'read_file': {
                             // Read file content so agent can generate accurate codeDiff
@@ -3392,6 +3408,8 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             break
                           }
 >>>>>>> origin/main
+=======
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
                           default:
                             ghResult = `Unknown action: ${ghAction.type}`
                         }

@@ -69,6 +69,7 @@ pub fn run() {
       commands::gh_pr_comment,
       commands::gh_pr_merge,
 <<<<<<< HEAD
+<<<<<<< HEAD
       commands::git_diff,
       commands::gh_pr_view_comments,
       commands::gh_issue_view_comments
@@ -76,6 +77,11 @@ pub fn run() {
       commands::gh_run_view_failed_log,
       commands::git_diff
 >>>>>>> origin/main
+=======
+      commands::git_diff,
+      commands::gh_pr_view_comments,
+      commands::gh_issue_view_comments
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
     ])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

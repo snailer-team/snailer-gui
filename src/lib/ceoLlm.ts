@@ -824,10 +824,14 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
   let githubActions: GitHubAction[] | undefined
   if (Array.isArray(parsed.githubActions)) {
 <<<<<<< HEAD
+<<<<<<< HEAD
     const validTypes = ['create_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'view_pr_comments', 'view_issue_comments', 'run_bash']
 =======
     const validTypes = ['create_issue', 'close_issue', 'comment_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'read_file', 'run_bash']
 >>>>>>> origin/main
+=======
+    const validTypes = ['create_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'view_pr_comments', 'view_issue_comments', 'run_bash']
+>>>>>>> fd4c00e (ci: add conflict marker scan workflow to prevent failed diffs)
     githubActions = parsed.githubActions
       .filter((ga: unknown) => {
         const g = ga as Record<string, unknown>
