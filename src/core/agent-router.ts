@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 import type { Agent, RoutingStrategy, RoutingContext, RoutingResult } from '../types/routing';
-=======
-import { Agent, RoutingStrategy, RoutingContext, RoutingResult } from '../types/routing';
->>>>>>> origin/main
 import { loadBalanceStrategy } from '../utils/routing-strategies';
 
 export class AgentRouter {
@@ -27,7 +23,7 @@ export class AgentRouter {
 
   async route(context: RoutingContext): Promise<RoutingResult> {
     const availableAgents = Array.from(this.agents.values())
-      .filter(agent => agent.status === 'available' && 
+      .filter(agent => agent.status === 'available' &&
                       agent.capabilities.includes(context.requiredCapability));
 
     if (availableAgents.length === 0) {

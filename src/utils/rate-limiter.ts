@@ -14,26 +14,25 @@ export class RateLimiter {
   async checkLimit(userId: string): Promise<boolean> {
     const now = Date.now();
     const userRequests = this.requests.get(userId) || [];
-    
+
     // Remove expired requests
     const validRequests = userRequests.filter(
       timestamp => now - timestamp < this.config.windowMs
     );
-    
+
     if (validRequests.length >= this.config.maxRequests) {
       return false;
     }
-    
+
     // Add current request
     validRequests.push(now);
     this.requests.set(userId, validRequests);
-    
+
     return true;
   }
 
   getRequestCount(userId: string): number {
     const now = Date.now();
-<<<<<<< HEAD
     const userRequests = this.requests.get(userId) || [];
     return userRequests.filter(
       timestamp => now - timestamp < this.config.windowMs
@@ -44,5 +43,3 @@ export class RateLimiter {
     this.requests.delete(userId);
   }
 }
-=======
->>>>>>> origin/main

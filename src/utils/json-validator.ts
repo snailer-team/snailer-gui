@@ -1,9 +1,5 @@
 export class JsonValidator {
-<<<<<<< HEAD
   validateAndFix(data: unknown): unknown {
-=======
-  validateAndFix(data: any): any {
->>>>>>> origin/main
     try {
       // If it's already an object, validate structure
       if (typeof data === 'object' && data !== null) {
@@ -13,17 +9,10 @@ export class JsonValidator {
       // If it's a string, try to parse as JSON
       if (typeof data === 'string') {
         const trimmed = data.trim();
-<<<<<<< HEAD
 
         // Fix common JSON issues
         const fixed = this.fixCommonJsonIssues(trimmed);
 
-=======
-        
-        // Fix common JSON issues
-        let fixed = this.fixCommonJsonIssues(trimmed);
-        
->>>>>>> origin/main
         try {
           const parsed = JSON.parse(fixed);
           return this.sanitizeObject(parsed);
@@ -34,11 +23,7 @@ export class JsonValidator {
       }
 
       return data;
-<<<<<<< HEAD
     } catch {
-=======
-    } catch (error) {
->>>>>>> origin/main
       return { error: 'JSON validation failed', raw: data };
     }
   }
@@ -50,30 +35,19 @@ export class JsonValidator {
       // Fix single quotes to double quotes
       .replace(/'/g, '"')
       // Remove control characters
-<<<<<<< HEAD
       // eslint-disable-next-line no-control-regex
-=======
->>>>>>> origin/main
       .replace(/[\x00-\x1F\x7F]/g, '')
       // Ensure proper closing
       .replace(/,\s*$/, '');
   }
 
-<<<<<<< HEAD
   private sanitizeObject(obj: unknown): unknown {
-=======
-  private sanitizeObject(obj: any): any {
->>>>>>> origin/main
     if (Array.isArray(obj)) {
       return obj.map(item => this.sanitizeObject(item));
     }
 
     if (typeof obj === 'object' && obj !== null) {
-<<<<<<< HEAD
       const sanitized: Record<string, unknown> = {};
-=======
-      const sanitized: any = {};
->>>>>>> origin/main
       for (const [key, value] of Object.entries(obj)) {
         sanitized[key] = this.sanitizeObject(value);
       }
@@ -83,15 +57,8 @@ export class JsonValidator {
     return obj;
   }
 
-<<<<<<< HEAD
   validateSchema(schema: unknown): boolean {
     // Basic schema validation - could be extended with JSON Schema
     return typeof schema === 'object' && schema !== null;
   }
 }
-=======
-  validateSchema(schema: any): boolean {
-    // Basic schema validation - could be extended with JSON Schema
-    return typeof schema === 'object' && schema !== null;
-  }
->>>>>>> origin/main

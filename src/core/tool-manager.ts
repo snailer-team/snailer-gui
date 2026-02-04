@@ -1,17 +1,9 @@
-<<<<<<< HEAD
 import type { ToolAction, ToolResult, BrowserAction } from '../types/browser';
-=======
-import { ToolConfig, ToolAction, ToolResult } from '../types/browser';
->>>>>>> origin/main
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
 
 export class ToolManager {
-<<<<<<< HEAD
   private tools: Map<string, unknown> = new Map();
-=======
-  private tools: Map<string, any> = new Map();
->>>>>>> origin/main
   private browserController: BrowserController;
   private validator: JsonValidator;
 
@@ -39,21 +31,12 @@ export class ToolManager {
         throw new Error(`Tool '${toolName}' not found`);
       }
 
-<<<<<<< HEAD
       let result: { data?: unknown };
 
       if (toolName === 'browser') {
         result = await (tool as BrowserController).executeAction(action as unknown as BrowserAction);
       } else {
         result = await (tool as { execute: (action: ToolAction) => Promise<{ data: unknown }> }).execute(action);
-=======
-      let result: any;
-      
-      if (toolName === 'browser') {
-        result = await tool.executeAction(action);
-      } else {
-        result = await tool.execute(action);
->>>>>>> origin/main
       }
 
       // Validate JSON output
@@ -75,11 +58,7 @@ export class ToolManager {
     } catch (error) {
       return {
         success: false,
-<<<<<<< HEAD
         error: error instanceof Error ? error.message : 'Unknown error',
-=======
-        error: error.message,
->>>>>>> origin/main
         latencyMs: Date.now() - startTime,
         toolName
       };
@@ -97,7 +76,4 @@ export class ToolManager {
       execute: async (action: ToolAction) => ({ data: { apiCall: true, action } })
     };
   }
-<<<<<<< HEAD
 }
-=======
->>>>>>> origin/main

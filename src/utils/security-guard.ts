@@ -27,7 +27,7 @@ export class SecurityGuard {
   async validateUrl(url: string): Promise<UrlValidationResult> {
     try {
       const parsedUrl = new URL(url);
-      
+
       // Check blocked protocols
       if (this.BLOCKED_PROTOCOLS.includes(parsedUrl.protocol)) {
         return {
@@ -36,20 +36,15 @@ export class SecurityGuard {
         };
       }
 
-<<<<<<< HEAD
       // Domain whitelist check disabled in non-production environments
       const isProduction = typeof window !== 'undefined' &&
         (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== undefined
       if (isProduction) {
-=======
-      // Check domain whitelist for production
-      if (process.env.NODE_ENV === 'production') {
->>>>>>> origin/main
-        const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain => 
-          parsedUrl.hostname === domain || 
+        const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain =>
+          parsedUrl.hostname === domain ||
           parsedUrl.hostname.endsWith(`.${domain}`)
         );
-        
+
         if (!isAllowedDomain) {
           return {
             isValid: false,
@@ -59,11 +54,7 @@ export class SecurityGuard {
       }
 
       return { isValid: true };
-<<<<<<< HEAD
     } catch {
-=======
-    } catch (error) {
->>>>>>> origin/main
       return {
         isValid: false,
         reason: 'Invalid URL format'
@@ -75,7 +66,7 @@ export class SecurityGuard {
     if (!['low', 'medium', 'high'].includes(riskLevel)) {
       return false;
     }
-    
+
     const maxSize = this.MAX_POSITION_SIZE[riskLevel as keyof typeof this.MAX_POSITION_SIZE];
     return size <= maxSize;
   }
@@ -92,22 +83,15 @@ export class SecurityGuard {
       return false;
     }
 
-<<<<<<< HEAD
     // Symbol-specific size limits (placeholder for future use)
     if (symbol && symbol.length > 10) {
       return false;
     }
 
-=======
-    // Additional symbol-specific checks could go here
->>>>>>> origin/main
     return true;
   }
 
   sanitizeInput(input: string): string {
     return input.replace(/[<>"'&]/g, '');
-<<<<<<< HEAD
   }
 }
-=======
->>>>>>> origin/main
