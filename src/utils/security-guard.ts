@@ -75,13 +75,17 @@ export class SecurityGuard {
     return symbolRegex.test(symbol.toUpperCase());
   }
 
-  async validatePositionSize(size: number, _symbol: string): Promise<boolean> {
+  async validatePositionSize(size: number, symbol: string): Promise<boolean> {
     // Check for reasonable position sizes
     if (size <= 0 || size > 1000000) {
       return false;
     }
 
-    // Additional symbol-specific checks could go here
+    // Symbol-specific size limits (placeholder for future use)
+    if (symbol && symbol.length > 10) {
+      return false;
+    }
+
     return true;
   }
 
