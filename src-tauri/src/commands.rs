@@ -2987,6 +2987,59 @@ pub async fn gh_pr_merge(
     Ok(GhMergeResponse { success: true })
 }
 
+/// Get failed CI run logs for a branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRunFailedLogResponse {
+    pub log: String,
+}
+
+#[tauri::command]
+pub async fn gh_run_view_failed_log(
+    cwd: String,
+    branch: String,
+) -> Result<GhRunFailedLogResponse, String> {
+    // First, find the latest failed run for the branch
+    let (code, text) = run_cmd_capture(
+        "gh",
+        &["run", "list", "--branch", &branch, "--status", "failure", "--limit", "1", "--json", "databaseId"],
+        Some(&cwd),
+    )?;
+    if code != 0 {
+        return Err(format!("gh run list failed (exit {}): {}", code, text));
+    }
+    let runs: Vec<serde_json::Value> =
+        serde_json::from_str(&text).map_err(|e| format!("JSON parse error: {}", e))?;
+    if runs.is_empty() {
+        return Ok(GhRunFailedLogResponse {
+            log: "No failed runs found".to_string(),
+        });
+    }
+    let run_id = runs[0]
+        .get("databaseId")
+        .and_then(|v| v.as_i64())
+        .ok_or("No run ID found")?;
+
+    // Fetch the failed log (limit output to avoid huge logs)
+    let (log_code, log_text) = run_cmd_capture(
+        "gh",
+        &["run", "view", &run_id.to_string(), "--log-failed"],
+        Some(&cwd),
+    )?;
+    if log_code != 0 {
+        return Err(format!("gh run view --log-failed failed (exit {}): {}", log_code, log_text));
+    }
+
+    // Truncate to last 3000 chars to keep context manageable
+    let truncated_log = if log_text.len() > 3000 {
+        format!("...[truncated]...\n{}", &log_text[log_text.len() - 3000..])
+    } else {
+        log_text
+    };
+
+    Ok(GhRunFailedLogResponse { log: truncated_log })
+}
+
 /// Get git diff between two refs.
 #[tauri::command]
 pub async fn git_diff(
