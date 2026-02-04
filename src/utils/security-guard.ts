@@ -36,8 +36,10 @@ export class SecurityGuard {
         };
       }
 
-      // Check domain whitelist for production
-      if (import.meta.env.MODE === 'production') {
+      // Domain whitelist check disabled in non-production environments
+      const isProduction = typeof window !== 'undefined' &&
+        (window as unknown as { __TAURI__?: unknown }).__TAURI__ !== undefined
+      if (isProduction) {
         const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain => 
           parsedUrl.hostname === domain || 
           parsedUrl.hostname.endsWith(`.${domain}`)
