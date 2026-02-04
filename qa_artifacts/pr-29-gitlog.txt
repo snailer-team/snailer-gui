@@ -1,0 +1,20 @@
+09f58b6 (HEAD -> pr-29, origin/fix/security-integration-diffs, origin/feat/llm-routing-position-agents, fix/security-integration-diffs, feat/llm-routing-position-agents) fix: integrate security guardrails in position-agent and browser-controller
+444ffe1 (origin/chore/gh-labels-branch-guardrail, chore/gh-labels-branch-guardrail) feat: integrate QA security guardrails with browser/position agents
+ca14f55 (feat/browser-tool-control) QA: add qa-gate CI + verify script + URL guardrail module and tests
+eef5a1c (origin/feat/browser-tool-control) feat: implement browser/tool control with agent integration
+de0c7e2 (origin/feat/core-agent-routing, feat/core-agent-routing) feat: implement core agent routing logic with multi-strategy support
+7b4625c (tag: v0.2.6, tag: v0.2.5, main) bump version to v0.2.5
+c64ad31 add GitHub pre-flight: auto-scan open PRs/Issues before agent work
+57f6c28 delete broken agent-generated src/services/llmRouter.ts
+79980aa fix gh CLI PATH for macOS .app bundles, add qa agent to CEO dispatch
+4b90d15 Feat/llm routing logic (#20)
+bb14569 Add GCP deployment automation with gcloud commands (#19)
+0e28be6 (tag: v0.2.4, origin/feat/github-cli-installation, feat/github-cli-installation) enhance SWE agent: PR template, review loop, conflict resolution, self-merge
+c388719 enhance A/B dashboard backend connectivity verification for production merge (#18)
+ac6f177 (tag: v0.2.3, origin/feat/production-deploy-ab-dashboard) update QA workflow to xAI-style with full lifecycle coverage
+0ef88bd enhance QA agent with full xAI-style role definition
+8c00792 feat: re-apply SQLite persistence + logging for A/B MAB backend; UI compatible
+3bc205b (tag: v0.2.2) feat: add QA Engineer agent with GPT-5.2 for quality gate enforcement
+e50ce16 Merge branch 'main' of https://github.com/snailer-team/snailer-gui
+7eedf96 Feat/integrations (#15)
+e4af1e6 Feat/analytics dashboard UI (#16)

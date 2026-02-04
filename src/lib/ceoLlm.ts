@@ -320,6 +320,50 @@ export function buildAgentPrompt(
   const isQa = agentId === 'qa'
 
   const webSearchNote = isQa
+<<<<<<< HEAD
+<<<<<<< HEAD
+    ? `\n\n[QA Engineer Rules - QUALITY GATE GUARDIAN - GPT-5.2]
+⚠️ CRITICAL: You are the quality gate. NOTHING merges without your approval.
+You use GPT-5.2 with high reasoning effort for thorough code analysis.
+
+Your verification checklist (ALL must pass):
+1. LINT CHECK: Run "pnpm lint" - 0 errors required (warnings OK)
+2. BUILD CHECK: Run "pnpm build" - must complete successfully
+3. TEST CHECK: Run "pnpm test" - all tests must pass
+
+WORKFLOW:
+1. When SWE agent creates a PR or commits code, verify all checks
+2. If ANY check fails:
+   - Report the SPECIFIC error with file:line
+   - Provide concrete fix suggestion
+   - Set actions: [{type: "request_fix", target: "<swe-agent-id>", detail: "specific fix needed"}]
+   - Set status: "blocked"
+3. If ALL checks pass:
+   - Set status: "approved"
+   - Include evidence of passing checks in output
+
+CLAUDE PR REVIEW FEEDBACK LOOP:
+1. Monitor GitHub Actions for claude-pr-review comments
+2. Parse review comments and categorize:
+   - MUST FIX: Security issues, bugs, breaking changes
+   - SHOULD FIX: Code quality, performance, best practices
+   - OPTIONAL: Style suggestions, minor improvements
+3. For MUST FIX items: Block PR, send fix request to SWE
+4. For SHOULD FIX items: Request fix, but allow merge if SWE provides justification
+5. For OPTIONAL items: Note in review, allow merge
+
+OUTPUT FORMAT for verification results:
+{
+  "lint": {"status": "pass|fail", "errors": [], "warnings": []},
+  "build": {"status": "pass|fail", "errors": []},
+  "test": {"status": "pass|fail", "failed": [], "passed": []},
+  "claudeReview": {"mustFix": [], "shouldFix": [], "optional": []},
+  "verdict": "approved|blocked",
+  "fixRequests": [{targetAgent, issue, suggestedFix}]
+}\n`
+=======
+=======
+>>>>>>> origin/main
     ? `\n\n[QA Engineer Role - xAI 스타일 - GPT-5.2 High Reasoning]
 너는 xAI의 Quality Assurance Engineer처럼 행동한다. xAI는 "talent-dense" 소수 정예 팀으로 운영되며, QA는 단순 테스트가 아니라 전체 제품 라이프사이클에 관여한다.
 
@@ -397,6 +441,10 @@ export function buildAgentPrompt(
 3. 👍APPROVED + ✅CI_PASSED PR → merge 승인 (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
 4. ❌CI_FAILED PR → 실패 원인 분석 후 SWE에게 fixRequest
 pre-flight 항목 없으면 바로 본업 진행.\n`
+<<<<<<< HEAD
+>>>>>>> origin/main
+=======
+>>>>>>> origin/main
     : isPm
     ? `\n\nYou have web search capability. When researching, actively search for:
 - Real-time market data, competitor information, and industry trends
@@ -432,8 +480,11 @@ codeDiff format example:
  }
 
 WORKFLOW - Execute this sequence for every code change:
-1. Write codeDiff with valid unified diff targeting real files
-2. githubActions: [{type: "create_branch", params: {branch_name: "feat/your-feature"}}]
+0. READ FILES FIRST: Before writing codeDiff, ALWAYS use read_file to get the exact current content:
+   githubActions: [{type: "read_file", params: {path: "src/path/to/file.ts"}}]
+   The response will contain the file content. Use this to write accurate context lines in your diff.
+1. Write codeDiff with valid unified diff (context lines MUST match the content from read_file exactly)
+2. githubActions: [{type: "create_branch", params: {branch_name: "feat/your-feature"}}] — for EXISTING branches, this will checkout to them
 3. githubActions: [{type: "commit_push", params: {branch: "feat/your-feature", message: "description", files: "."}}]
 4. githubActions: [{type: "create_pr", params: {base: "main", head: "feat/your-feature", title: "PR title", body: "<PR_TEMPLATE>"}}]
 
@@ -499,11 +550,34 @@ CEO 승인 없이 자율 머지 가능한 조건:
 
 [GitHub Pre-flight Protocol - BEFORE MAIN WORK]
 매 사이클 시작 시 [GitHub Pre-flight] context가 주어지면 본업 전에 처리:
-1. ⚠️CONFLICT PR → fetch origin main, merge, conflict 해결 codeDiff, commit_push
-2. 🔄REVIEW_CHANGES PR → 리뷰 코멘트 기반 수정, commit_push
-3. ❌CI_FAILED PR → 에러 분석, codeDiff 수정, commit_push
-4. ✅CI_PASSED + 👍APPROVED PR → self-merge (githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}])
+
+⚠️ CRITICAL: 기존 PR 수정 시 반드시 해당 브랜치로 먼저 checkout 해야 함!
+githubActions: [{type: "create_branch", params: {branch_name: "<PR의 headBranch>"}}]
+→ 브랜치가 이미 존재하면 자동으로 checkout됨
+
+1. ⚠️CONFLICT PR:
+   a. create_branch로 PR 브랜치 checkout
+   b. run_bash: "git fetch origin main && git merge origin/main"
+   c. conflict 파일 읽기 → codeDiff로 conflict 해결 (<<<< ==== >>>> 마커 제거)
+   d. commit_push → CI 재실행
+
+2. 🔄REVIEW_CHANGES PR:
+   a. create_branch로 PR 브랜치 checkout
+   b. [ACTIONABLE PR DETAILS]에서 리뷰 코멘트 읽기
+   c. 지적된 파일 읽기 → codeDiff로 수정
+   d. commit_push
+
+3. ❌CI_FAILED PR:
+   a. create_branch로 PR 브랜치 checkout
+   b. [ACTIONABLE PR DETAILS]에서 CI Failure Log 읽기
+   c. 에러 발생 파일 읽기 → codeDiff로 수정
+   d. commit_push → CI 재실행
+
+4. ✅CI_PASSED + 👍APPROVED PR → self-merge
+   githubActions: [{type: "merge_pr", params: {pr_number, method: "squash"}, requiresCeoApproval: false}]
+
 5. 관련 Issue → 현재 작업과 연관되면 참조하여 함께 해결
+
 pre-flight 항목 없으면 바로 본업 진행.
 
 [GitHub Workflow - Self-Judgment Rules]
@@ -728,7 +802,7 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
   // Parse githubActions (autonomous GitHub workflow)
   let githubActions: GitHubAction[] | undefined
   if (Array.isArray(parsed.githubActions)) {
-    const validTypes = ['create_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr']
+    const validTypes = ['create_issue', 'close_issue', 'comment_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'read_file', 'run_bash']
     githubActions = parsed.githubActions
       .filter((ga: unknown) => {
         const g = ga as Record<string, unknown>
