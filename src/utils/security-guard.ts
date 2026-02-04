@@ -4,25 +4,13 @@ export interface UrlValidationResult {
 }
 
 export class SecurityGuard {
-<<<<<<< HEAD
-  // Reserved for future production domain whitelist
-  private readonly _allowedDomains = [
-=======
   private readonly ALLOWED_DOMAINS = [
->>>>>>> origin/main
     'localhost',
     '127.0.0.1',
     'snailer.app',
     'api.snailer.app'
   ];
 
-<<<<<<< HEAD
-  getAllowedDomains(): string[] {
-    return [...this._allowedDomains];
-  }
-
-=======
->>>>>>> origin/main
   private readonly BLOCKED_PROTOCOLS = [
     'file:',
     'ftp:',
@@ -48,15 +36,8 @@ export class SecurityGuard {
         };
       }
 
-<<<<<<< HEAD
-      // Note: Domain whitelist check disabled for now
-      // In production, would validate against ALLOWED_DOMAINS
-
-      return { isValid: true };
-    } catch {
-=======
       // Check domain whitelist for production
-      if (process.env.NODE_ENV === 'production') {
+      if (import.meta.env.MODE === 'production') {
         const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain => 
           parsedUrl.hostname === domain || 
           parsedUrl.hostname.endsWith(`.${domain}`)
@@ -71,8 +52,7 @@ export class SecurityGuard {
       }
 
       return { isValid: true };
-    } catch (error) {
->>>>>>> origin/main
+    } catch {
       return {
         isValid: false,
         reason: 'Invalid URL format'
@@ -95,12 +75,7 @@ export class SecurityGuard {
     return symbolRegex.test(symbol.toUpperCase());
   }
 
-<<<<<<< HEAD
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async validatePositionSize(size: number, _symbol?: string): Promise<boolean> {
-=======
-  async validatePositionSize(size: number, symbol: string): Promise<boolean> {
->>>>>>> origin/main
+  async validatePositionSize(size: number, _symbol: string): Promise<boolean> {
     // Check for reasonable position sizes
     if (size <= 0 || size > 1000000) {
       return false;
@@ -112,19 +87,5 @@ export class SecurityGuard {
 
   sanitizeInput(input: string): string {
     return input.replace(/[<>"'&]/g, '');
-<<<<<<< HEAD
-  }
-
-  async validateSize(size: number): Promise<boolean> {
-    return size > 0 && size <= 1000000;
-  }
-
-  async validateEndpoint(endpoint: string): Promise<boolean> {
-    if (endpoint.includes('localhost') || endpoint.match(/192\.168\.\d+\.\d+/)) {
-      return false;
-    }
-    return true;
   }
 }
-=======
->>>>>>> origin/main

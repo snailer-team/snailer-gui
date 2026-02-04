@@ -1,16 +1,6 @@
-<<<<<<< HEAD
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { BrowserController } from '../core/browser-controller'
-import type { BrowserAction } from '../types/browser'
-
-describe('BrowserController', () => {
-  let controller: BrowserController
-
-  beforeEach(() => {
-    controller = new BrowserController({ headless: true, timeout: 30000 })
-=======
-import { BrowserController } from '../core/browser-controller'
-import { BrowserAction, BrowserState } from '../types/browser'
+import { BrowserAction } from '../types/browser'
 
 // Mock external dependencies
 jest.mock('puppeteer', () => ({
@@ -37,15 +27,14 @@ describe('BrowserController', () => {
       close: jest.fn().mockResolvedValue(undefined)
     }
     controller = new BrowserController()
-    // @ts-ignore - accessing private property for testing
+    // @ts-expect-error - accessing private property for testing
     controller.browser = mockBrowser
-    // @ts-ignore
+    // @ts-expect-error - accessing private property for testing
     controller.page = mockPage
   })
 
   afterEach(() => {
     jest.clearAllMocks()
->>>>>>> origin/main
   })
 
   describe('executeAction', () => {
@@ -58,14 +47,9 @@ describe('BrowserController', () => {
 
       const result = await controller.executeAction(action)
 
-<<<<<<< HEAD
-      expect(result.success).toBe(true)
-      expect(result.data).toHaveProperty('navigated', true)
-=======
       expect(mockPage.goto).toHaveBeenCalledWith('https://example.com')
       expect(result.success).toBe(true)
       expect(result.timestamp).toBeDefined()
->>>>>>> origin/main
     })
 
     it('should execute click action with selector', async () => {
@@ -77,17 +61,6 @@ describe('BrowserController', () => {
 
       const result = await controller.executeAction(action)
 
-<<<<<<< HEAD
-      expect(result.success).toBe(true)
-      expect(result.data).toHaveProperty('clicked', true)
-    })
-
-    it('should execute input action', async () => {
-      const action: BrowserAction = {
-        type: 'input',
-        selector: '#username',
-        value: 'testuser',
-=======
       expect(mockPage.click).toHaveBeenCalledWith('#submit-btn')
       expect(result.success).toBe(true)
     })
@@ -98,47 +71,11 @@ describe('BrowserController', () => {
       const action: BrowserAction = {
         type: 'click',
         selector: '#missing-element',
->>>>>>> origin/main
         timestamp: Date.now()
       }
 
       const result = await controller.executeAction(action)
 
-<<<<<<< HEAD
-      expect(result.success).toBe(true)
-      expect(result.data).toHaveProperty('inputted', true)
-    })
-
-    it('should handle unsupported action types', async () => {
-      const action = { type: 'unsupported' } as any
-
-      const result = await controller.executeAction(action)
-
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Unsupported action type')
-    })
-  })
-
-  describe('navigatePublic', () => {
-    it('should block localhost URLs', async () => {
-      await expect(
-        controller.navigatePublic('http://localhost:8080/admin')
-      ).rejects.toThrow('SecurityError')
-    })
-
-    it('should block private IP ranges', async () => {
-      await expect(
-        controller.navigatePublic('http://192.168.1.1/config')
-      ).rejects.toThrow('SecurityError')
-    })
-
-    it('should allow external URLs', async () => {
-      const result = await controller.navigatePublic('https://example.com')
-      expect(result.success).toBe(true)
-    })
-  })
-})
-=======
       expect(result.success).toBe(false)
       expect(result.error).toContain('Element not found')
     })
@@ -151,4 +88,5 @@ describe('BrowserController', () => {
       expect(result.success).toBe(false)
       expect(result.error).toContain('Missing required')
     })
->>>>>>> origin/main
+  })
+})

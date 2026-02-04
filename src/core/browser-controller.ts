@@ -1,14 +1,4 @@
-<<<<<<< HEAD
 import type { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
-import { JsonValidator } from '../utils/json-validator';
-
-export class BrowserController {
-  private validator: JsonValidator;
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(_config: BrowserConfig) {
-=======
-import { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
 import { JsonValidator } from '../utils/json-validator';
 
 export class BrowserController {
@@ -17,7 +7,6 @@ export class BrowserController {
 
   constructor(config: BrowserConfig) {
     this.config = config;
->>>>>>> origin/main
     this.validator = new JsonValidator();
   }
 
@@ -46,11 +35,7 @@ export class BrowserController {
     } catch (error) {
       return {
         success: false,
-<<<<<<< HEAD
         error: error instanceof Error ? error.message : 'Unknown error',
-=======
-        error: error.message,
->>>>>>> origin/main
         latencyMs: Date.now() - startTime,
         data: null
       };
@@ -102,27 +87,8 @@ export class BrowserController {
   getMetrics() {
     return { actionsExecuted: 0, successRate: 100 };
   }
-<<<<<<< HEAD
 
-  async initialize(): Promise<BrowserResult> {
-    return { success: true, data: { initialized: true }, latencyMs: 0 };
-  }
-
-  async close(): Promise<void> {
-    // Cleanup
-  }
-
-  async takeScreenshot(): Promise<Uint8Array> {
-    return new TextEncoder().encode('mock-screenshot');
-  }
-
-  async navigatePublic(url: string): Promise<BrowserResult> {
-    // Check for SSRF
-    if (url.includes('localhost') || url.match(/192\.168\.\d+\.\d+/)) {
-      throw new Error('SecurityError: SSRF blocked');
-    }
-    return { success: true, data: { navigated: true, url }, latencyMs: 0 };
+  getConfig() {
+    return this.config;
   }
 }
-=======
->>>>>>> origin/main

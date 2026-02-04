@@ -9,11 +9,7 @@ export interface Agent {
   currentRequests: number;
   lastUsed?: Date;
   healthScore: number; // 0-100
-<<<<<<< HEAD
   metadata?: Record<string, unknown>;
-=======
-  metadata?: Record<string, any>;
->>>>>>> origin/main
 }
 
 export interface RoutingContext {
@@ -25,11 +21,7 @@ export interface RoutingContext {
   userTier: 'free' | 'pro' | 'enterprise';
   costBudget?: number;
   timeout?: number;
-<<<<<<< HEAD
   metadata?: Record<string, unknown>;
-=======
-  metadata?: Record<string, any>;
->>>>>>> origin/main
 }
 
 export interface RoutingResult {
@@ -60,9 +52,5 @@ export interface RouterConfig {
   defaultStrategy: string;
   maxRetries: number;
   timeoutMs: number;
-<<<<<<< HEAD
-  healthCheckInterval: number;
-  enableFailover: boolean;
+  fallbackAgentId?: string;
 }
-=======
->>>>>>> origin/main

@@ -1,14 +1,9 @@
-<<<<<<< HEAD
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
-import type { ToolAction, ToolResult } from '../types/browser';
-=======
-import { ToolConfig, ToolAction, ToolResult } from '../types/browser';
->>>>>>> origin/main
+import type { ToolAction, ToolResult, BrowserAction } from '../types/browser';
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
 
 export class ToolManager {
-  private tools: Map<string, any> = new Map();
+  private tools: Map<string, unknown> = new Map();
   private browserController: BrowserController;
   private validator: JsonValidator;
 
@@ -36,12 +31,12 @@ export class ToolManager {
         throw new Error(`Tool '${toolName}' not found`);
       }
 
-      let result: any;
-      
+      let result: { data?: unknown };
+
       if (toolName === 'browser') {
-        result = await tool.executeAction(action);
+        result = await (tool as BrowserController).executeAction(action as unknown as BrowserAction);
       } else {
-        result = await tool.execute(action);
+        result = await (tool as { execute: (action: ToolAction) => Promise<{ data: unknown }> }).execute(action);
       }
 
       // Validate JSON output
@@ -63,11 +58,7 @@ export class ToolManager {
     } catch (error) {
       return {
         success: false,
-<<<<<<< HEAD
         error: error instanceof Error ? error.message : 'Unknown error',
-=======
-        error: error.message,
->>>>>>> origin/main
         latencyMs: Date.now() - startTime,
         toolName
       };
@@ -85,26 +76,4 @@ export class ToolManager {
       execute: async (action: ToolAction) => ({ data: { apiCall: true, action } })
     };
   }
-<<<<<<< HEAD
-
-  registerTool(tool: any): boolean {
-    if (!tool.id || !tool.name || !tool.execute) {
-      return false;
-    }
-    if (this.tools.has(tool.id)) {
-      return false;
-    }
-    this.tools.set(tool.id, tool);
-    return true;
-  }
-
-  getTool(id: string): any {
-    return this.tools.get(id);
-  }
-
-  listTools(): any[] {
-    return Array.from(this.tools.values());
-  }
 }
-=======
->>>>>>> origin/main
