@@ -2928,28 +2928,9 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('🔄REVIEW_CHANGES')
                       if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
 
-<<<<<<< HEAD
-                      let prLine = `  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`
-
-                      // Fetch recent comments for PRs needing attention (REVIEW_CHANGES or CI_FAILED)
-                      if (pr.reviewDecision === 'CHANGES_REQUESTED' || ciStatus === 'CI_FAILED') {
-                        try {
-                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string; commentType: string }>>('gh_pr_view_comments', { cwd: projectPath, prNumber: pr.number })
-                          const recentComments = comments.slice(-3)
-                          if (recentComments.length > 0) {
-                            const commentLines = recentComments.map(
-                              (c) => `      - @${c.author}: "${c.body.slice(0, 120)}${c.body.length > 120 ? '...' : ''}"`
-                            )
-                            prLine += `\n    💬 Recent comments:\n${commentLines.join('\n')}`
-                          }
-                        } catch { /* comment fetch failed, continue */ }
-                      }
-
-                      prLines.push(prLine)
-=======
                       prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
 
-                      // Fetch detailed context for actionable PRs (CI_FAILED or REVIEW_CHANGES)
+                      // Fetch detailed context for actionable PRs (CI_FAILED or REVIEW_CHANGES or CONFLICT)
                       const needsAction = ciStatus === 'CI_FAILED' || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.mergeable === 'CONFLICTING'
                       if (needsAction) {
                         let prDetail = `\n--- PR #${pr.number} Details ---\nBranch: ${pr.headBranch}\nStatus: ${flags.join(' ')}`
@@ -2968,9 +2949,21 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                           }
                         } catch { /* Comments unavailable */ }
 
+                        // Add conflict file information for CONFLICTING PRs
+                        if (pr.mergeable === 'CONFLICTING') {
+                          try {
+                            const conflictInfo = await invoke<{ stdout: string }>('run_bash', {
+                              cwd: projectPath,
+                              command: `git fetch origin main ${pr.headBranch} 2>/dev/null; git diff --name-only origin/main...origin/${pr.headBranch}`,
+                            })
+                            if (conflictInfo.stdout) {
+                              prDetail += `\n\nConflict Files (files diverged from main):\n${conflictInfo.stdout}`
+                            }
+                          } catch { /* conflict info unavailable */ }
+                        }
+
                         actionableDetails.push(prDetail)
                       }
->>>>>>> origin/main
                     }
 
                     const issueLines = openIssues.slice(0, 10).map(
@@ -3029,11 +3022,10 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                       userPrompt: agentUsr,
                     })
                   } else if (agentId === 'qa') {
-                    // QA agent uses GPT-5.2 with high reasoning for quality gate decisions
-                    llmResponse = await invoke<LlmCompletionResponse>('openai_gpt52_completion', {
-                      systemPrompt: agentSys,
-                      userPrompt: agentUsr,
-                      reasoningEffort: 'high',
+                    // QA agent uses Grok-4 for quality gate decisions
+                    llmResponse = await invoke<LlmCompletionResponse>('xai_chat_completion', {
+                      system_prompt: agentSys,
+                      user_prompt: agentUsr,
                     })
                   } else {
                     llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {
@@ -3284,18 +3276,17 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                       // Update live activity for GitHub ops
                       const ghActivityLabels: Record<string, string> = {
                         create_issue: 'Creating GitHub issue...',
+                        close_issue: `Closing Issue #${ghAction.params.issue_number}...`,
+                        comment_issue: `Commenting on Issue #${ghAction.params.issue_number}...`,
                         create_branch: `Creating branch: ${ghAction.params.branch_name || ghAction.params.branchName}...`,
                         commit_push: `Committing & pushing to ${ghAction.params.branch || 'main'}...`,
                         create_pr: `Creating PR: ${ghAction.params.title}...`,
                         comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
                         merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
-<<<<<<< HEAD
                         view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
                         view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
                         run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
-=======
                         read_file: `Reading file: ${ghAction.params.path}...`,
->>>>>>> origin/main
                       }
                       get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
                       get().elonAddAgentLog(agentId, {
@@ -3344,13 +3335,18 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               body: ghAction.params.body ?? '',
                             }))
                             break
-                          case 'comment_pr':
+                          case 'comment_pr': {
+                            const commentBody = ghAction.params.body ?? ''
+                            if (!commentBody.trim()) {
+                              throw new Error('comment_pr requires non-empty body parameter')
+                            }
                             ghResult = JSON.stringify(await invoke('gh_pr_comment', {
                               cwd: projectPath,
                               prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
-                              body: ghAction.params.body ?? '',
+                              body: commentBody,
                             }))
                             break
+                          }
                           case 'merge_pr':
                             ghResult = JSON.stringify(await invoke('gh_pr_merge', {
                               cwd: projectPath,
@@ -3358,7 +3354,6 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               method: ghAction.params.method ?? null,
                             }))
                             break
-<<<<<<< HEAD
                           case 'view_pr_comments':
                             ghResult = JSON.stringify(await invoke('gh_pr_view_comments', {
                               cwd: projectPath,
@@ -3371,13 +3366,32 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                               issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
                             }))
                             break
+                          case 'close_issue':
+                            ghResult = JSON.stringify(await invoke('gh_issue_close', {
+                              cwd: projectPath,
+                              issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
+                              reason: ghAction.params.reason ?? null,
+                              comment: ghAction.params.comment ?? null,
+                            }))
+                            break
+                          case 'comment_issue': {
+                            const issueCommentBody = ghAction.params.body ?? ''
+                            if (!issueCommentBody.trim()) {
+                              throw new Error('comment_issue requires non-empty body parameter')
+                            }
+                            ghResult = JSON.stringify(await invoke('gh_issue_comment', {
+                              cwd: projectPath,
+                              issueNumber: parseInt(ghAction.params.issue_number ?? '0', 10),
+                              body: issueCommentBody,
+                            }))
+                            break
+                          }
                           case 'run_bash':
                             ghResult = JSON.stringify(await invoke('run_bash', {
                               cwd: projectPath,
                               command: ghAction.params.command ?? '',
                             }))
                             break
-=======
                           case 'read_file': {
                             // Read file content so agent can generate accurate codeDiff
                             const filePath = ghAction.params.path ?? ''
@@ -3391,7 +3405,6 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             })
                             break
                           }
->>>>>>> origin/main
                           default:
                             ghResult = `Unknown action: ${ghAction.type}`
                         }
@@ -3418,7 +3431,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                           },
                         })
                         // Knowledge sharing: save PR/Issue comment data for cross-cycle reference
-                        if (ghAction.type === 'view_pr_comments' || ghAction.type === 'comment_pr' || ghAction.type === 'view_issue_comments') {
+                        if (ghAction.type === 'view_pr_comments' || ghAction.type === 'comment_pr' || ghAction.type === 'view_issue_comments' || ghAction.type === 'comment_issue' || ghAction.type === 'close_issue') {
                           get().elonAddEvidence({
                             id: crypto.randomUUID(),
                             type: 'terminal',
@@ -3522,8 +3535,9 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                     verdict: 'failed',
                   })
 
-                  // Check credential errors — don't retry these
-                  const needsInput = /api.?key|credential|auth|token|secret|password|unauthorized|403|401/i.test(errMsg)
+                  // Check credential errors — only trigger for genuinely missing keys
+                  // (e.g. "XAI_API_KEY not found in ~/.snailer/.env"), NOT for generic auth/token errors from APIs
+                  const needsInput = /not found in ~\/.snailer\/.env|Failed to read ~\/.snailer\/.env/i.test(errMsg)
                   if (needsInput) {
                     const inputValue = await get().agentRequestInput({
                       agentId,

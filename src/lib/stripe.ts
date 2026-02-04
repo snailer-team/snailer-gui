@@ -1,5 +1,5 @@
+import type { Stripe } from '@stripe/stripe-js';
 import { loadStripe } from '@stripe/stripe-js';
-import { useElonStore } from './store';
 
 const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
 
@@ -36,7 +36,7 @@ export const PLANS: SubscriptionPlan[] = [
 ];
 
 export class StripeService {
-  private stripe: any;
+  private stripe: Stripe | null = null;
 
   async initialize() {
     this.stripe = await stripePromise;
@@ -59,9 +59,10 @@ export class StripeService {
       });
 
       const session = await response.json();
-      
+
       if (!this.stripe) await this.initialize();
-      
+      if (!this.stripe) throw new Error('Stripe failed to initialize');
+
       const { error } = await this.stripe.redirectToCheckout({
         sessionId: session.id,
       });
@@ -85,3 +86,7 @@ export class StripeService {
     
     const { url } = await response.json();
     window.location.href = url;
+  }
+}
+
+export const stripeService = new StripeService();

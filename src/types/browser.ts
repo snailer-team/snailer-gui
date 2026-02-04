@@ -15,13 +15,13 @@ export interface BrowserAction {
   timeout?: number;
   expectedOutput?: {
     format: 'json' | 'text' | 'html';
-    schema?: any;
+    schema?: unknown;
   };
 }
 
 export interface BrowserResult {
   success: boolean;
-  data?: any;
+  data?: unknown;
   error?: string;
   latencyMs: number;
 }
@@ -29,21 +29,21 @@ export interface BrowserResult {
 export interface ToolConfig {
   name: string;
   type: 'browser' | 'file-system' | 'api-client';
-  config: any;
+  config: unknown;
 }
 
 export interface ToolAction {
   command: string;
-  parameters?: Record<string, any>;
+  parameters?: Record<string, unknown>;
   expectedOutput?: {
     format: 'json' | 'text';
-    schema?: any;
+    schema?: unknown;
   };
 }
 
 export interface ToolResult {
   success: boolean;
-  data?: any;
+  data?: unknown;
   error?: string;
   latencyMs: number;
   toolName: string;
@@ -52,3 +52,5 @@ export interface ToolResult {
 export interface AgentToolIntegration {
   agentId: string;
   availableTools: string[];
+  permissions: Record<string, boolean>;
+}

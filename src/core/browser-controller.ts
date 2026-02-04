@@ -1,4 +1,4 @@
-import { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
+import type { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
 import { JsonValidator } from '../utils/json-validator';
 
 export class BrowserController {
@@ -20,7 +20,7 @@ export class BrowserController {
       }
 
       const result = await this.performAction(action);
-      
+
       // Validate JSON response if expected
       if (result.data && action.expectedOutput?.format === 'json') {
         const validJson = this.validator.validateAndFix(result.data);
@@ -35,7 +35,7 @@ export class BrowserController {
     } catch (error) {
       return {
         success: false,
-        error: error.message,
+        error: error instanceof Error ? error.message : 'Unknown error',
         latencyMs: Date.now() - startTime,
         data: null
       };
@@ -87,3 +87,8 @@ export class BrowserController {
   getMetrics() {
     return { actionsExecuted: 0, successRate: 100 };
   }
+
+  getConfig() {
+    return this.config;
+  }
+}

@@ -115,7 +115,7 @@ export const ELON_AGENTS: ElonAgent[] = [
     autonomyLevel: 'high',
     iterationCycle: '4h',
     firstPrinciples: [
-      'Why isn’t it done already?',
+      `Why isn't it done already?`,
       'Make requirements less dumb (challenge first)',
       'Delete unnecessary parts',
       'Simplify & optimize',
@@ -225,7 +225,7 @@ export const ELON_AGENTS: ElonAgent[] = [
     triadRole: 'engineer',
     autonomyLevel: 'full',
     iterationCycle: '1h',
-    firstPrinciples: ['Why isn’t it done already?', 'Delete unnecessary parts', 'Accelerate cycle time'],
+    firstPrinciples: [`Why isn't it done already?`, 'Delete unnecessary parts', 'Accelerate cycle time'],
     ownership: ['Implementation throughput', 'Bug fixes', 'Refactors that remove bottlenecks'],
   },
   {
@@ -245,35 +245,6 @@ export const ELON_AGENTS: ElonAgent[] = [
   {
     id: 'qa',
     category: 'Engineering',
-<<<<<<< HEAD
-<<<<<<< HEAD
-    title: 'QA Engineer',
-    subtitle: 'Quality gate: lint, build, test verification before merge',
-    controls: ['repo', 'terminal'],
-    loop: [
-      'Observe: PR changes + agent outputs',
-      'Plan: verification checklist (lint → build → test)',
-      'Act: run checks, block if failing, request fixes',
-      'Evaluate: all gates green → approve',
-    ],
-    snailerNotes: [
-      'Gate keeper: nothing merges without passing checks.',
-      'Uses GPT-5.2 for reasoning about test coverage gaps.',
-      'Reports failing checks with fix suggestions.',
-    ],
-    triadRole: 'engineer',
-    autonomyLevel: 'high',
-    iterationCycle: '15m',
-    firstPrinciples: [
-      'No broken code in main',
-      'Lint errors = immediate rejection',
-      'Build must pass before review',
-      'Tests are non-negotiable',
-    ],
-    ownership: ['CI/CD gate', 'Code quality standards', 'PR verification', 'Claude review feedback loop'],
-=======
-=======
->>>>>>> origin/main
     title: 'QA Engineer (xAI Style)',
     subtitle: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy',
     controls: ['repo', 'terminal', 'browser', 'api'],
@@ -285,7 +256,7 @@ export const ELON_AGENTS: ElonAgent[] = [
     ],
     snailerNotes: [
       'xAI talent-dense: 단순 테스트 X, 전체 라이프사이클 관여',
-      'GPT-5.2 high reasoning으로 root cause 분석 + 테스트 갭 식별',
+      'Grok-4로 root cause 분석 + 테스트 갭 식별',
       'Extreme autonomy: 지시 없이 hole fill, 자동화 스크립트 추가',
       'Delete first: 불필요 테스트 10% 이상 삭제 안 하면 삭제 부족',
     ],
@@ -306,10 +277,6 @@ export const ELON_AGENTS: ElonAgent[] = [
       '품질 게이트 & 릴리스 관리 (메트릭 기반)',
       '지속 개선 & 메트릭 (coverage, latency, hallucination rate)',
     ],
-<<<<<<< HEAD
->>>>>>> origin/main
-=======
->>>>>>> origin/main
   },
   {
     id: 'ai-ml',
