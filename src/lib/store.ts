@@ -3009,11 +3009,10 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                       userPrompt: agentUsr,
                     })
                   } else if (agentId === 'qa') {
-                    // QA agent uses GPT-5.2 with high reasoning for quality gate decisions
-                    llmResponse = await invoke<LlmCompletionResponse>('openai_gpt52_completion', {
-                      systemPrompt: agentSys,
-                      userPrompt: agentUsr,
-                      reasoningEffort: 'high',
+                    // QA agent uses Grok-4 for quality gate decisions
+                    llmResponse = await invoke<LlmCompletionResponse>('xai_chat_completion', {
+                      system_prompt: agentSys,
+                      user_prompt: agentUsr,
                     })
                   } else {
                     llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {

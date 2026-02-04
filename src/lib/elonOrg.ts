@@ -256,7 +256,7 @@ export const ELON_AGENTS: ElonAgent[] = [
     ],
     snailerNotes: [
       'xAI talent-dense: 단순 테스트 X, 전체 라이프사이클 관여',
-      'GPT-5.2 high reasoning으로 root cause 분석 + 테스트 갭 식별',
+      'Grok-4로 root cause 분석 + 테스트 갭 식별',
       'Extreme autonomy: 지시 없이 hole fill, 자동화 스크립트 추가',
       'Delete first: 불필요 테스트 10% 이상 삭제 안 하면 삭제 부족',
     ],
