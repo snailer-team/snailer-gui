@@ -4,18 +4,25 @@ export interface UrlValidationResult {
 }
 
 export class SecurityGuard {
+<<<<<<< HEAD
   // Reserved for future production domain whitelist
   private readonly _allowedDomains = [
+=======
+  private readonly ALLOWED_DOMAINS = [
+>>>>>>> origin/main
     'localhost',
     '127.0.0.1',
     'snailer.app',
     'api.snailer.app'
   ];
 
+<<<<<<< HEAD
   getAllowedDomains(): string[] {
     return [...this._allowedDomains];
   }
 
+=======
+>>>>>>> origin/main
   private readonly BLOCKED_PROTOCOLS = [
     'file:',
     'ftp:',
@@ -41,11 +48,31 @@ export class SecurityGuard {
         };
       }
 
+<<<<<<< HEAD
       // Note: Domain whitelist check disabled for now
       // In production, would validate against ALLOWED_DOMAINS
 
       return { isValid: true };
     } catch {
+=======
+      // Check domain whitelist for production
+      if (process.env.NODE_ENV === 'production') {
+        const isAllowedDomain = this.ALLOWED_DOMAINS.some(domain => 
+          parsedUrl.hostname === domain || 
+          parsedUrl.hostname.endsWith(`.${domain}`)
+        );
+        
+        if (!isAllowedDomain) {
+          return {
+            isValid: false,
+            reason: `Domain not in whitelist: ${parsedUrl.hostname}`
+          };
+        }
+      }
+
+      return { isValid: true };
+    } catch (error) {
+>>>>>>> origin/main
       return {
         isValid: false,
         reason: 'Invalid URL format'
@@ -68,8 +95,12 @@ export class SecurityGuard {
     return symbolRegex.test(symbol.toUpperCase());
   }
 
+<<<<<<< HEAD
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async validatePositionSize(size: number, _symbol?: string): Promise<boolean> {
+=======
+  async validatePositionSize(size: number, symbol: string): Promise<boolean> {
+>>>>>>> origin/main
     // Check for reasonable position sizes
     if (size <= 0 || size > 1000000) {
       return false;
@@ -81,6 +112,7 @@ export class SecurityGuard {
 
   sanitizeInput(input: string): string {
     return input.replace(/[<>"'&]/g, '');
+<<<<<<< HEAD
   }
 
   async validateSize(size: number): Promise<boolean> {
@@ -94,3 +126,5 @@ export class SecurityGuard {
     return true;
   }
 }
+=======
+>>>>>>> origin/main

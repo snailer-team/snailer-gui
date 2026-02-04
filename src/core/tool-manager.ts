@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import type { ToolAction, ToolResult } from '../types/browser';
+=======
+import { ToolConfig, ToolAction, ToolResult } from '../types/browser';
+>>>>>>> origin/main
 import { BrowserController } from './browser-controller';
 import { JsonValidator } from '../utils/json-validator';
 
@@ -59,7 +63,11 @@ export class ToolManager {
     } catch (error) {
       return {
         success: false,
+<<<<<<< HEAD
         error: error instanceof Error ? error.message : 'Unknown error',
+=======
+        error: error.message,
+>>>>>>> origin/main
         latencyMs: Date.now() - startTime,
         toolName
       };
@@ -77,6 +85,7 @@ export class ToolManager {
       execute: async (action: ToolAction) => ({ data: { apiCall: true, action } })
     };
   }
+<<<<<<< HEAD
 
   registerTool(tool: any): boolean {
     if (!tool.id || !tool.name || !tool.execute) {
@@ -97,3 +106,5 @@ export class ToolManager {
     return Array.from(this.tools.values());
   }
 }
+=======
+>>>>>>> origin/main

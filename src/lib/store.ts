@@ -3384,7 +3384,7 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             // Read file content so agent can generate accurate codeDiff
                             const filePath = ghAction.params.path ?? ''
                             const fullPath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`
-                            const content = await invoke<string>('fs_read_text', { path: fullPath, max_bytes: 10000 })
+                            const content = await invoke<string>('fs_read_text', { path: fullPath, maxBytes: 10000 })
                             // Return first 5000 chars to avoid context overflow
                             ghResult = JSON.stringify({
                               path: filePath,

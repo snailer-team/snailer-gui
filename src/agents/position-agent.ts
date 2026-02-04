@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 /* eslint-disable @typescript-eslint/no-explicit-any */
+=======
+>>>>>>> origin/main
 import { SecurityGuard } from '../utils/security-guard';
 import { Logger } from '../utils/logger';
 
@@ -86,6 +89,7 @@ export class PositionAgent {
     });
 
     // Size limits
+<<<<<<< HEAD
     checks.push({
       check: 'size-limits',
       passed: await this.securityGuard.validateSize(config.size)
@@ -109,3 +113,5 @@ export class PositionAgent {
     return { success: true };
   }
 }
+=======
+>>>>>>> origin/main

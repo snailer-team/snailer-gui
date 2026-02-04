@@ -1,4 +1,7 @@
+<<<<<<< HEAD
 /* eslint-disable @typescript-eslint/no-explicit-any, no-control-regex */
+=======
+>>>>>>> origin/main
 export class JsonValidator {
   validateAndFix(data: any): any {
     try {
@@ -10,10 +13,17 @@ export class JsonValidator {
       // If it's a string, try to parse as JSON
       if (typeof data === 'string') {
         const trimmed = data.trim();
+<<<<<<< HEAD
 
         // Fix common JSON issues
         const fixed = this.fixCommonJsonIssues(trimmed);
 
+=======
+        
+        // Fix common JSON issues
+        let fixed = this.fixCommonJsonIssues(trimmed);
+        
+>>>>>>> origin/main
         try {
           const parsed = JSON.parse(fixed);
           return this.sanitizeObject(parsed);
@@ -24,7 +34,11 @@ export class JsonValidator {
       }
 
       return data;
+<<<<<<< HEAD
     } catch {
+=======
+    } catch (error) {
+>>>>>>> origin/main
       return { error: 'JSON validation failed', raw: data };
     }
   }
@@ -61,4 +75,7 @@ export class JsonValidator {
     // Basic schema validation - could be extended with JSON Schema
     return typeof schema === 'object' && schema !== null;
   }
+<<<<<<< HEAD
 }
+=======
+>>>>>>> origin/main

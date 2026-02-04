@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import type { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
 import { JsonValidator } from '../utils/json-validator';
 
@@ -6,6 +7,17 @@ export class BrowserController {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(_config: BrowserConfig) {
+=======
+import { BrowserConfig, BrowserAction, BrowserResult } from '../types/browser';
+import { JsonValidator } from '../utils/json-validator';
+
+export class BrowserController {
+  private config: BrowserConfig;
+  private validator: JsonValidator;
+
+  constructor(config: BrowserConfig) {
+    this.config = config;
+>>>>>>> origin/main
     this.validator = new JsonValidator();
   }
 
@@ -34,7 +46,11 @@ export class BrowserController {
     } catch (error) {
       return {
         success: false,
+<<<<<<< HEAD
         error: error instanceof Error ? error.message : 'Unknown error',
+=======
+        error: error.message,
+>>>>>>> origin/main
         latencyMs: Date.now() - startTime,
         data: null
       };
@@ -86,6 +102,7 @@ export class BrowserController {
   getMetrics() {
     return { actionsExecuted: 0, successRate: 100 };
   }
+<<<<<<< HEAD
 
   async initialize(): Promise<BrowserResult> {
     return { success: true, data: { initialized: true }, latencyMs: 0 };
@@ -107,3 +124,5 @@ export class BrowserController {
     return { success: true, data: { navigated: true, url }, latencyMs: 0 };
   }
 }
+=======
+>>>>>>> origin/main
