@@ -33,6 +33,7 @@ export class RateLimiter {
 
   getRequestCount(userId: string): number {
     const now = Date.now();
+<<<<<<< HEAD
     const userRequests = this.requests.get(userId) || [];
     return userRequests.filter(
       timestamp => now - timestamp < this.config.windowMs
@@ -43,3 +44,5 @@ export class RateLimiter {
     this.requests.delete(userId);
   }
 }
+=======
+>>>>>>> origin/main

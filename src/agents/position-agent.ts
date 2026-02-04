@@ -85,6 +85,7 @@ export class PositionAgent {
     });
 
     // Size limits
+<<<<<<< HEAD
     checks.push({
       check: 'size-limit',
       passed: await this.securityGuard.validatePositionSize(config.size, config.symbol)
@@ -98,3 +99,5 @@ export class PositionAgent {
     return `POS-${Date.now()}-${config.symbol}`;
   }
 }
+=======
+>>>>>>> origin/main

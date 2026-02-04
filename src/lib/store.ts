@@ -2949,6 +2949,19 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                           }
                         } catch { /* Comments unavailable */ }
 
+                        // Add conflict file information for CONFLICTING PRs
+                        if (pr.mergeable === 'CONFLICTING') {
+                          try {
+                            const conflictInfo = await invoke<{ stdout: string }>('run_bash', {
+                              cwd: projectPath,
+                              command: `git fetch origin main ${pr.headBranch} 2>/dev/null; git diff --name-only origin/main...origin/${pr.headBranch}`,
+                            })
+                            if (conflictInfo.stdout) {
+                              prDetail += `\n\nConflict Files (files diverged from main):\n${conflictInfo.stdout}`
+                            }
+                          } catch { /* conflict info unavailable */ }
+                        }
+
                         actionableDetails.push(prDetail)
                       }
                     }

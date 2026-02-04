@@ -199,6 +199,8 @@ GitHub PR/Issue Management:
 - PR blocked by branch protection or required checks → broadcast to SWE: "fix branch protection issue on PR #X"
 - PR with unresolved review comments → broadcast to SWE: "address review feedback on PR #X"
 - CI_PASSED + APPROVED PR → broadcast to SWE/QA: "merge PR #X"
+- ⚠️CONFLICT PR → 최우선 처리! broadcast to SWE: "resolve merge conflict on PR #X — checkout branch, merge main, fix conflicts"
+- CONFLICT 해결 후에도 CI_FAILED → SWE에게 재수정 요청
 - Open Issues with user feedback → broadcast to PM: "analyze and prioritize Issue #X"
 
 Issue Lifecycle (Delete First):
@@ -584,12 +586,18 @@ PR 생성 후 GitHub Actions claude-pr-review가 코멘트를 달면:
 2. 수정 후 같은 브랜치에 commit_push → CI 재실행 대기
 3. 모든 MUST FIX/SHOULD FIX 해결 확인
 
-[Conflict Resolution - AUTONOMOUS]
-PR에서 merge conflict 발생 시:
-1. githubActions: [{type: "run_bash", params: {command: "git fetch origin main && git merge origin/main"}}]
-2. conflict 파일 확인 → codeDiff로 conflict 해결 (<<<< ==== >>>> 마커 제거)
-3. 해결 후 commit_push → CI 재실행
-4. conflict 해결 불가 시 → create_issue로 보고 + CEO에게 directMessage
+[Conflict Prevention & Resolution - AUTONOMOUS]
+PREVENTION (매 commit 전):
+- run_bash: "git fetch origin main && git diff --stat origin/main...HEAD"
+- 변경 파일이 main에서도 수정됐으면: 먼저 merge main → resolve → 그 다음 commit
+
+RESOLUTION (conflict 발생 시):
+1. run_bash: "git fetch origin main && git merge origin/main --no-commit || true"
+2. run_bash: "git diff --name-only --diff-filter=U" → 충돌 파일 목록
+3. 각 파일: read_file → codeDiff로 마커 제거 → 최종 코드 확정
+4. run_bash: "git add -A && git commit -m 'resolve merge conflicts with main'"
+5. commit_push → CI 확인
+6. 해결 불가 → create_issue + CEO directMessage
 
 [Self-Merge Rules]
 QA agent가 approve하고 CI 모두 통과하면:
@@ -608,11 +616,21 @@ CEO 승인 없이 자율 머지 가능한 조건:
 githubActions: [{type: "create_branch", params: {branch_name: "<PR의 headBranch>"}}]
 → 브랜치가 이미 존재하면 자동으로 checkout됨
 
-1. ⚠️CONFLICT PR:
+1. ⚠️CONFLICT PR (Priority: HIGHEST — merge가 불가하므로 즉시 해결):
    a. create_branch로 PR 브랜치 checkout
-   b. run_bash: "git fetch origin main && git merge origin/main"
-   c. read_file로 conflict 파일 읽기 → codeDiff로 conflict 해결 (<<<< ==== >>>> 마커 제거)
-   d. commit_push → CI 재실행
+   b. run_bash: "git fetch origin main && git merge origin/main --no-commit || true"
+      → 결과에서 "CONFLICT" 포함된 파일 목록 확인
+   c. run_bash: "git diff --name-only --diff-filter=U" → 실제 충돌 파일 목록 조회
+   d. 각 충돌 파일에 대해:
+      - read_file로 파일 내용 읽기 (<<<<<<< HEAD / ======= / >>>>>>> 마커 포함)
+      - HEAD 버전 = 현재 브랜치 코드 (보존 우선)
+      - incoming 버전 = main 브랜치 코드
+      - 판단: 두 변경이 같은 기능이면 최신 코드 선택, 다른 기능이면 둘 다 포함
+      - codeDiff로 conflict 마커(<<<<<<< ======= >>>>>>>)를 제거한 최종 코드 생성
+   e. run_bash: "git add -A" (resolved 파일 staging)
+   f. commit_push로 해결된 코드 푸시
+   g. run_bash: "pnpm lint && pnpm build && pnpm test" → 검증
+   ⚠️ FAIL 시: conflict 해결 불가 → create_issue + CEO에게 directMessage
 
 2. 🔄REVIEW_CHANGES PR:
    a. create_branch로 PR 브랜치 checkout
