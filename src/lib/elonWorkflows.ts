@@ -327,32 +327,7 @@ export const SWE_3_WORKFLOW: AgentWorkflow = {
 
 export const QA_WORKFLOW: AgentWorkflow = {
   agentId: 'qa',
-<<<<<<< HEAD
-<<<<<<< HEAD
-  name: 'QA Engineer (GPT-5.2)',
-  description: 'Quality gate guardian: lint → build → test 필수 통과 후에만 PR 승인. Claude 리뷰 피드백 루프 관리',
-  xaiPrinciples: [
-    'Gate keeper: 모든 코드는 lint/build/test 통과 필수. 예외 없음',
-    'Fast feedback: 실패 즉시 SWE에게 구체적 수정 지시',
-    'Claude review loop: PR 리뷰 코멘트 수집 → SWE에게 전달 → 수정 확인',
-    'No broken main: main 브랜치는 항상 green 유지',
-    'Evidence-based approval: 모든 체크 통과 증거와 함께 승인',
-    'GPT-5.2 reasoning: 복잡한 테스트 커버리지 갭 분석에 xhigh reasoning 활용',
-  ],
-  revenueImpact: 'Production 버그 방지로 유저 신뢰 + 매출 보호, 핫픽스 비용 절감',
-  steps: [
-    { phase: 'observe', action: 'PR/코드 변경 감지', detail: 'SWE 에이전트 출력 + GitHub PR 이벤트 모니터링', duration: 500 },
-    { phase: 'observe', action: 'Claude 리뷰 코멘트 수집', detail: 'GitHub Action claude-pr-review 결과 파싱', duration: 800 },
-    { phase: 'plan', action: '검증 체크리스트 생성', detail: '1. pnpm lint (0 errors 필수) 2. pnpm build (성공 필수) 3. pnpm test (all pass 필수)', duration: 600 },
-    { phase: 'act', action: 'Lint 실행 + 결과 검증', detail: 'lint 에러 시 SWE에게 구체적 파일:라인 + 수정 방법 전달', duration: 1500, github: { type: 'ci', title: 'QA: lint check' } },
-    { phase: 'act', action: 'Build 실행 + 결과 검증', detail: 'build 실패 시 타입 에러/import 문제 분석 → SWE 수정 지시', duration: 2000, github: { type: 'ci', title: 'QA: build check' } },
-    { phase: 'act', action: 'Test 실행 + 결과 검증', detail: '테스트 실패 시 실패 케이스 + 예상 원인 분석 → SWE 전달', duration: 2500, github: { type: 'ci', title: 'QA: test check' } },
-    { phase: 'act', action: 'Claude 리뷰 피드백 처리', detail: '리뷰 코멘트 중 수정 필요 항목 → SWE에게 구체적 수정 요청', duration: 1500 },
-    { phase: 'evaluate', action: 'Gate 판정', detail: '모든 체크 통과 → APPROVE + merge 허용 / 하나라도 실패 → REJECT + 수정 요청', duration: 800, output: 'Lint: PASS, Build: PASS, Test: PASS → PR Approved' },
-=======
-=======
->>>>>>> origin/main
-  name: 'QA Engineer (xAI Style · GPT-5.2)',
+  name: 'QA Engineer (xAI Style · Grok-4)',
   description: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy, daily iterations',
   xaiPrinciples: [
     'First Principles: "왜 이 테스트가 필요한가?" "기본 가정 틀렸을 가능성은?" 부터 시작',
@@ -375,10 +350,6 @@ export const QA_WORKFLOW: AgentWorkflow = {
     { phase: 'act', action: 'Claude 리뷰 피드백 처리', detail: '리뷰 코멘트 분류: MUST FIX (보안/버그) → SWE 즉시 수정 요청', duration: 1000 },
     { phase: 'evaluate', action: '메트릭 기반 품질 게이트', detail: 'coverage 95%+, latency <200ms, hallucination rate 추적. 통과 → APPROVE', duration: 800, output: 'Coverage: 96%, Lint: PASS, Build: PASS, Test: 47/47 → Approved' },
     { phase: 'evaluate', action: 'Delete & Improve', detail: '불필요 테스트 10% 삭제 확인. "yesterday보다 나아졌나?" self-check', duration: 600, output: 'Deleted 3 flaky tests, Added 5 high-leverage tests' },
-<<<<<<< HEAD
->>>>>>> origin/main
-=======
->>>>>>> origin/main
   ],
 }
 

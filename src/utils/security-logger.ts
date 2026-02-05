@@ -1,4 +1,5 @@
-export type SecurityEventType = 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+export type SecurityEventType =
   | 'RATE_LIMIT_EXCEEDED'
   | 'INVALID_REQUEST'
   | 'POSITION_SIZE_EXCEEDED'
@@ -35,8 +36,24 @@ export class SecurityLogger {
     };
 
     this.events.push(event);
-    
+
     // Rotate events if we exceed max
     if (this.events.length > this.maxEvents) {
       this.events = this.events.slice(-this.maxEvents);
     }
+
+    // Log to console for debugging
+    console.log(`[Security] ${type}:`, event);
+  }
+
+  getEvents(type?: SecurityEventType): SecurityEvent[] {
+    if (type) {
+      return this.events.filter(e => e.type === type);
+    }
+    return [...this.events];
+  }
+
+  clearEvents(): void {
+    this.events = [];
+  }
+}

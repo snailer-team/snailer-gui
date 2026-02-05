@@ -52,7 +52,7 @@ export class PositionAgent {
     try {
       // Simulate position execution
       const positionId = await this.createPosition(config);
-      
+
       this.logger.info(`Position created successfully: ${positionId}`);
       return {
         success: true,
@@ -85,3 +85,16 @@ export class PositionAgent {
     });
 
     // Size limits
+    checks.push({
+      check: 'size-limit',
+      passed: await this.securityGuard.validatePositionSize(config.size, config.symbol)
+    });
+
+    return checks;
+  }
+
+  private async createPosition(config: PositionConfig): Promise<string> {
+    // Simulate position creation
+    return `POS-${Date.now()}-${config.symbol}`;
+  }
+}

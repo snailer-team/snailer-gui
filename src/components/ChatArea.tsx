@@ -88,7 +88,7 @@ export function ChatArea() {
   }, [session?.messages.length, lastContent, session?.agentEvents.length])
 
   // Format model name for display
-  const modelDisplay = model?.replace('claude-', '').replace('-20', ' ').replace(/(\d)/, ' $1') || 'Opus 4.5'
+  const modelDisplay = model?.replace('claude-', '').replace('-20', ' ').replace(/(\d)/, ' $1') || 'Opus 4.6'
 
   return (
     <div className="h-full flex flex-col bg-transparent">

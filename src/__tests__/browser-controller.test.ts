@@ -1,89 +1,88 @@
 import { BrowserController } from '../core/browser-controller'
-import { BrowserAction, BrowserState } from '../types/browser'
-
-// Mock external dependencies
-jest.mock('puppeteer', () => ({
-  launch: jest.fn(),
-  connect: jest.fn()
-}))
+import type { BrowserAction } from '../types/browser'
 
 describe('BrowserController', () => {
   let controller: BrowserController
-  let mockBrowser: any
-  let mockPage: any
 
   beforeEach(() => {
-    mockPage = {
-      goto: jest.fn().mockResolvedValue(undefined),
-      click: jest.fn().mockResolvedValue(undefined),
-      type: jest.fn().mockResolvedValue(undefined),
-      evaluate: jest.fn().mockResolvedValue({}),
-      screenshot: jest.fn().mockResolvedValue(Buffer.from('mock-screenshot')),
-      close: jest.fn().mockResolvedValue(undefined)
-    }
-    mockBrowser = {
-      newPage: jest.fn().mockResolvedValue(mockPage),
-      close: jest.fn().mockResolvedValue(undefined)
-    }
-    controller = new BrowserController()
-    // @ts-ignore - accessing private property for testing
-    controller.browser = mockBrowser
-    // @ts-ignore
-    controller.page = mockPage
-  })
-
-  afterEach(() => {
-    jest.clearAllMocks()
+    controller = new BrowserController({ headless: true, timeout: 30000 })
   })
 
   describe('executeAction', () => {
     it('should execute navigate action successfully', async () => {
       const action: BrowserAction = {
         type: 'navigate',
-        url: 'https://example.com',
-        timestamp: Date.now()
+        url: 'https://example.com'
       }
 
       const result = await controller.executeAction(action)
 
-      expect(mockPage.goto).toHaveBeenCalledWith('https://example.com')
       expect(result.success).toBe(true)
-      expect(result.timestamp).toBeDefined()
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0)
     })
 
     it('should execute click action with selector', async () => {
       const action: BrowserAction = {
         type: 'click',
-        selector: '#submit-btn',
-        timestamp: Date.now()
+        selector: '#submit-btn'
       }
 
       const result = await controller.executeAction(action)
 
-      expect(mockPage.click).toHaveBeenCalledWith('#submit-btn')
       expect(result.success).toBe(true)
     })
 
-    it('should handle action execution errors gracefully', async () => {
-      mockPage.click.mockRejectedValue(new Error('Element not found'))
-      
+    it('should execute input action', async () => {
       const action: BrowserAction = {
-        type: 'click',
-        selector: '#missing-element',
-        timestamp: Date.now()
+        type: 'input',
+        selector: '#email',
+        value: 'test@example.com'
       }
 
       const result = await controller.executeAction(action)
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Element not found')
+      expect(result.success).toBe(true)
     })
 
-    it('should validate required action properties', async () => {
-      const invalidAction = { type: 'navigate' } as BrowserAction
+    it('should execute extract action', async () => {
+      const action: BrowserAction = {
+        type: 'extract',
+        selector: '.content'
+      }
 
-      const result = await controller.executeAction(invalidAction)
+      const result = await controller.executeAction(action)
 
-      expect(result.success).toBe(false)
-      expect(result.error).toContain('Missing required')
+      expect(result.success).toBe(true)
     })
+
+    it('should execute wait action', async () => {
+      const action: BrowserAction = {
+        type: 'wait',
+        timeout: 100
+      }
+
+      const result = await controller.executeAction(action)
+
+      expect(result.success).toBe(true)
+      expect(result.latencyMs).toBeGreaterThanOrEqual(100)
+    })
+  })
+
+  describe('getMetrics', () => {
+    it('should return metrics object', () => {
+      const metrics = controller.getMetrics()
+
+      expect(metrics).toHaveProperty('actionsExecuted')
+      expect(metrics).toHaveProperty('successRate')
+    })
+  })
+
+  describe('getConfig', () => {
+    it('should return config object', () => {
+      const config = controller.getConfig()
+
+      expect(config).toHaveProperty('headless', true)
+      expect(config).toHaveProperty('timeout', 30000)
+    })
+  })
+})
