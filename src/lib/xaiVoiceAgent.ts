@@ -1,13 +1,35 @@
-import type { InvokeArgs } from '@tauri-apps/api/tauri';
-
 export interface XaiVoiceConfig {
   sourceLang: string;
   targetLang: string;
   xaiApiKey: string;
 }
 
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  0: { transcript: string };
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onerror: ((event: { error?: unknown }) => void) | null;
+  onend: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void | Promise<void>) | null;
+  start: () => void;
+  stop: () => void;
+};
+
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
 export class XaiVoiceAgent {
-  private recognition?: SpeechRecognition;
+  private recognition?: SpeechRecognitionLike;
   private synth = window.speechSynthesis;
   private config: XaiVoiceConfig;
   private isActive = false;
@@ -17,7 +39,8 @@ export class XaiVoiceAgent {
   }
 
   async start() {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const w = window as unknown as { SpeechRecognition?: SpeechRecognitionCtor; webkitSpeechRecognition?: SpeechRecognitionCtor };
+    const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       throw new Error('SpeechRecognition not supported in this browser');
     }
@@ -43,7 +66,7 @@ export class XaiVoiceAgent {
       }
     };
 
-    this.recognition.onresult = async (event: SpeechRecognitionEvent) => {
+    this.recognition.onresult = async (event) => {
       let finalTranscript = '';
       for (let i = event.resultIndex; i < event.results.length; ++i) {
         const result = event.results[i];
@@ -100,3 +123,5 @@ export class XaiVoiceAgent {
   stop() {
     this.isActive = false;
     this.recognition?.stop();
+  }
+}

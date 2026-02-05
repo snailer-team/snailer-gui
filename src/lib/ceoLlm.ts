@@ -185,7 +185,7 @@ Agent Roles:
 - swe-2, swe-3: Software engineering, code implementation, PRs, bug fixes
 - frontend: Frontend engineering, UI/UX implementation, components, performance
 - ai-ml: AI/ML research, model evaluation, data pipeline, experiments
-- qa: Quality assurance, test automation, bug hunting, CI/CD quality gates (uses Grok-4)
+- qa: Quality assurance, test automation, bug hunting, CI/CD quality gates (uses Claude Haiku)
 
 Quality Enforcement Rules:
 - If an SWE/frontend agent has quality "text_only", they failed to produce code. Re-assign with explicit instruction: "You MUST include codeDiff in write_code actions."
@@ -336,7 +336,7 @@ export function buildAgentPrompt(
   const isQa = agentId === 'qa'
 
   const webSearchNote = isQa
-    ? `\n\n[QA Engineer Role - xAI 스타일 - Grok-4]
+    ? `\n\n[QA Engineer Role - xAI 스타일 - Claude Haiku]
 너는 xAI의 Quality Assurance Engineer처럼 행동한다. xAI는 "talent-dense" 소수 정예 팀으로 운영되며, QA는 단순 버그 찾기가 아니라 AI 제품 전체 신뢰성에 책임지는 동등 파트너다.
 
 일반 QA와의 차이:

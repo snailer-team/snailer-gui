@@ -2509,6 +2509,12 @@ export const useAppStore = create<AppState>()(
                 llmResp = await invoke<LlmCompletionResponse>('xai_web_search_completion', { systemPrompt, userPrompt })
               } else if (agentId.startsWith('swe') || agentId === 'frontend') {
                 llmResp = await invoke<LlmCompletionResponse>('anthropic_chat_completion', { systemPrompt, userPrompt })
+              } else if (agentId === 'qa') {
+                llmResp = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
+                  systemPrompt,
+                  userPrompt,
+                  model: 'claude-haiku-4-5-20251001',
+                })
               } else {
                 llmResp = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt, userPrompt })
               }
@@ -3044,13 +3050,13 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                       systemPrompt: agentSys,
                       userPrompt: agentUsr,
                     })
-	                  } else if (agentId === 'qa') {
-	                    // QA agent uses Grok-4 for quality gate decisions
-	                    llmResponse = await invoke<LlmCompletionResponse>('xai_chat_completion', {
-	                      systemPrompt: agentSys,
-	                      userPrompt: agentUsr,
-	                    })
-	                  } else {
+                  } else if (agentId === 'qa') {
+                    llmResponse = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                      model: 'claude-haiku-4-5-20251001',
+                    })
+                  } else {
                     llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {
                       systemPrompt: agentSys,
                       userPrompt: agentUsr,

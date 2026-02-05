@@ -327,7 +327,7 @@ export const SWE_3_WORKFLOW: AgentWorkflow = {
 
 export const QA_WORKFLOW: AgentWorkflow = {
   agentId: 'qa',
-  name: 'QA Engineer (xAI Style · Grok-4)',
+  name: 'QA Engineer (xAI Style · Claude Haiku)',
   description: 'Talent-dense QA: 전체 제품 라이프사이클 관여, First Principles 테스트, extreme autonomy, daily iterations',
   xaiPrinciples: [
     'First Principles: "왜 이 테스트가 필요한가?" "기본 가정 틀렸을 가능성은?" 부터 시작',

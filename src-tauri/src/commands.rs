@@ -2326,15 +2326,16 @@ pub async fn xai_web_search_completion(
     .map_err(|e| format!("xAI web search task failed: {}", e))?
 }
 
-/// Call Anthropic Messages API directly with claude-opus-4-6 model (used by SWE agents).
+/// Call Anthropic Messages API directly (used by SWE/frontend/QA agents).
 #[tauri::command]
 pub async fn anthropic_chat_completion(
     system_prompt: String,
     user_prompt: String,
+    model: Option<String>,
 ) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let api_key = read_env_key("ANTHROPIC_API_KEY")?;
-        let model_name = "claude-opus-4-6";
+        let api_key = read_env_key("ANTHROPIC_API_KEY").or_else(|_| read_env_key("CLAUDE_API_KEY"))?;
+        let model_name = model.unwrap_or_else(|| "claude-opus-4-6".to_string());
 
         let body = serde_json::json!({
             "model": model_name,
@@ -2381,7 +2382,7 @@ pub async fn anthropic_chat_completion(
 
         Ok(LlmCompletionResponse {
             content: content.to_string(),
-            model: model_name.to_string(),
+            model: model_name,
             input_tokens,
             output_tokens,
         })
