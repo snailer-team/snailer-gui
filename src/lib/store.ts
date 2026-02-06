@@ -3241,17 +3241,31 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                     outputQuality = agentOutput.actions.length >= 1 ? 'actionable' : 'text_only'
                   }
 
-                  // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
-                  if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
-                    // First check if git remote exists (git_status_summary returns a string)
-                    let hasGitRemote = false
-                    try {
-                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
-                      // Check if remote info exists in the status string
-                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
-                    } catch {
-                      hasGitRemote = false
-                    }
+	                  // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
+	                  if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
+	                    // First check if git remote exists (git_status_summary returns a string)
+	                    let hasGitRemote = false
+	                    let hasUnmergedPaths = false
+	                    const unmergedPaths: string[] = []
+	                    try {
+	                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
+	                      // Check if remote info exists in the status string
+	                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
+
+	                      // Detect merge conflicts from `git status --short` output embedded in summary.
+	                      // We block branch switching / pushing until conflicts are resolved, but still allow `read_file` to proceed.
+	                      const changeLines = gitStatusStr.split('\n')
+	                      for (const line of changeLines) {
+	                        const trimmed = line.trimEnd()
+	                        const m = trimmed.match(/^(UU|AU|UA|DU|UD)\s+(.+)$/)
+	                        if (m) unmergedPaths.push(m[2].trim())
+	                      }
+	                      if (unmergedPaths.length > 0) {
+	                        hasUnmergedPaths = true
+	                      }
+	                    } catch {
+	                      hasGitRemote = false
+	                    }
 
                     if (!hasGitRemote) {
                       // Log but don't block - allow local git operations
@@ -3277,14 +3291,25 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                           duration: 0,
                         },
                       })
-                    } else {
-                    // Process GitHub actions only if remote exists
-                    for (const ghAction of agentOutput.githubActions) {
-                      // High-risk write ops that need CEO approval
-                      if (ghAction.requiresCeoApproval && ['merge_pr'].includes(ghAction.type)) {
-                        set((st) => ({
-                          elonX: {
-                            ...st.elonX,
+	                    } else {
+	                    // Process GitHub actions only if remote exists
+	                    for (const ghAction of agentOutput.githubActions) {
+	                      if (hasUnmergedPaths && ['create_branch', 'commit_push', 'merge_pr', 'create_pr'].includes(ghAction.type)) {
+	                        const conflictSummary = unmergedPaths.length > 0 ? `Unmerged files: ${unmergedPaths.join(', ')}` : 'Unmerged files detected'
+	                        get().elonAddAgentLog(agentId, {
+	                          timestamp: Date.now(),
+	                          type: 'error',
+	                          message: `GitHub ${ghAction.type} skipped: merge conflicts present`,
+	                          detail: `${conflictSummary}. Resolve conflicts first (use read_file + write_code codeDiff), then retry.`,
+	                        })
+	                        continue
+	                      }
+
+	                      // High-risk write ops that need CEO approval
+	                      if (ghAction.requiresCeoApproval && ['merge_pr'].includes(ghAction.type)) {
+	                        set((st) => ({
+	                          elonX: {
+	                            ...st.elonX,
                             elonApprovals: [
                               ...st.elonX.elonApprovals,
                               {

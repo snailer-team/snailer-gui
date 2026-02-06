@@ -1036,10 +1036,10 @@ pub async fn fs_list_tree(root: String, max_depth: usize) -> Result<Vec<FileNode
 }
 
 #[tauri::command]
-pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, String> {
+pub async fn fs_read_text(path: String, max_bytes: Option<usize>) -> Result<String, String> {
     let path = PathBuf::from(path);
     let data = std::fs::read(&path).map_err(|e| format!("read failed: {}", e))?;
-    let max = max_bytes.min(data.len()).max(0);
+    let max = max_bytes.unwrap_or(1_000_000).min(data.len()).max(0);
     let slice = &data[..max];
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
 }
