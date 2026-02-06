@@ -544,15 +544,19 @@ export function SettingsView() {
                 <div className="rounded-xl border border-black/5 bg-white/70 p-3">
                   <div className="text-xs text-black/45">Email</div>
                   <div className="mt-1 text-sm text-black/80">
-                    {userName || userEmail || account?.email || '—'}
+                    {isLoggedIn ? (userName || userEmail || account?.email || '—') : '—'}
                   </div>
                 </div>
                 <div className="rounded-xl border border-black/5 bg-white/70 p-3">
                   <div className="text-xs text-black/45">Plan</div>
                   <div className="mt-1 text-sm text-black/80">
-                    {account?.planName || (account?.planError ? 'Unavailable' : '—')}
-                    {account?.isStarter ? <span className="ml-2 text-xs text-black/50">(Starter)</span> : null}
-                    {account?.isPremium ? <span className="ml-2 text-xs text-black/50">(Premium)</span> : null}
+                    {isLoggedIn ? (
+                      <>
+                        {account?.planName || (account?.planError ? 'Unavailable' : '—')}
+                        {account?.isStarter ? <span className="ml-2 text-xs text-black/50">(Starter)</span> : null}
+                        {account?.isPremium ? <span className="ml-2 text-xs text-black/50">(Premium)</span> : null}
+                      </>
+                    ) : '—'}
                   </div>
                 </div>
               </div>
