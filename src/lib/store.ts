@@ -4,6 +4,7 @@ import { persist } from 'zustand/middleware'
 
 import type { PromptStage, UiEventEnvelope } from './daemon'
 import { DaemonClient } from './daemon'
+import { authService } from './authService'
 import {
   applyElonPromptPrefixWithFrame,
   ensureElonModeItem,
@@ -1706,6 +1707,7 @@ export const useAppStore = create<AppState>()(
           })
 
           set({ daemon: client })
+          authService.setDaemonClient(client)
           await get().refreshSessions()
 
           // Create a local session if none selected.
@@ -1714,6 +1716,7 @@ export const useAppStore = create<AppState>()(
             get().selectSession(id)
           }
         } catch (e) {
+          authService.setDaemonClient(null)
           set({
             connectionStatus: 'error',
             error: e instanceof Error ? e.message : 'connect failed',

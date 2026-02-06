@@ -1,9 +1,11 @@
 /**
  * Auth Service for Snailer GUI
  * Handles login, logout, account switching
+ * Uses daemon WebSocket RPC for device login flow
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import type { DaemonClient } from './daemon'
 
 export interface UserAuth {
   accessToken?: string
@@ -35,12 +37,21 @@ export interface TokenResponse {
 class AuthService {
   private pollAbortController: AbortController | null = null
   private cachedAuth: UserAuth | null = null
+  private daemonClient: DaemonClient | null = null
+
+  setDaemonClient(client: DaemonClient | null) {
+    this.daemonClient = client
+  }
 
   private hasTauri(): boolean {
     return (
       typeof window !== 'undefined' &&
       Boolean((window as unknown as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke)
     )
+  }
+
+  private hasDaemon(): boolean {
+    return this.daemonClient !== null && this.daemonClient.status === 'connected'
   }
 
   private setCachedAuth(auth: UserAuth | null) {
@@ -105,8 +116,24 @@ class AuthService {
   /**
    * Start device login flow
    * Returns device code info for user to complete auth in browser
+   * Uses daemon RPC (auth.createDeviceCode) when connected, falls back to Tauri command
    */
   async startDeviceLogin(): Promise<DeviceCodeResponse> {
+    // Try daemon RPC first (preferred - handles auth server connection internally)
+    if (this.hasDaemon()) {
+      try {
+        const result = await this.daemonClient!.request<DeviceCodeResponse>('auth.createDeviceCode', {
+          clientId: 'snailer-gui',
+          scope: 'read write',
+        })
+        return result
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        throw new Error(`Failed to start device login: ${msg}`)
+      }
+    }
+
+    // Fallback to Tauri command (requires SNAILER_AUTH_ADDR)
     try {
       return await invoke<DeviceCodeResponse>('auth_start_device_login')
     } catch (e) {
@@ -117,6 +144,7 @@ class AuthService {
 
   /**
    * Poll for device token after user completes browser auth
+   * Uses daemon RPC (auth.pollDeviceToken) when connected, falls back to Tauri command
    */
   async pollDeviceToken(
     deviceCode: string,
@@ -128,6 +156,8 @@ class AuthService {
     let attempts = 0
     let currentInterval = interval
 
+    const useDaemon = this.hasDaemon()
+
     while (attempts < maxAttempts) {
       if (this.pollAbortController.signal.aborted) {
         return null
@@ -137,7 +167,19 @@ class AuthService {
       attempts++
 
       try {
-        const result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+        let result: TokenResponse
+
+        if (useDaemon) {
+          // Use daemon RPC
+          result = await this.daemonClient!.request<TokenResponse>('auth.pollDeviceToken', {
+            deviceCode,
+            clientId: 'snailer-gui',
+          })
+        } else {
+          // Fallback to Tauri command
+          result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+        }
+
         onStatus?.('complete')
         const now = Math.floor(Date.now() / 1000)
         this.setCachedAuth({
@@ -207,16 +249,27 @@ class AuthService {
 
   /**
    * Logout - clear stored auth
+   * Uses daemon RPC (auth.logout) when connected, falls back to Tauri command
    */
   async logout(): Promise<void> {
     this.cancelPoll()
     this.setCachedAuth(null)
 
-    // Notify daemon
+    // Use daemon RPC if connected
+    if (this.hasDaemon()) {
+      try {
+        await this.daemonClient!.request('auth.logout')
+        return
+      } catch {
+        // Fall through to Tauri command
+      }
+    }
+
+    // Fallback to Tauri command
     try {
       await invoke('auth_logout')
     } catch {
-      // OK if daemon doesn't support this
+      // OK if not supported
     }
   }
 
