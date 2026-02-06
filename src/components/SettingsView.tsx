@@ -519,14 +519,25 @@ export function SettingsView() {
                   <div className="text-sm font-semibold text-black/80">/account</div>
                   <div className="text-xs text-black/50 mt-1">Plan and account status</div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={!daemon || accountLoading}
-                  onClick={() => void refreshAccount()}
-                >
-                  {accountLoading ? 'Refreshing…' : 'Refresh'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!daemon || accountLoading}
+                    onClick={() => void refreshAccount()}
+                  >
+                    {accountLoading ? 'Refreshing…' : 'Refresh'}
+                  </Button>
+                  {isLoggedIn && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleLogout()}
+                    >
+                      Logout
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
