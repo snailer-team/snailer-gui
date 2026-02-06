@@ -2507,8 +2507,14 @@ export const useAppStore = create<AppState>()(
               let llmResp: LlmCompletionResponse
               if (agentId === 'pm' || agentId === 'ai-ml') {
                 llmResp = await invoke<LlmCompletionResponse>('xai_web_search_completion', { systemPrompt, userPrompt })
-              } else if (agentId.startsWith('swe')) {
+              } else if (agentId.startsWith('swe') || agentId === 'frontend') {
                 llmResp = await invoke<LlmCompletionResponse>('anthropic_chat_completion', { systemPrompt, userPrompt })
+              } else if (agentId === 'qa') {
+                llmResp = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
+                  systemPrompt,
+                  userPrompt,
+                  model: 'claude-haiku-4-5-20251001',
+                })
               } else {
                 llmResp = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt, userPrompt })
               }
@@ -2712,15 +2718,15 @@ export const useAppStore = create<AppState>()(
           const { buildObserveContext, buildCeoMessages, parseCeoLlmOutput } = await import('./ceoLlm')
           const { invoke } = await import('@tauri-apps/api/core')
 
-          // Inject GitHub PR/Issue status into CEO context
-          let ceoGithubContext = ''
-          const ceoProjectPath = get().projectPath
-          if (ceoProjectPath) {
-            try {
-              const [ceoPRs, ceoIssues] = await Promise.all([
-                invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
-                invoke<Array<{ number: number; title: string; state: string; url: string; author: string }>>('gh_issue_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
-              ])
+	          // Inject GitHub PR/Issue status into CEO context
+	          let ceoGithubContext = ''
+	          const ceoProjectPath = get().projectPath
+	          if (ceoProjectPath && get().prMode === true) {
+	            try {
+	              const [ceoPRs, ceoIssues] = await Promise.all([
+	                invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
+	                invoke<Array<{ number: number; title: string; state: string; url: string; author: string }>>('gh_issue_list', { cwd: ceoProjectPath, state: 'open', limit: 10 }).catch(() => []),
+	              ])
               if (ceoPRs.length > 0 || ceoIssues.length > 0) {
                 const prSummaries = ceoPRs.map((pr) => {
                   const flags: string[] = []
@@ -2894,7 +2900,10 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
 
               // GitHub Pre-flight: scan open PRs/Issues for SWE/QA/PM agents
               let githubPreflightContext = ''
-              if (projectPath && (agentId.startsWith('swe') || agentId === 'qa' || agentId === 'pm')) {
+              const preflightEnabled = get().prMode === true
+              const isGitHubTriager = agentId.startsWith('swe') || agentId === 'frontend' || agentId === 'qa' || agentId === 'pm'
+              const broadcastLooksGitHub = /\bPR\s*#|\bCI\b|merge\b|conflict|review|rebase|branch\b/i.test(String(b.message ?? ''))
+              if (projectPath && isGitHubTriager && (preflightEnabled || broadcastLooksGitHub)) {
                 try {
                   const [openPRs, openIssues] = await Promise.all([
                     invoke<Array<{ number: number; title: string; state: string; url: string; headBranch: string; author: string; reviewDecision: string; mergeable: string }>>('gh_pr_list', { cwd: projectPath, state: 'open', limit: 10 }).catch(() => []),
@@ -2926,46 +2935,65 @@ Your githubActions will execute real git/gh commands. Write precise, working cod
                       if (ciStatus === 'CI_FAILED') flags.push('❌CI_FAILED')
                       if (ciStatus === 'CI_PASSED') flags.push('✅CI_PASSED')
                       if (ciStatus === 'CI_PENDING') flags.push('⏳CI_PENDING')
-                      if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('🔄REVIEW_CHANGES')
-                      if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
+	                      if (pr.reviewDecision === 'CHANGES_REQUESTED') flags.push('🔄REVIEW_CHANGES')
+	                      if (pr.reviewDecision === 'APPROVED') flags.push('👍APPROVED')
 
-                      prLines.push(`  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`)
+	                      let prLine = `  PR #${pr.number}: "${pr.title}" [${pr.headBranch}] by ${pr.author} — ${flags.join(' ') || 'NO_FLAGS'}`
 
-                      // Fetch detailed context for actionable PRs (CI_FAILED or REVIEW_CHANGES or CONFLICT)
-                      const needsAction = ciStatus === 'CI_FAILED' || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.mergeable === 'CONFLICTING'
-                      if (needsAction) {
-                        let prDetail = `\n--- PR #${pr.number} Details ---\nBranch: ${pr.headBranch}\nStatus: ${flags.join(' ')}`
+	                      // Fetch recent comments for PRs needing attention (REVIEW_CHANGES or CI_FAILED)
+	                      if (pr.reviewDecision === 'CHANGES_REQUESTED' || ciStatus === 'CI_FAILED') {
+	                        try {
+	                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string; commentType?: string }>>(
+	                            'gh_pr_view_comments',
+	                            { cwd: projectPath, prNumber: pr.number },
+	                          )
+	                          const recentComments = comments.slice(-3)
+	                          if (recentComments.length > 0) {
+	                            const commentLines = recentComments.map(
+	                              (c) => `      - @${c.author}: "${c.body.slice(0, 120)}${c.body.length > 120 ? '...' : ''}"`,
+	                            )
+	                            prLine += `\n    💬 Recent comments:\n${commentLines.join('\n')}`
+	                          }
+	                        } catch { /* comment fetch failed, continue */ }
+	                      }
 
-                        // Add CI failure log
-                        if (ciFailureLog) {
-                          prDetail += `\n\nCI Failure Log:\n\`\`\`\n${ciFailureLog}\n\`\`\``
-                        }
+	                      prLines.push(prLine)
 
-                        // Fetch PR review comments
-                        try {
-                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string }>>('gh_pr_view_comments', { cwd: projectPath, prNumber: pr.number })
-                          if (comments.length > 0) {
-                            const recentComments = comments.slice(-5).map(c => `[${c.author}]: ${c.body.slice(0, 500)}`).join('\n\n')
-                            prDetail += `\n\nReview Comments:\n${recentComments}`
-                          }
-                        } catch { /* Comments unavailable */ }
+	                      // Fetch detailed context for actionable PRs (CI_FAILED or REVIEW_CHANGES or CONFLICT)
+	                      const needsAction = ciStatus === 'CI_FAILED' || pr.reviewDecision === 'CHANGES_REQUESTED' || pr.mergeable === 'CONFLICTING'
+	                      if (needsAction) {
+	                        let prDetail = `\n--- PR #${pr.number} Details ---\nBranch: ${pr.headBranch}\nStatus: ${flags.join(' ')}`
 
-                        // Add conflict file information for CONFLICTING PRs
-                        if (pr.mergeable === 'CONFLICTING') {
-                          try {
-                            const conflictInfo = await invoke<{ stdout: string }>('run_bash', {
-                              cwd: projectPath,
-                              command: `git fetch origin main ${pr.headBranch} 2>/dev/null; git diff --name-only origin/main...origin/${pr.headBranch}`,
-                            })
-                            if (conflictInfo.stdout) {
-                              prDetail += `\n\nConflict Files (files diverged from main):\n${conflictInfo.stdout}`
-                            }
-                          } catch { /* conflict info unavailable */ }
-                        }
+	                        // Add CI failure log
+	                        if (ciFailureLog) {
+	                          prDetail += `\n\nCI Failure Log:\n\`\`\`\n${ciFailureLog}\n\`\`\``
+	                        }
 
-                        actionableDetails.push(prDetail)
-                      }
-                    }
+	                        // Fetch PR review comments
+	                        try {
+	                          const comments = await invoke<Array<{ author: string; body: string; createdAt: string }>>('gh_pr_view_comments', { cwd: projectPath, prNumber: pr.number })
+	                          if (comments.length > 0) {
+	                            const recentComments = comments.slice(-5).map(c => `[${c.author}]: ${c.body.slice(0, 500)}`).join('\n\n')
+	                            prDetail += `\n\nReview Comments:\n${recentComments}`
+	                          }
+	                        } catch { /* Comments unavailable */ }
+
+	                        // Add conflict file information for CONFLICTING PRs
+	                        if (pr.mergeable === 'CONFLICTING') {
+	                          try {
+	                            const conflictInfo = await invoke<{ stdout: string }>('run_bash', {
+	                              cwd: projectPath,
+	                              command: `git fetch origin main ${pr.headBranch} 2>/dev/null; git diff --name-only origin/main...origin/${pr.headBranch}`,
+	                            })
+	                            if (conflictInfo.stdout) {
+	                              prDetail += `\n\nConflict Files (files diverged from main):\n${conflictInfo.stdout}`
+	                            }
+	                          } catch { /* conflict info unavailable */ }
+	                        }
+
+	                        actionableDetails.push(prDetail)
+	                      }
+	                    }
 
                     const issueLines = openIssues.slice(0, 10).map(
                       (i) => `  Issue #${i.number}: "${i.title}" by ${i.author}`
@@ -2976,7 +3004,7 @@ ${openPRs.length > 0 ? `Open PRs (${openPRs.length}):\n${prLines.join('\n')}` : 
 ${issueLines.length > 0 ? `\nOpen Issues (${issueLines.length}):\n${issueLines.join('\n')}` : ''}
 ${actionableDetails.length > 0 ? `\n\n[ACTIONABLE PR DETAILS - FIX THESE FIRST]${actionableDetails.join('\n')}` : ''}
 
-ACTION REQUIRED: Before starting main work, process any actionable PRs above per your Pre-flight Protocol. For CI failures, read the error logs carefully and fix the specific issues mentioned.`
+If your current broadcast is PR/Issue-related, handle actionable items first. Otherwise, ignore this section and proceed with the broadcast.`
                   }
                 } catch {
                   // GitHub pre-flight unavailable, continue without it
@@ -3017,16 +3045,16 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                       systemPrompt: agentSys,
                       userPrompt: agentUsr,
                     })
-                  } else if (agentId.startsWith('swe')) {
+                  } else if (agentId.startsWith('swe') || agentId === 'frontend') {
                     llmResponse = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
                       systemPrompt: agentSys,
                       userPrompt: agentUsr,
                     })
                   } else if (agentId === 'qa') {
-                    // QA agent uses Grok-4 for quality gate decisions
-                    llmResponse = await invoke<LlmCompletionResponse>('xai_chat_completion', {
-                      system_prompt: agentSys,
-                      user_prompt: agentUsr,
+                    llmResponse = await invoke<LlmCompletionResponse>('anthropic_chat_completion', {
+                      systemPrompt: agentSys,
+                      userPrompt: agentUsr,
+                      model: 'claude-haiku-4-5-20251001',
                     })
                   } else {
                     llmResponse = await invoke<LlmCompletionResponse>('openai_chat_completion', {
@@ -3054,12 +3082,12 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                   const outputSummary = agentOutput.output
 
                   // SWE codeDiff validation: write_code actions MUST include codeDiff
-                  const isSweAgent = agentId.startsWith('swe')
+                  const isSweAgent = agentId.startsWith('swe') || agentId === 'frontend'
                   if (isSweAgent) {
                     const writeCodeActions = agentOutput.actions.filter((a) => a.type === 'write_code')
                     const missingDiff = writeCodeActions.filter((a) => !a.codeDiff)
                     if (missingDiff.length > 0) {
-                      throw new Error(`SWE codeDiff REJECTED: ${missingDiff.length} write_code action(s) missing codeDiff. Every write_code action MUST include a unified diff in codeDiff field.`)
+                      throw new Error(`Engineer codeDiff REJECTED: ${missingDiff.length} write_code action(s) missing codeDiff. Every write_code action MUST include a unified diff in codeDiff field.`)
                     }
                   }
 
@@ -3213,17 +3241,31 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                     outputQuality = agentOutput.actions.length >= 1 ? 'actionable' : 'text_only'
                   }
 
-                  // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
-                  if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
-                    // First check if git remote exists (git_status_summary returns a string)
-                    let hasGitRemote = false
-                    try {
-                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
-                      // Check if remote info exists in the status string
-                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
-                    } catch {
-                      hasGitRemote = false
-                    }
+	                  // ── REAL EXECUTION: Process githubActions (autonomous GitHub workflow) ──
+	                  if (agentOutput.githubActions && agentOutput.githubActions.length > 0 && projectPath) {
+	                    // First check if git remote exists (git_status_summary returns a string)
+	                    let hasGitRemote = false
+	                    let hasUnmergedPaths = false
+	                    const unmergedPaths: string[] = []
+	                    try {
+	                      const gitStatusStr = await invoke<string>('git_status_summary', { cwd: projectPath })
+	                      // Check if remote info exists in the status string
+	                      hasGitRemote = gitStatusStr.includes('Remote:') && (gitStatusStr.includes('origin') || gitStatusStr.includes('github'))
+
+	                      // Detect merge conflicts from `git status --short` output embedded in summary.
+	                      // We block branch switching / pushing until conflicts are resolved, but still allow `read_file` to proceed.
+	                      const changeLines = gitStatusStr.split('\n')
+	                      for (const line of changeLines) {
+	                        const trimmed = line.trimEnd()
+	                        const m = trimmed.match(/^(UU|AU|UA|DU|UD)\s+(.+)$/)
+	                        if (m) unmergedPaths.push(m[2].trim())
+	                      }
+	                      if (unmergedPaths.length > 0) {
+	                        hasUnmergedPaths = true
+	                      }
+	                    } catch {
+	                      hasGitRemote = false
+	                    }
 
                     if (!hasGitRemote) {
                       // Log but don't block - allow local git operations
@@ -3249,14 +3291,25 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                           duration: 0,
                         },
                       })
-                    } else {
-                    // Process GitHub actions only if remote exists
-                    for (const ghAction of agentOutput.githubActions) {
-                      // High-risk write ops that need CEO approval
-                      if (ghAction.requiresCeoApproval && ['merge_pr'].includes(ghAction.type)) {
-                        set((st) => ({
-                          elonX: {
-                            ...st.elonX,
+	                    } else {
+	                    // Process GitHub actions only if remote exists
+	                    for (const ghAction of agentOutput.githubActions) {
+	                      if (hasUnmergedPaths && ['create_branch', 'commit_push', 'merge_pr', 'create_pr'].includes(ghAction.type)) {
+	                        const conflictSummary = unmergedPaths.length > 0 ? `Unmerged files: ${unmergedPaths.join(', ')}` : 'Unmerged files detected'
+	                        get().elonAddAgentLog(agentId, {
+	                          timestamp: Date.now(),
+	                          type: 'error',
+	                          message: `GitHub ${ghAction.type} skipped: merge conflicts present`,
+	                          detail: `${conflictSummary}. Resolve conflicts first (use read_file + write_code codeDiff), then retry.`,
+	                        })
+	                        continue
+	                      }
+
+	                      // High-risk write ops that need CEO approval
+	                      if (ghAction.requiresCeoApproval && ['merge_pr'].includes(ghAction.type)) {
+	                        set((st) => ({
+	                          elonX: {
+	                            ...st.elonX,
                             elonApprovals: [
                               ...st.elonX.elonApprovals,
                               {
@@ -3275,20 +3328,20 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
 
                       // Execute all other actions immediately (bottom-up ownership)
                       // Update live activity for GitHub ops
-                      const ghActivityLabels: Record<string, string> = {
-                        create_issue: 'Creating GitHub issue...',
-                        close_issue: `Closing Issue #${ghAction.params.issue_number}...`,
-                        comment_issue: `Commenting on Issue #${ghAction.params.issue_number}...`,
-                        create_branch: `Creating branch: ${ghAction.params.branch_name || ghAction.params.branchName}...`,
-                        commit_push: `Committing & pushing to ${ghAction.params.branch || 'main'}...`,
-                        create_pr: `Creating PR: ${ghAction.params.title}...`,
-                        comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
-                        merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
-                        view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
-                        view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
-                        run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
-                        read_file: `Reading file: ${ghAction.params.path}...`,
-                      }
+	                      const ghActivityLabels: Record<string, string> = {
+	                        create_issue: 'Creating GitHub issue...',
+	                        close_issue: `Closing Issue #${ghAction.params.issue_number}...`,
+	                        comment_issue: `Commenting on Issue #${ghAction.params.issue_number}...`,
+	                        create_branch: `Creating branch: ${ghAction.params.branch_name || ghAction.params.branchName}...`,
+	                        commit_push: `Committing & pushing to ${ghAction.params.branch || 'main'}...`,
+	                        create_pr: `Creating PR: ${ghAction.params.title}...`,
+	                        comment_pr: `Commenting on PR #${ghAction.params.pr_number}...`,
+	                        merge_pr: `Merging PR #${ghAction.params.pr_number}...`,
+	                        view_pr_comments: `Reading PR #${ghAction.params.pr_number} comments...`,
+	                        view_issue_comments: `Reading Issue #${ghAction.params.issue_number} comments...`,
+	                        run_bash: `Running: ${(ghAction.params.command ?? '').slice(0, 40)}...`,
+	                        read_file: `Reading file: ${ghAction.params.path}...`,
+	                      }
                       get().elonSetAgentLiveActivity(agentId, ghActivityLabels[ghAction.type] || `GitHub: ${ghAction.type}...`)
                       get().elonAddAgentLog(agentId, {
                         timestamp: Date.now(),
@@ -3348,18 +3401,18 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             }))
                             break
                           }
-                          case 'merge_pr':
-                            ghResult = JSON.stringify(await invoke('gh_pr_merge', {
-                              cwd: projectPath,
-                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
-                              method: ghAction.params.method ?? null,
-                            }))
-                            break
-                          case 'view_pr_comments':
-                            ghResult = JSON.stringify(await invoke('gh_pr_view_comments', {
-                              cwd: projectPath,
-                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
-                            }))
+	                          case 'merge_pr':
+	                            ghResult = JSON.stringify(await invoke('gh_pr_merge', {
+	                              cwd: projectPath,
+	                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
+	                              method: ghAction.params.method ?? null,
+	                            }))
+	                            break
+	                          case 'view_pr_comments':
+	                            ghResult = JSON.stringify(await invoke('gh_pr_view_comments', {
+	                              cwd: projectPath,
+	                              prNumber: parseInt(ghAction.params.pr_number ?? '0', 10),
+	                            }))
                             break
                           case 'view_issue_comments':
                             ghResult = JSON.stringify(await invoke('gh_issue_view_comments', {
@@ -3387,28 +3440,57 @@ ACTION REQUIRED: Before starting main work, process any actionable PRs above per
                             }))
                             break
                           }
-                          case 'run_bash':
-                            ghResult = JSON.stringify(await invoke('run_bash', {
-                              cwd: projectPath,
-                              command: ghAction.params.command ?? '',
-                            }))
-                            break
-                          case 'read_file': {
-                            // Read file content so agent can generate accurate codeDiff
-                            const filePath = ghAction.params.path ?? ''
-                            const fullPath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`
-                            const content = await invoke<string>('fs_read_text', { path: fullPath })
-                            // Return first 5000 chars to avoid context overflow
-                            ghResult = JSON.stringify({
-                              path: filePath,
-                              content: content.slice(0, 5000),
-                              truncated: content.length > 5000,
-                            })
-                            break
-                          }
-                          default:
-                            ghResult = `Unknown action: ${ghAction.type}`
-                        }
+	                          case 'run_bash':
+	                            ghResult = JSON.stringify(await invoke('run_bash', {
+	                              cwd: projectPath,
+	                              command: ghAction.params.command ?? '',
+	                            }))
+	                            break
+	                          case 'read_file': {
+	                            // Read file content so agent can generate accurate codeDiff
+	                            const filePath = ghAction.params.path ?? ''
+	                            const fullPath = filePath.startsWith('/') ? filePath : `${projectPath}/${filePath}`
+	                            const maxBytesRaw = ghAction.params.maxBytes ?? ghAction.params.max_bytes ?? '1000000'
+	                            const maxBytes = Math.max(1, parseInt(String(maxBytesRaw), 10) || 1000000)
+	                            const content = await invoke<string>('fs_read_text', { path: fullPath, maxBytes })
+
+	                            const lines = content.split(/\r?\n/)
+	                            const startLineRaw = ghAction.params.startLine ?? ghAction.params.start_line ?? ''
+	                            const endLineRaw = ghAction.params.endLine ?? ghAction.params.end_line ?? ''
+	                            let startLine = Math.max(1, parseInt(String(startLineRaw), 10) || 0)
+	                            let endLine = Math.max(0, parseInt(String(endLineRaw), 10) || 0)
+
+	                            if (!startLine || !endLine || endLine < startLine) {
+	                              // Auto-focus on merge conflicts if present, otherwise return the top chunk.
+	                              const conflictIdx = lines.findIndex((l) => l.includes('<<<<<<<') || l.includes('=======') || l.includes('>>>>>>>'))
+	                              if (conflictIdx >= 0) {
+	                                startLine = Math.max(1, conflictIdx + 1 - 80)
+	                                endLine = Math.min(lines.length, conflictIdx + 1 + 80)
+	                              } else {
+	                                startLine = 1
+	                                endLine = Math.min(lines.length, 200)
+	                              }
+	                            }
+
+	                            const sliced = lines
+	                              .slice(startLine - 1, endLine)
+	                              .map((l, i) => `${startLine + i}\t${l}`)
+	                              .join('\n')
+
+	                            ghResult = JSON.stringify({
+	                              path: filePath,
+	                              startLine,
+	                              endLine,
+	                              totalLines: lines.length,
+	                              readMaxBytes: maxBytes,
+	                              readChars: content.length,
+	                              content: sliced,
+	                            })
+	                            break
+	                          }
+	                          default:
+	                            ghResult = `Unknown action: ${ghAction.type}`
+	                        }
                         get().elonAddAgentLog(agentId, {
                           timestamp: Date.now(),
                           type: 'success',

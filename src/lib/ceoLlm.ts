@@ -161,7 +161,7 @@ You MUST respond with valid JSON matching this exact schema:
   "topLeverage": [
     {
       "title": "short task title",
-      "assignee": "pm|swe-2|swe-3|ai-ml|qa",
+      "assignee": "pm|swe-2|swe-3|frontend|ai-ml|qa",
       "why": "1 line explaining leverage/impact",
       "risk": "low|medium|high",
       "evidenceIds": [],
@@ -178,17 +178,18 @@ You MUST respond with valid JSON matching this exact schema:
   "needsExternalData": false
 }
 
-Available agents: pm, swe-2, swe-3, ai-ml, qa
+Available agents: pm, swe-2, swe-3, frontend, ai-ml, qa
 
 Agent Roles:
 - pm: Product management, feature specs, prioritization, user research
 - swe-2, swe-3: Software engineering, code implementation, PRs, bug fixes
+- frontend: Frontend engineering, UI/UX implementation, components, performance
 - ai-ml: AI/ML research, model evaluation, data pipeline, experiments
-- qa: Quality assurance, test automation, bug hunting, CI/CD quality gates (uses Grok-4)
+- qa: Quality assurance, test automation, bug hunting, CI/CD quality gates (uses Claude Haiku)
 
 Quality Enforcement Rules:
-- If an SWE agent has quality "text_only", they failed to produce code. Re-assign with explicit instruction: "You MUST include codeDiff in write_code actions."
-- If an SWE agent has quality "code_verified", they produced real code. Build on their work.
+- If an SWE/frontend agent has quality "text_only", they failed to produce code. Re-assign with explicit instruction: "You MUST include codeDiff in write_code actions."
+- If an SWE/frontend agent has quality "code_verified", they produced real code. Build on their work.
 - If a PM agent has quality "actionable", their analysis was strong. Reference their findings.
 - Assign QA agent to review SWE PRs, run test suites, and validate quality gates before merge.
 - Assign AI-ML agent for model performance analysis, experiment design, and data pipeline work.
@@ -330,12 +331,12 @@ export function buildAgentPrompt(
   const name = wf?.name ?? agentId
 
   const isPm = agentId === 'pm'
-  const isSwe = agentId.startsWith('swe')
+  const isSwe = agentId.startsWith('swe') || agentId === 'frontend'
   const isAiMl = agentId === 'ai-ml'
   const isQa = agentId === 'qa'
 
   const webSearchNote = isQa
-    ? `\n\n[QA Engineer Role - xAI 스타일 - Grok-4]
+    ? `\n\n[QA Engineer Role - xAI 스타일 - Claude Haiku]
 너는 xAI의 Quality Assurance Engineer처럼 행동한다. xAI는 "talent-dense" 소수 정예 팀으로 운영되며, QA는 단순 버그 찾기가 아니라 AI 제품 전체 신뢰성에 책임지는 동등 파트너다.
 
 일반 QA와의 차이:
@@ -906,7 +907,20 @@ export function parseAgentOutput(rawOutput: string): AgentOutput {
   // Parse githubActions (autonomous GitHub workflow)
   let githubActions: GitHubAction[] | undefined
   if (Array.isArray(parsed.githubActions)) {
-    const validTypes = ['create_issue', 'close_issue', 'comment_issue', 'create_branch', 'commit_push', 'create_pr', 'comment_pr', 'merge_pr', 'view_pr_comments', 'view_issue_comments', 'run_bash', 'read_file']
+    const validTypes = [
+      'create_issue',
+      'close_issue',
+      'comment_issue',
+      'create_branch',
+      'commit_push',
+      'create_pr',
+      'comment_pr',
+      'merge_pr',
+      'view_pr_comments',
+      'view_issue_comments',
+      'run_bash',
+      'read_file',
+    ]
     githubActions = parsed.githubActions
       .filter((ga: unknown) => {
         const g = ga as Record<string, unknown>

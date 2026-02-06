@@ -1036,10 +1036,10 @@ pub async fn fs_list_tree(root: String, max_depth: usize) -> Result<Vec<FileNode
 }
 
 #[tauri::command]
-pub async fn fs_read_text(path: String, max_bytes: usize) -> Result<String, String> {
+pub async fn fs_read_text(path: String, max_bytes: Option<usize>) -> Result<String, String> {
     let path = PathBuf::from(path);
     let data = std::fs::read(&path).map_err(|e| format!("read failed: {}", e))?;
-    let max = max_bytes.min(data.len()).max(0);
+    let max = max_bytes.unwrap_or(1_000_000).min(data.len()).max(0);
     let slice = &data[..max];
     String::from_utf8(slice.to_vec()).map_err(|_| "file is not valid utf-8".to_string())
 }
@@ -2326,15 +2326,16 @@ pub async fn xai_web_search_completion(
     .map_err(|e| format!("xAI web search task failed: {}", e))?
 }
 
-/// Call Anthropic Messages API directly with claude-opus-4-6 model (used by SWE agents).
+/// Call Anthropic Messages API directly (used by SWE/frontend/QA agents).
 #[tauri::command]
 pub async fn anthropic_chat_completion(
     system_prompt: String,
     user_prompt: String,
+    model: Option<String>,
 ) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let api_key = read_env_key("ANTHROPIC_API_KEY")?;
-        let model_name = "claude-opus-4-6";
+        let api_key = read_env_key("ANTHROPIC_API_KEY").or_else(|_| read_env_key("CLAUDE_API_KEY"))?;
+        let model_name = model.unwrap_or_else(|| "claude-opus-4-6".to_string());
 
         let body = serde_json::json!({
             "model": model_name,
@@ -2381,7 +2382,7 @@ pub async fn anthropic_chat_completion(
 
         Ok(LlmCompletionResponse {
             content: content.to_string(),
-            model: model_name.to_string(),
+            model: model_name,
             input_tokens,
             output_tokens,
         })
