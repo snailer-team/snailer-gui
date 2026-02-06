@@ -3368,12 +3368,25 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                               branchName: ghAction.params.branch_name ?? ghAction.params.branchName ?? '',
                             }))
                             break
-                          case 'commit_push': {
-                            const files = ghAction.params.files
-                              ? ghAction.params.files.split(',').map((f: string) => f.trim())
-                              : []
-                            ghResult = JSON.stringify(await invoke('git_commit_and_push', {
-                              cwd: projectPath,
+	                          case 'commit_push': {
+	                            // Pre-push quality gate for engineer agents to avoid obvious CI failures (e.g. missing braces / TS syntax errors).
+	                            const isEngineer = agentId.startsWith('swe') || agentId === 'frontend' || agentId === 'qa'
+	                            if (isEngineer) {
+	                              try {
+	                                await invoke('run_bash', {
+	                                  cwd: projectPath,
+	                                  command: 'pnpm -s build',
+	                                })
+	                              } catch (buildErr) {
+	                                const buildErrMsg = buildErr instanceof Error ? buildErr.message : String(buildErr)
+	                                throw new Error(`Pre-push build failed; refusing to commit/push. Fix build first.\n${buildErrMsg}`)
+	                              }
+	                            }
+	                            const files = ghAction.params.files
+	                              ? ghAction.params.files.split(',').map((f: string) => f.trim())
+	                              : []
+	                            ghResult = JSON.stringify(await invoke('git_commit_and_push', {
+	                              cwd: projectPath,
                               branch: ghAction.params.branch ?? 'main',
                               message: ghAction.params.message ?? `[${agentId}] auto-commit`,
                               files,
