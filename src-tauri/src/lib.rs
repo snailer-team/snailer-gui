@@ -21,6 +21,7 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       commands::engine_start,
+      commands::engine_kill,
       commands::fs_list_tree,
       commands::fs_read_text,
       commands::env_find,

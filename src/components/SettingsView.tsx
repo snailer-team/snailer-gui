@@ -147,6 +147,7 @@ function ContextGrid({ used, max }: { used: number; max: number }) {
 
 export function SettingsView() {
   const daemon = useAppStore((s) => s.daemon)
+  const connect = useAppStore((s) => s.connect)
   const projectPath = useAppStore((s) => s.projectPath)
   const mode = useAppStore((s) => s.mode)
   const model = useAppStore((s) => s.model)
@@ -375,9 +376,18 @@ export function SettingsView() {
   const installCli = async () => {
     setCliInstalling(true)
     try {
+      // Kill existing daemon before repair/install
+      await invoke('engine_kill')
+      // Small delay to ensure process is fully terminated
+      await new Promise((r) => setTimeout(r, 500))
+
       await invoke<string>('snailer_cli_ensure_installed')
       toast('Snailer CLI installed')
       await refreshCliStatus()
+
+      // Reconnect to start fresh daemon
+      await connect()
+      toast('Daemon restarted')
     } catch (e) {
       toast('Failed to install Snailer CLI', { description: e instanceof Error ? e.message : String(e) })
     } finally {
