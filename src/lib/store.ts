@@ -313,7 +313,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   // Anthropic
   'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
   'claude-opus-4-20250514': { input: 15.0, output: 75.0 },
-  'claude-opus-4-6': { input: 15.0, output: 75.0 },
+  'claude-opus-4-6': { input: 5.0, output: 25.0 },
   // Moonshot/Kimi
   'kimi-k2-turbo-preview': { input: 0.5, output: 2.0 },
   'kimi-k2.5': { input: 0.5, output: 2.0 },
@@ -1645,6 +1645,12 @@ export const useAppStore = create<AppState>()(
 	            const slash = await client.slashList()
             const modelItems = (() => {
               const items = [...slash.modelItems]
+              // Add Claude Opus 4.6 if not present
+              if (!items.some((m) => m.token === 'claude-opus-4-6')) {
+                const claudeIdx = items.findIndex((m) => m.token.startsWith('claude-'))
+                const insertAt = claudeIdx >= 0 ? claudeIdx : 0
+                items.splice(insertAt, 0, { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' })
+              }
               if (!items.some((m) => m.token === 'kimi-k2.5')) {
                 const kimiIdx = items.findIndex((m) => m.token.startsWith('kimi-'))
                 const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
@@ -1676,6 +1682,7 @@ export const useAppStore = create<AppState>()(
 	                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
 	                ]),
 	                modelItems: [
+	                  { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' },
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
                   { label: 'gpt-5', token: 'gpt-5', desc: '' },
