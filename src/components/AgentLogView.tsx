@@ -2,68 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../lib/store'
 import type { AgentEvent } from '../lib/store'
 
-interface DiffLineProps {
-  line: string
-  lineNum: number
-}
-
-function DiffLine({ line, lineNum }: DiffLineProps) {
-  const isAdded = line.startsWith('+') && !line.startsWith('+++')
-  const isRemoved = line.startsWith('-') && !line.startsWith('---')
-
-  return (
-    <div className={[
-      'flex font-mono text-xs leading-5',
-      isAdded ? 'bg-emerald-50 text-emerald-900' : '',
-      isRemoved ? 'bg-rose-50 text-rose-900' : '',
-      !isAdded && !isRemoved ? 'text-black/70' : '',
-    ].join(' ')}>
-      <span className="w-10 shrink-0 pr-2 text-right text-black/35 select-none">{lineNum}</span>
-      <span className="w-4 shrink-0 text-center select-none text-black/40">
-        {isAdded ? '+' : isRemoved ? '-' : ' '}
-      </span>
-      <span className="flex-1 whitespace-pre-wrap break-all">{line.slice(1) || line}</span>
-    </div>
-  )
-}
-
-interface CollapsibleDiffProps {
-  patch: string
-  maxLines?: number
-}
-
-function CollapsibleDiff({ patch, maxLines = 15 }: CollapsibleDiffProps) {
-  const [expanded, setExpanded] = useState(false)
-  const lines = patch.split('\n').filter(l => !l.startsWith('diff ') && !l.startsWith('index '))
-  const visibleLines = expanded ? lines : lines.slice(0, maxLines)
-  const hiddenCount = lines.length - maxLines
-
-  return (
-    <div className="my-2 overflow-hidden rounded-xl bg-transparent">
-      <div className="bg-transparent p-2">
-        {visibleLines.map((line, i) => (
-          <DiffLine key={i} line={line} lineNum={i + 1} />
-        ))}
-      </div>
-      {!expanded && hiddenCount > 0 && (
-        <button
-          onClick={() => setExpanded(true)}
-          className="w-full bg-transparent py-2 text-center text-xs text-black/60 transition-colors hover:text-black/75"
-        >
-          Show full diff ({hiddenCount} more lines)
-        </button>
-      )}
-    </div>
-  )
-}
-
 interface AgentLogItemProps {
   event: AgentEvent
-  diffPatch?: string
+  isNew?: boolean
 }
 
-function AgentLogItem({ event, diffPatch, isNew }: AgentLogItemProps & { isNew?: boolean }) {
-  const { type, op, path, linesRead, linesAdded, linesRemoved, note, message, phase, line, preview } = event
+function AgentLogItem({ event, isNew }: AgentLogItemProps) {
+  const { type, op, path, linesRead, linesAdded, linesRemoved, note, message, phase, line } = event
 
   // FileOp events
   if (type === 'FileOp' && op) {
@@ -97,9 +42,6 @@ function AgentLogItem({ event, diffPatch, isNew }: AgentLogItemProps & { isNew?:
       if (linesRemoved) parts.push(`-${linesRemoved}`)
       resultText = parts.join(' ')
     }
-
-    // Use diffPatch from modifiedFilesByPath, or preview from event
-    const patchContent = diffPatch || (preview ? preview.join('\n') : '')
 
     return (
       <div className={`flex items-center gap-1.5 py-0.5 ${isNew ? 'animate-fade-in' : ''}`}>
@@ -162,38 +104,37 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
   const activeSessionId = useAppStore((s) => s.activeSessionId)
   const currentRunStatus = useAppStore((s) => s.currentRunStatus)
   const currentRunId = useAppStore((s) => s.currentRunId)
-  const modifiedFilesByPath = useAppStore((s) => s.modifiedFilesByPath)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
-  const seenIdsRef = useRef<Set<string>>(new Set())
+  const [seenIds, setSeenIds] = useState<Set<string>>(new Set())
 
   // Get agentEvents from the active session
   const session = sessions.find((s) => s.id === activeSessionId)
   const agentEvents = (session?.agentEvents ?? []).filter((e) => (runId ? e.runId === runId : true))
   const visibleEvents = useMemo(() => agentEvents.filter(isRenderableAgentEvent), [agentEvents])
 
-  // Process events into display items with diff patches
+  // Track new items for animation
   const displayItems = useMemo(() => {
-    return visibleEvents.map((event) => {
-      // For FileOp events with a path, try to get the diff from modifiedFilesByPath
-      let diffPatch: string | undefined
-      if (event.type === 'FileOp' && event.path) {
-        const modifiedFile = modifiedFilesByPath[event.path]
-        if (modifiedFile?.patch) {
-          diffPatch = modifiedFile.patch
-        }
-      }
-      const isNew = !seenIdsRef.current.has(event.id)
-      if (isNew) seenIdsRef.current.add(event.id)
-      return {
-        id: event.id,
-        event,
-        diffPatch,
-        isNew,
-      }
-    })
-  }, [visibleEvents, modifiedFilesByPath])
+    return visibleEvents.map((event) => ({
+      id: event.id,
+      event,
+      isNew: !seenIds.has(event.id),
+    }))
+  }, [visibleEvents, seenIds])
+
+  // Update seen IDs after render
+  useEffect(() => {
+    const newIds = visibleEvents.map((e) => e.id).filter((id) => !seenIds.has(id))
+    if (newIds.length > 0) {
+      setSeenIds((prev) => {
+        const next = new Set(prev)
+        newIds.forEach((id) => next.add(id))
+        return next
+      })
+    }
+  }, [visibleEvents, seenIds])
+
   const hasItems = displayItems.length > 0
 
   const isRunning =
@@ -221,8 +162,8 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
         onScroll={onScroll}
         className="px-3 py-1.5 space-y-0"
       >
-        {displayItems.map(({ id, event, diffPatch, isNew }) => (
-          <AgentLogItem key={id} event={event} diffPatch={diffPatch} isNew={isNew} />
+        {displayItems.map(({ id, event, isNew }) => (
+          <AgentLogItem key={id} event={event} isNew={isNew} />
         ))}
 
         {/* Working indicator */}
