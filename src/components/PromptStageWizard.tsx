@@ -30,7 +30,7 @@ function Checkbox({ checked }: { checked: boolean }) {
 function Stepper({ stages, index }: { stages: PromptStage[]; index: number }) {
   const items = useMemo(() => [...stages.map((s) => s.name), 'Submit'], [stages])
   return (
-    <div className="flex flex-wrap items-center gap-4 text-sm text-black/70">
+    <div className="flex flex-wrap items-center gap-4 text-sm text-slate-700">
       {items.map((label, i) => {
         const active = i === index
         const done = i < index
@@ -39,12 +39,12 @@ function Stepper({ stages, index }: { stages: PromptStage[]; index: number }) {
             <span
               className={[
                 'inline-flex h-5 w-5 items-center justify-center rounded-md text-xs font-semibold',
-                done ? 'bg-emerald-600 text-white' : active ? 'bg-sky-600 text-white' : 'bg-black/10 text-black/50',
+                done ? 'bg-emerald-600 text-white' : active ? 'bg-sky-600 text-white' : 'bg-black/10 text-slate-500',
               ].join(' ')}
             >
               {done ? '✓' : i + 1}
             </span>
-            <span className={[active ? 'font-semibold text-black/85' : 'text-black/55'].join(' ')}>
+            <span className={[active ? 'font-semibold text-slate-800' : 'text-slate-500'].join(' ')}>
               {label}
             </span>
           </div>
@@ -111,23 +111,23 @@ export function PromptStageWizard() {
 
   return (
     <div className="mx-auto w-full max-w-4xl">
-      <div className="rounded-2xl border border-black/10 bg-white/80 shadow-sm backdrop-blur overflow-hidden">
+      <div className="rounded-2xl border border-[color:var(--color-border)] bg-white/80 shadow-sm backdrop-blur overflow-hidden">
         <div className="px-5 py-4 border-b border-black/5">
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-black/80">Clarify</div>
+              <div className="text-sm font-semibold text-slate-700">Clarify</div>
               <div className="mt-1">
                 <Stepper stages={stages} index={step} />
               </div>
             </div>
-            <div className="text-xs font-mono text-black/50">
+            <div className="text-xs font-mono text-slate-500">
               {Math.min(step + 1, totalSteps)} / {totalSteps}
             </div>
           </div>
         </div>
 
         <div className="px-5 py-5">
-          <div className="text-[15px] font-semibold text-black/85">{title}</div>
+          <div className="text-[15px] font-semibold text-slate-800">{title}</div>
 
           {!isSummary ? (
             <div className="mt-4 space-y-2">
@@ -142,18 +142,18 @@ export function PromptStageWizard() {
                     }}
                     className={[
                       'w-full rounded-xl border px-4 py-3 text-left transition',
-                      selected ? 'border-sky-600 bg-sky-50' : 'border-black/10 bg-white hover:bg-black/5',
+                      selected ? 'border-slate-400 bg-slate-100' : 'border-[color:var(--color-border)] bg-white hover:bg-slate-100',
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-3">
                         <Checkbox checked={selected} />
                         <div>
-                          <div className="text-sm font-medium text-black/85">{opt.title}</div>
-                          <div className="mt-1 text-xs text-black/55">{opt.description}</div>
+                          <div className="text-sm font-medium text-slate-800">{opt.title}</div>
+                          <div className="mt-1 text-xs text-slate-500">{opt.description}</div>
                         </div>
                       </div>
-                      <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-black/5 px-2 text-xs font-mono text-black/50">
+                      <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-slate-100 px-2 text-xs font-mono text-slate-500">
                         {idx + 1}
                       </span>
                     </div>
@@ -167,7 +167,7 @@ export function PromptStageWizard() {
                     value={customText}
                     onChange={(e) => setCustomText(e.target.value)}
                     placeholder="Type your answer…"
-                    className="w-full rounded-xl border border-black/10 bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-400"
+                    className="w-full rounded-xl border border-[color:var(--color-border)] bg-white px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-400"
                     autoFocus
                   />
                 </div>
@@ -176,19 +176,19 @@ export function PromptStageWizard() {
           ) : (
             <div className="mt-4 space-y-2">
               {stages.map((s, i) => (
-                <div key={s.name} className="flex items-start justify-between gap-3 rounded-xl border border-black/10 bg-white px-4 py-3">
+                <div key={s.name} className="flex items-start justify-between gap-3 rounded-xl border border-[color:var(--color-border)] bg-white px-4 py-3">
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold text-black/55">{s.name}</div>
-                    <div className="mt-1 text-sm text-black/80">{answers[i] ?? '(skipped)'}</div>
+                    <div className="text-xs font-semibold text-slate-500">{s.name}</div>
+                    <div className="mt-1 text-sm text-slate-700">{answers[i] ?? '(skipped)'}</div>
                   </div>
-                  <span className="text-xs font-mono text-black/45">{i + 1}</span>
+                  <span className="text-xs font-mono text-slate-500">{i + 1}</span>
                 </div>
               ))}
             </div>
           )}
         </div>
 
-        <div className="px-5 py-4 border-t border-black/5 bg-white/60 flex items-center justify-between">
+        <div className="px-5 py-4 border-t border-black/5 bg-[#f8fafc] flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"

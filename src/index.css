@@ -2,60 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Snailer GUI - Soft Pastel Theme */
+/* Snailer GUI - Neutral Workbench Theme */
 :root {
-  /* Primary Colors - Soft Pastel */
-  --color-primary: #A7C7E7;      /* Soft Blue */
-  --color-secondary: #B2D8B2;    /* Soft Green */
-  --color-accent: #FFF3A3;       /* Soft Yellow */
-  --color-surface: #FAFBFC;      /* Light Surface */
-  --color-background: #FFFFFF;
+  --color-app-bg: #d7d9de;
+  --color-surface: #f3f4f6;
+  --color-panel: #ffffff;
+  --color-panel-muted: #f8fafc;
+  --color-primary: #111827;
+  --color-secondary: #334155;
+  --color-accent: #2563eb;
 
-  /* Text Colors */
-  --color-text-primary: #1F2937;
-  --color-text-secondary: #4B5563;
-  --color-text-muted: #9CA3AF;
+  --color-text-primary: #111827;
+  --color-text-secondary: #475569;
+  --color-text-muted: #64748b;
 
-  /* Border & Divider */
-  --color-border: #E5E7EB;
-  --color-divider: #F3F4F6;
+  --color-border: #d7dce3;
+  --color-border-strong: #c6ccd6;
+  --color-divider: #e5e7eb;
 
-  /* Status Colors - Pastel */
-  --color-success: #86EFAC;
-  --color-warning: #FDE68A;
-  --color-error: #FCA5A5;
-  --color-info: #93C5FD;
+  --color-success: #dcfce7;
+  --color-warning: #fef3c7;
+  --color-error: #fee2e2;
+  --color-info: #dbeafe;
 
-  /* Agent Role Colors */
-  --color-role-orchestrator: #C4B5FD;  /* Soft Purple */
-  --color-role-frontend: #93C5FD;       /* Soft Blue */
-  --color-role-backend: #86EFAC;        /* Soft Green */
-  --color-role-tester: #FDE68A;         /* Soft Yellow */
-  --color-role-devops: #FDBA74;         /* Soft Orange */
-
-  /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
   --space-md: 16px;
   --space-lg: 24px;
   --space-xl: 32px;
 
-  /* Border Radius */
-  --radius-sm: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 14px 36px rgba(15, 23, 42, 0.14);
 
-  /* Font */
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Monaco', monospace;
+  --font-sans: "SF Pro Text", "Sohne", "Manrope", "IBM Plex Sans", "Pretendard", "Segoe UI", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Fira Code", "Menlo", monospace;
 
-  /* Transitions */
   --transition-fast: 150ms ease;
   --transition-normal: 250ms ease;
 }
@@ -77,7 +64,9 @@ body {
   font-size: 14px;
   line-height: 1.5;
   color: var(--color-text-primary);
-  background-color: var(--color-background);
+  background:
+    radial-gradient(1200px 700px at 20% -10%, #f5f6f8 0%, transparent 72%),
+    linear-gradient(180deg, #d9dbe0 0%, #d0d3d9 100%);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -88,23 +77,15 @@ body {
   font-family: var(--font-sans);
 }
 
-/* Claude-like dotted canvas */
-.snailer-canvas {
-  background-color: #fbfaf7;
-  background-image: radial-gradient(rgba(17, 24, 39, 0.08) 1px, transparent 1px);
-  background-size: 18px 18px;
-}
-
 .snailer-card {
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(17, 24, 39, 0.10);
-  box-shadow: 0 10px 30px rgba(17, 24, 39, 0.08);
-  backdrop-filter: blur(8px);
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-md);
 }
 
 .snailer-pill {
-  background: rgba(255, 255, 255, 0.70);
-  border: 1px solid rgba(17, 24, 39, 0.10);
+  background: var(--color-panel-muted);
+  border: 1px solid var(--color-border);
 }
 
 /* Better Markdown defaults for chat bubbles */
@@ -112,7 +93,8 @@ body {
   overflow: auto;
   padding: 12px;
   border-radius: 12px;
-  background: rgba(17, 24, 39, 0.06);
+  background: #f1f5f9;
+  border: 1px solid var(--color-border);
 }
 
 .snailer-markdown :where(code) {
@@ -121,7 +103,7 @@ body {
 
 /* Focus styles */
 :focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 2px solid #93c5fd;
   outline-offset: 2px;
 }
 
@@ -163,23 +145,23 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-divider);
+  background: #edf0f5;
   border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-border);
+  background: #c8d0dc;
   border-radius: var(--radius-sm);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: #94a3b8;
 }
 
 /* Selection */
 ::selection {
-  background-color: var(--color-primary);
-  color: var(--color-text-primary);
+  background-color: #bfdbfe;
+  color: #0f172a;
 }
 
 /* Button Reset */

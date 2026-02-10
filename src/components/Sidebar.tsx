@@ -28,26 +28,30 @@ function StatusDot({ status }: { status: 'connected' | 'connecting' | 'starting'
 function SegmentedToggle() {
   const { viewMode, setViewMode } = useAppStore()
   return (
-    <div className="inline-flex rounded-full bg-black/5 p-1">
+    <div className="inline-flex rounded-full border border-slate-200 bg-slate-100 p-1">
       <button
         className={[
           'inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition',
-          viewMode === 'chat' ? 'bg-white shadow-sm' : 'hover:bg-white/60',
+          viewMode === 'chat'
+            ? 'border border-slate-200 bg-white text-slate-800 shadow-sm'
+            : 'text-slate-500 hover:bg-white/70',
         ].join(' ')}
         onClick={() => setViewMode('chat')}
         title="Chat"
       >
-        <IconChatBubble className="h-5 w-5 text-black/70" />
+        <IconChatBubble className="h-5 w-5" />
       </button>
       <button
         className={[
           'inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm transition',
-          viewMode !== 'chat' ? 'bg-white shadow-sm' : 'hover:bg-white/60',
+          viewMode !== 'chat'
+            ? 'border border-slate-200 bg-white text-slate-800 shadow-sm'
+            : 'text-slate-500 hover:bg-white/70',
         ].join(' ')}
         onClick={() => setViewMode('settings')}
         title="Settings"
       >
-        <IconSettings className="h-5 w-5 text-black/70" />
+        <IconSettings className="h-5 w-5" />
       </button>
     </div>
   )
@@ -100,15 +104,6 @@ export function Sidebar() {
     return () => window.removeEventListener('mousedown', onDown)
   }, [openSessionMenuId])
 
-  useEffect(() => {
-    void (async () => {
-      const auth = await authService.refresh()
-      setIsLoggedIn(authService.isLoggedIn())
-      setUserEmail(auth?.email ?? null)
-      setUserName(auth?.name ?? null)
-    })()
-  }, [])
-
   const subtitle = useMemo(() => {
     if (connectionStatus === 'connected') return 'Ready'
     if (connectionStatus === 'connecting' || connectionStatus === 'starting') return 'Connecting…'
@@ -123,15 +118,15 @@ export function Sidebar() {
   const elonEnabled = mode === 'elon'
 
   return (
-    <aside className="h-full flex flex-col border-r border-black/5 bg-[#f6f3ea]">
+    <aside className="h-full flex flex-col border-r border-slate-200 bg-slate-100">
       <div className="px-4 pt-5 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <StatusDot status={connectionStatus} />
-            <div className="text-sm font-semibold tracking-tight">Snailer</div>
-            <div className="text-xs text-black/45">{subtitle}</div>
+            <div className="text-sm font-semibold tracking-tight text-slate-800">Snailer</div>
+            <div className="text-xs text-slate-500">{subtitle}</div>
             {!elonEnabled ? null : (
-              <div className="ml-1 inline-flex items-center gap-1 rounded-full border border-black/10 bg-black/5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-black/70">
+              <div className="ml-1 inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">
                 <IconBolt className="h-3.5 w-3.5" />
                 ElonX HARD
               </div>
@@ -152,9 +147,9 @@ export function Sidebar() {
                 console.error('[Sidebar] Failed to create session:', e)
               }
             }}
-            className="rounded-xl"
+            className="rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm hover:bg-slate-50"
           >
-            <IconSparkle className="h-5 w-5 text-black/55" />
+            <IconSparkle className="h-5 w-5" />
           </Button>
         </div>
 
@@ -162,8 +157,8 @@ export function Sidebar() {
           <SegmentedToggle />
         </div>
 
-        <div className="mt-3 flex items-center justify-between rounded-xl border border-black/10 bg-white/60 px-3 py-2">
-          <div className="text-xs font-semibold tracking-wide text-black/70">ElonX HARD</div>
+        <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
+          <div className="text-xs font-semibold tracking-wide text-slate-700">ElonX HARD</div>
           <button
             type="button"
             role="switch"
@@ -172,8 +167,8 @@ export function Sidebar() {
             onClick={() => void setUiMode(elonEnabled ? lastStandardMode : 'elon')}
             className={[
               'relative inline-flex h-6 w-10 items-center rounded-full transition',
-              elonEnabled ? 'bg-black/70' : 'bg-black/10',
-              !daemon || busy ? 'opacity-50 cursor-not-allowed' : 'hover:bg-black/20',
+              elonEnabled ? 'bg-slate-700' : 'bg-slate-300',
+              !daemon || busy ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-400',
             ].join(' ')}
             title={elonEnabled ? 'Disable ElonX HARD' : 'Enable ElonX HARD'}
           >
@@ -189,14 +184,14 @@ export function Sidebar() {
 
 
       <div className="mt-6 flex items-center px-4 shrink-0">
-        <div className="text-sm font-semibold tracking-tight text-black/80">Sessions</div>
+        <div className="text-sm font-semibold tracking-tight text-slate-700">Sessions</div>
       </div>
 
       <ScrollArea className="mt-2 flex-1 min-h-0 px-2">
         <ScrollAreaViewport className="h-full">
           <div className="space-y-1 px-2 pb-4">
             {sessions.length === 0 ? (
-              <div className="rounded-2xl bg-white/60 p-4 text-sm text-black/55">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-500">
                 No sessions. Create a new session to start.
               </div>
             ) : (
@@ -217,7 +212,7 @@ export function Sidebar() {
                     }}
                     className={[
                       'group w-full rounded-2xl px-4 py-3 text-left transition',
-                      active ? 'bg-white shadow-sm' : 'hover:bg-white/70',
+                      active ? 'border border-slate-200 bg-white shadow-sm' : 'border border-transparent hover:bg-white/70',
                     ].join(' ')}
                   >
                     <div className="flex items-start justify-between gap-2">
@@ -228,20 +223,20 @@ export function Sidebar() {
                         }}
                         className="min-w-0 flex-1 text-left"
                       >
-                        <div className="truncate text-[15px] font-semibold tracking-tight text-black/90">
+                        <div className="truncate text-[15px] font-semibold tracking-tight text-slate-800">
                           {s.name}
                         </div>
-                        <div className="mt-1 truncate text-sm text-black/50">{repo || 'workspace'}</div>
+                        <div className="mt-1 truncate text-sm text-slate-500">{repo || 'workspace'}</div>
                       </button>
 
                       <div className="flex items-start gap-2">
-                        <span className="mt-0.5 rounded-full bg-black/5 px-2 py-0.5 text-xs font-mono text-black/55">
+                        <span className="mt-0.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-mono text-slate-500">
                           {s.activityCount ?? 0}
                         </span>
 
                         <div className="relative" ref={openSessionMenuId === s.id ? sessionMenuRef : null}>
                           <button
-                            className="rounded-xl p-1.5 text-black/45 opacity-0 transition hover:bg-black/5 hover:text-black/70 group-hover:opacity-100"
+                            className="rounded-xl p-1.5 text-slate-400 opacity-0 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100"
                             title="Session menu"
                             onClick={(e) => {
                               e.stopPropagation()
@@ -252,7 +247,7 @@ export function Sidebar() {
                           </button>
 
                           {openSessionMenuId === s.id ? (
-                            <div className="absolute right-0 top-8 z-50 w-44 rounded-2xl border border-black/10 bg-white py-2 shadow-lg">
+                            <div className="absolute right-0 top-8 z-50 w-44 rounded-2xl border border-slate-200 bg-white py-2 shadow-lg">
                               <button
                                 className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
                                 onClick={(e) => {
@@ -280,7 +275,7 @@ export function Sidebar() {
       <div className="px-4 pb-4 shrink-0">
         <Button
           variant="default"
-          className="w-full rounded-2xl relative z-10 bg-black text-white hover:bg-black/90 shadow-sm"
+          className="relative z-10 w-full rounded-2xl border border-slate-900 bg-slate-900 text-white hover:bg-black shadow-sm"
           disabled={!daemon || !projectPath}
           onClick={() => {
             console.log('[Sidebar] Button clicked, sessions before:', sessions.length)
@@ -309,35 +304,35 @@ export function Sidebar() {
         </Button>
 
         {/* Auth Section */}
-        <div className="mt-4 border-t border-black/5 pt-4">
+        <div className="mt-4 border-t border-slate-200 pt-4">
           {isLoggedIn ? (
             <div className="relative">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex w-full items-center gap-3 rounded-2xl bg-white/60 px-4 py-3 text-left transition hover:bg-white"
+                className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:bg-slate-50 hover:shadow-sm"
               >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-black/5">
-                  <IconUser className="h-4 w-4 text-black/60" />
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100">
+                  <IconUser className="h-4 w-4 text-slate-600" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-black/80">{userName || userEmail}</div>
+                  <div className="truncate text-sm font-medium text-slate-800">{userName || userEmail}</div>
                   {userName && userEmail && (
-                    <div className="truncate text-xs text-black/45">{userEmail}</div>
+                    <div className="truncate text-xs text-slate-500">{userEmail}</div>
                   )}
                 </div>
               </button>
 
               {showUserMenu && (
-                <div className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-black/10 bg-white py-2 shadow-lg">
+                <div className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-slate-200 bg-white py-2 shadow-lg">
                   <button
                     onClick={() => {
                       setShowUserMenu(false)
                       setLoginMode('switch')
                       setShowLoginModal(true)
                     }}
-                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-gray-50"
+                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
                   >
-                    <IconUser className="h-4 w-4 text-black/60" />
+                    <IconUser className="h-4 w-4 text-slate-500" />
                     <span>Switch Account</span>
                   </button>
                   <button
@@ -371,7 +366,7 @@ export function Sidebar() {
           )}
         </div>
 
-        <div className="mt-3 text-xs text-black/45">
+        <div className="mt-3 text-xs text-slate-500">
           Shortcuts: <span className="font-mono">⌘K</span> Command · <span className="font-mono">⌘N</span> New Session
         </div>
       </div>

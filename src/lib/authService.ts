@@ -14,6 +14,7 @@ export interface UserAuth {
   email?: string
   name?: string
   expiresAt?: number
+  hasAuth?: boolean
 }
 
 export interface DeviceCodeResponse {
@@ -35,9 +36,15 @@ export interface TokenResponse {
 }
 
 class AuthService {
+  private static readonly CACHE_KEY = 'snailer.gui.auth.cache.v1'
   private pollAbortController: AbortController | null = null
   private cachedAuth: UserAuth | null = null
   private daemonClient: DaemonClient | null = null
+  private refreshInFlight: Promise<UserAuth | null> | null = null
+
+  constructor() {
+    this.cachedAuth = this.readCache()
+  }
 
   setDaemonClient(client: DaemonClient | null) {
     this.daemonClient = client
@@ -99,27 +106,38 @@ class AuthService {
 
   private setCachedAuth(auth: UserAuth | null) {
     this.cachedAuth = auth
+    this.writeCache(auth)
   }
 
-  async refresh(): Promise<UserAuth | null> {
+  async refresh(opts?: { skipSecureStore?: boolean }): Promise<UserAuth | null> {
+    if (opts?.skipSecureStore) return this.cachedAuth
     if (!this.hasTauri()) return this.cachedAuth
-    const res = await invoke<TokenResponse | null>('auth_check')
-    if (!res) {
-      this.setCachedAuth(null)
-      return null
+    if (this.refreshInFlight) return this.refreshInFlight
+    this.refreshInFlight = (async () => {
+      const res = await invoke<TokenResponse | null>('auth_check')
+      if (!res) {
+        this.setCachedAuth(null)
+        return null
+      }
+      const now = Math.floor(Date.now() / 1000)
+      const expiresAt = res.expiresIn > 0 ? now + res.expiresIn : undefined
+      const auth: UserAuth = {
+        accessToken: res.accessToken,
+        refreshToken: res.refreshToken,
+        accountId: res.accountId,
+        email: res.email,
+        name: res.name,
+        expiresAt,
+        hasAuth: Boolean(res.accessToken),
+      }
+      this.setCachedAuth(auth)
+      return auth
+    })()
+    try {
+      return await this.refreshInFlight
+    } finally {
+      this.refreshInFlight = null
     }
-    const now = Math.floor(Date.now() / 1000)
-    const expiresAt = res.expiresIn > 0 ? now + res.expiresIn : undefined
-    const auth: UserAuth = {
-      accessToken: res.accessToken,
-      refreshToken: res.refreshToken,
-      accountId: res.accountId,
-      email: res.email,
-      name: res.name,
-      expiresAt,
-    }
-    this.setCachedAuth(auth)
-    return auth
   }
 
   /**
@@ -127,7 +145,9 @@ class AuthService {
    */
   isLoggedIn(): boolean {
     const auth = this.getStoredAuth()
-    if (!auth?.accessToken) return false
+    if (!auth) return false
+    const hasCredential = Boolean(auth.accessToken) || Boolean(auth.hasAuth)
+    if (!hasCredential) return false
     // Check expiration
     if (auth.expiresAt && auth.expiresAt < Date.now() / 1000) {
       return false
@@ -356,6 +376,47 @@ class AuthService {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  private readCache(): UserAuth | null {
+    if (typeof window === 'undefined') return null
+    try {
+      const raw = window.localStorage.getItem(AuthService.CACHE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as {
+        email?: string
+        name?: string
+        expiresAt?: number
+        hasAuth?: boolean
+      }
+      return {
+        email: parsed.email ?? undefined,
+        name: parsed.name ?? undefined,
+        expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : undefined,
+        hasAuth: Boolean(parsed.hasAuth),
+      }
+    } catch {
+      return null
+    }
+  }
+
+  private writeCache(auth: UserAuth | null): void {
+    if (typeof window === 'undefined') return
+    try {
+      if (!auth) {
+        window.localStorage.removeItem(AuthService.CACHE_KEY)
+        return
+      }
+      const payload = {
+        email: auth.email ?? null,
+        name: auth.name ?? null,
+        expiresAt: auth.expiresAt ?? null,
+        hasAuth: Boolean(auth.accessToken) || Boolean(auth.hasAuth),
+      }
+      window.localStorage.setItem(AuthService.CACHE_KEY, JSON.stringify(payload))
+    } catch {
+      // Ignore cache write errors.
+    }
   }
 }
 

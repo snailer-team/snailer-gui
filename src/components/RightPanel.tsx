@@ -65,7 +65,7 @@ function TreeNode({
   if (node.kind === 'file') {
     return (
       <button
-        className="w-full truncate rounded-lg px-2 py-1 text-left text-sm hover:bg-black/5"
+        className="w-full truncate rounded-lg px-2 py-1 text-left text-sm hover:bg-slate-100"
         style={{ paddingLeft: 8 + level * 12 }}
         draggable
         onDragStart={(e) => {
@@ -82,7 +82,7 @@ function TreeNode({
     <div>
       {level > 0 && (
         <button
-          className="w-full truncate rounded-lg px-2 py-1 text-left text-sm font-medium hover:bg-black/5"
+          className="w-full truncate rounded-lg px-2 py-1 text-left text-sm font-medium hover:bg-slate-100"
           style={{ paddingLeft: 8 + level * 12 }}
           onClick={() => setOpen((v) => !v)}
         >
@@ -183,7 +183,7 @@ export function RightPanel() {
   }, [daemon, selectedCmd, currentRunId])
 
   const renderApproval = (a: PendingApproval) => (
-    <div key={a.approvalId} className="rounded-2xl border border-black/10 bg-white/70 p-3 shadow-sm">
+    <div key={a.approvalId} className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-3 shadow-sm">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">Approval · {a.kind}</div>
@@ -199,7 +199,7 @@ export function RightPanel() {
           {a.diffs.slice(0, 5).map((d: ModifiedFile) => (
             <button
               key={d.path}
-              className="w-full rounded-xl border border-black/5 bg-white/60 px-3 py-2 text-left text-sm hover:bg-white"
+              className="w-full rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2 text-left text-sm hover:bg-white"
               onClick={() => setSelectedDiffPath(d.path)}
             >
               <div className="truncate font-medium">{d.path}</div>
@@ -245,7 +245,7 @@ export function RightPanel() {
   )
 
   return (
-    <div className="h-full snailer-card rounded-[22px] border border-black/10 bg-white/70 p-3">
+    <div className="h-full snailer-card rounded-[22px] border border-[color:var(--color-border)] bg-[#f8fafc] p-3">
       <Tabs defaultValue={isOrchestratorMode || isElonMode ? 'agents' : 'diffs'} className="h-full flex flex-col">
         <TabsList className="w-full">
           {(isOrchestratorMode || isElonMode) && (
@@ -283,7 +283,7 @@ export function RightPanel() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="파일 검색…"
-              className="w-full rounded-xl border border-black/10 bg-white/70 px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]"
+              className="w-full rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-[color:var(--color-primary)]"
             />
             <Button
               variant="ghost"
@@ -313,7 +313,7 @@ export function RightPanel() {
             </div>
             <ScrollArea className="mt-3 flex-1 min-h-0">
               <ScrollAreaViewport className="h-full">
-                <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm">
+                <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-2 shadow-sm">
                   <TreeNode
                     node={fileTree}
                     level={0}
@@ -326,7 +326,7 @@ export function RightPanel() {
               </ScrollAreaViewport>
               <ScrollBar />
             </ScrollArea>
-            <div className="mt-3 rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm">
+            <div className="mt-3 rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-3 shadow-sm">
               <div className="flex items-center justify-between gap-2">
                 <div className="truncate text-xs font-medium text-[color:var(--color-text-secondary)]">
                   {selectedRelFile ? selectedRelFile : '파일을 선택하면 미리보기를 표시합니다.'}
@@ -341,7 +341,7 @@ export function RightPanel() {
                   </Button>
                 ) : null}
               </div>
-              <pre className="mt-2 max-h-[160px] overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
+              <pre className="mt-2 max-h-[160px] overflow-auto rounded-xl bg-[#f8fafc] p-3 text-xs leading-5">
                 {selectedRelFile ? filePreview : ' '}
               </pre>
             </div>
@@ -354,7 +354,7 @@ export function RightPanel() {
         <TabsContent value="diffs" className="flex-1 min-h-0 overflow-hidden">
           <div className="grid grid-rows-[auto_1fr] gap-3 h-full min-h-0">
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm">
+              <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-2 shadow-sm">
                 <div className="px-2 py-1 text-xs font-medium text-[color:var(--color-text-secondary)]">Modified</div>
                 <ScrollArea className="h-[180px]">
                   <ScrollAreaViewport className="h-full">
@@ -386,7 +386,7 @@ export function RightPanel() {
                 </ScrollArea>
               </div>
 
-              <div className="rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm">
+              <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-3 shadow-sm">
                 <div className="text-xs font-medium text-[color:var(--color-text-secondary)]">Preview</div>
                 <div className="mt-2 text-sm">
                   {selectedDiff ? (
@@ -407,7 +407,7 @@ export function RightPanel() {
               {selectedDiff ? (
                 <DiffViewer patch={selectedDiff.patch} />
               ) : (
-                <div className="h-full rounded-2xl border border-black/10 bg-white/60 p-4 text-sm text-[color:var(--color-text-secondary)] shadow-sm">
+                <div className="h-full rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-4 text-sm text-[color:var(--color-text-secondary)] shadow-sm">
                   변경 파일을 선택하면 패치(unified diff)를 보여줍니다.
                 </div>
               )}
@@ -417,7 +417,7 @@ export function RightPanel() {
 
         <TabsContent value="logs" className="flex-1 min-h-0 overflow-hidden">
           <div className="grid grid-cols-[1fr_1fr] gap-2 h-full min-h-0">
-            <div className="rounded-2xl border border-black/10 bg-white/60 p-2 shadow-sm min-h-0 flex flex-col">
+            <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-2 shadow-sm min-h-0 flex flex-col">
               <div className="px-2 py-1 text-xs font-medium text-[color:var(--color-text-secondary)]">Bash</div>
               <ScrollArea className="flex-1 min-h-0">
                 <ScrollAreaViewport className="h-full">
@@ -449,9 +449,9 @@ export function RightPanel() {
               </ScrollArea>
             </div>
 
-            <div className="rounded-2xl border border-black/10 bg-white/60 p-3 shadow-sm min-h-0 flex flex-col">
+            <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-3 shadow-sm min-h-0 flex flex-col">
               <div className="text-xs font-medium text-[color:var(--color-text-secondary)]">Output</div>
-              <pre className="mt-2 flex-1 min-h-0 overflow-auto rounded-xl bg-white/70 p-3 text-xs leading-5">
+              <pre className="mt-2 flex-1 min-h-0 overflow-auto rounded-xl bg-[#f8fafc] p-3 text-xs leading-5">
                 {logText || '명령을 선택하면 stdout 로그를 로드합니다.'}
               </pre>
             </div>
@@ -463,7 +463,7 @@ export function RightPanel() {
             <ScrollAreaViewport className="h-full">
               <div className="space-y-3">
                 {pendingApprovals.length === 0 ? (
-                  <div className="rounded-2xl border border-black/10 bg-white/60 p-4 text-sm text-[color:var(--color-text-secondary)] shadow-sm">
+                  <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-4 text-sm text-[color:var(--color-text-secondary)] shadow-sm">
                     대기 중인 승인 요청이 없습니다.
                   </div>
                 ) : (

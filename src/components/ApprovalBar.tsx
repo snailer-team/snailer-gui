@@ -23,7 +23,7 @@ export function ApprovalBar() {
   return (
     <div className="mx-auto w-full max-w-4xl px-6 pt-6 space-y-3">
       {/* Approval card */}
-      <div className="snailer-card rounded-2xl border border-black/10 bg-white/70 px-4 py-3 shadow-sm">
+      <div className="snailer-card rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-3 shadow-sm">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold tracking-tight">Approval Required</div>
@@ -31,7 +31,7 @@ export function ApprovalBar() {
               {active.prompt}
             </div>
           </div>
-          {secsLeft != null ? <div className="shrink-0 text-xs text-black/45">{secsLeft}s</div> : null}
+          {secsLeft != null ? <div className="shrink-0 text-xs text-slate-500">{secsLeft}s</div> : null}
         </div>
 
         <div className="mt-3 flex flex-wrap gap-2">

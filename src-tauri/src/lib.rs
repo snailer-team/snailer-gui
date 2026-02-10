@@ -62,6 +62,8 @@ pub fn run() {
       commands::git_status_summary,
       commands::gh_issue_create,
       commands::gh_issue_list,
+      commands::git_branch_list,
+      commands::git_branch_checkout,
       commands::git_branch_create,
       commands::git_commit_and_push,
       commands::gh_pr_create,

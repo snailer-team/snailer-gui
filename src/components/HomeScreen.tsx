@@ -176,7 +176,7 @@ export function HomeScreen() {
     <div className="flex h-full flex-col">
       {/* Header Mode Toggle */}
       <div className="px-8 pt-6">
-        <div className="inline-flex items-center rounded-full border border-black/10 bg-white p-1 shadow-sm">
+        <div className="inline-flex items-center rounded-full border border-[color:var(--color-border)] bg-white p-1 shadow-sm">
           {modeChoices.map((m) => {
             const active = displayMode === m.token
             return (
@@ -188,7 +188,7 @@ export function HomeScreen() {
                 }}
                 className={[
                   'rounded-full px-3 py-1.5 text-sm font-medium transition',
-                  active ? 'bg-black/5 text-gray-800' : 'text-gray-500 hover:bg-black/5',
+                  active ? 'bg-slate-100 text-slate-800' : 'text-slate-500 hover:bg-slate-100',
                   !daemon || busy ? 'cursor-not-allowed opacity-60' : '',
                 ].join(' ')}
                 title={m.label}
@@ -209,17 +209,17 @@ export function HomeScreen() {
           </div>
 
           {/* Main Card */}
-          <div className="rounded-3xl border border-black/10 bg-white/75 p-6 shadow-soft backdrop-blur-sm">
+          <div className="rounded-3xl border border-[color:var(--color-border)] bg-white/75 p-6 shadow-[var(--shadow-md)] backdrop-blur-sm">
             {/* Top Row - Folder & Model */}
             <div className="mb-4 flex flex-wrap items-center gap-3">
               <button
-                className="flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium transition hover:bg-white"
+                className="flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-2 text-sm font-medium transition hover:bg-white"
                 onClick={handleFolderClick}
                 title={projectPath || 'Select folder'}
               >
-                <IconFolder className="h-4 w-4 text-black/60" />
-                <span className="max-w-[200px] truncate text-black/85">{folderLabel}</span>
-                <IconChevronDown className="h-3 w-3 text-black/40" />
+                <IconFolder className="h-4 w-4 text-slate-600" />
+                <span className="max-w-[200px] truncate text-slate-800">{folderLabel}</span>
+                <IconChevronDown className="h-3 w-3 text-slate-400" />
               </button>
 
               <div className="ml-auto relative" ref={modelDropdownRef}>
@@ -231,17 +231,17 @@ export function HomeScreen() {
                     if (e.key === 'Escape') setShowModelDropdown(false)
                   }}
                   className={[
-                    'inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/70 px-4 py-2 text-sm font-medium text-black/80 outline-none transition hover:bg-white focus:ring-2 focus:ring-black/10',
+                    'inline-flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-2 text-sm font-medium text-slate-700 outline-none transition hover:bg-white focus:ring-2 focus:ring-blue-100',
                     !daemon || busy ? 'cursor-not-allowed opacity-60' : '',
                   ].join(' ')}
                   title="Model"
                 >
                   <span className="max-w-[260px] truncate">{selectedModelLabel}</span>
-                  <IconChevronDown className="h-4 w-4 text-black/40" />
+                  <IconChevronDown className="h-4 w-4 text-slate-400" />
                 </button>
 
                 {showModelDropdown ? (
-                  <div className="absolute right-0 z-50 mt-2 w-[320px] overflow-hidden rounded-2xl border border-black/10 bg-white shadow-lg">
+                  <div className="absolute right-0 z-50 mt-2 w-[320px] overflow-hidden rounded-2xl border border-[color:var(--color-border)] bg-white shadow-lg">
                     <div className="max-h-[360px] overflow-auto py-1">
                       {models.map((m) => {
                         const active = m.token === model
@@ -250,12 +250,12 @@ export function HomeScreen() {
                             key={m.token}
                             type="button"
                             className={[
-                              'flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-black/80 transition',
-                              active ? 'bg-black/5 font-semibold' : 'hover:bg-black/5',
+                              'flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-slate-700 transition',
+                              active ? 'bg-slate-100 font-semibold' : 'hover:bg-slate-100',
                             ].join(' ')}
                             onClick={() => void handleModelSelect(m.token)}
                           >
-                            <span className="w-4 text-black/60">{active ? '✓' : ''}</span>
+                            <span className="w-4 text-slate-600">{active ? '✓' : ''}</span>
                             <span className="min-w-0 flex-1 truncate">{m.label}</span>
                           </button>
                         )
@@ -269,20 +269,20 @@ export function HomeScreen() {
             {/* Textarea */}
             <div className="relative">
               {!elonEnabled ? null : (
-                <div className="mb-3 rounded-2xl border border-black/10 bg-white/60 p-3">
+                <div className="mb-3 rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] p-3">
                   <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold tracking-wide text-black/70">ElonX HARD Frame</div>
+                    <div className="text-xs font-semibold tracking-wide text-slate-700">ElonX HARD Frame</div>
                     <button
                       type="button"
                       onClick={() => setElonFrame({ collapsed: !elonFrame.collapsed })}
-                      className="rounded-lg border border-black/10 bg-white/60 px-2 py-1 text-[11px] font-medium text-black/60 hover:bg-white"
+                      className="rounded-lg border border-[color:var(--color-border)] bg-[#f8fafc] px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-white"
                     >
                       {elonFrame.collapsed ? 'Show' : 'Hide'}
                     </button>
                   </div>
 
                   {elonFrame.collapsed ? (
-                    <div className="mt-2 text-[12px] text-black/50">
+                    <div className="mt-2 text-[12px] text-slate-500">
                       {(elonFrame.problem || elonFrame.constraints || elonFrame.verification)
                         ? [
                             elonFrame.problem ? `Problem: ${elonFrame.problem}` : null,
@@ -295,31 +295,31 @@ export function HomeScreen() {
                     </div>
                   ) : (
                     <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Problem</div>
+                      <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Problem</div>
                         <input
                           value={elonFrame.problem}
                           onChange={(e) => setElonFrame({ problem: e.target.value })}
                           placeholder="What are we building?"
-                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                          className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
                         />
                       </div>
-                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Constraints</div>
+                      <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Constraints</div>
                         <input
                           value={elonFrame.constraints}
                           onChange={(e) => setElonFrame({ constraints: e.target.value })}
                           placeholder="Hard limits"
-                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                          className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
                         />
                       </div>
-                      <div className="rounded-xl border border-black/10 bg-white/60 px-3 py-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-wide text-black/45">Verification</div>
+                      <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Verification</div>
                         <input
                           value={elonFrame.verification}
                           onChange={(e) => setElonFrame({ verification: e.target.value })}
                           placeholder="Proof of done"
-                          className="mt-1 w-full bg-transparent text-[13px] text-black/80 placeholder:text-black/30 outline-none"
+                          className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
                         />
                       </div>
                     </div>
@@ -337,7 +337,7 @@ export function HomeScreen() {
                   }
                 }}
                 placeholder="Find and fix TODOs in the codebase..."
-                className="min-h-[140px] w-full resize-none rounded-2xl border border-black/10 bg-white/70 px-5 py-4 text-[15px] leading-relaxed outline-none transition placeholder:text-black/30 focus:border-black/20 focus:bg-white focus:ring-2 focus:ring-black/10 disabled:bg-black/5"
+                className="min-h-[140px] w-full resize-none rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] px-5 py-4 text-[15px] leading-relaxed outline-none transition placeholder:text-slate-400 focus:border-[color:var(--color-border-strong)] focus:bg-white focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
               />
               <div className="absolute bottom-4 right-4">
                 <Button
@@ -370,7 +370,7 @@ export function HomeScreen() {
                     }
                   }}
                   placeholder="/path/to/project"
-                  className="flex-1 rounded-xl border border-black/10 bg-white/70 px-4 py-2.5 font-mono text-sm outline-none transition placeholder:text-black/35 focus:border-black/20 focus:ring-2 focus:ring-black/10"
+                  className="flex-1 rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-2.5 font-mono text-sm outline-none transition placeholder:text-slate-400 focus:border-[color:var(--color-border-strong)] focus:ring-2 focus:ring-blue-100"
                 />
                 <Button
                   variant="default"
@@ -391,7 +391,7 @@ export function HomeScreen() {
             )}
 
             {/* Status */}
-            <div className="mt-3 text-center text-xs text-gray-400">
+            <div className="mt-3 text-center text-xs text-slate-400">
               {busy ? (
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-black/15 border-t-black/40" />
@@ -426,7 +426,7 @@ export function HomeScreen() {
       {/* Footer */}
       <div className="px-8 pb-6">
         <div className="mx-auto max-w-2xl">
-          <div className="rounded-2xl border border-black/5 bg-white/60 px-4 py-3 text-center text-xs text-gray-500">
+          <div className="rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-3 text-center text-xs text-slate-500">
             Snailer can read, modify, and execute files in this folder. Use only with trusted folders.
           </div>
         </div>

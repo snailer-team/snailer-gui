@@ -2526,6 +2526,22 @@ pub struct GitBranchResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitBranchItem {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitBranchListResponse {
+    pub current_branch: String,
+    pub branches: Vec<GitBranchItem>,
+    pub changed_files: u32,
+    pub added: u32,
+    pub removed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GitCommitPushResponse {
     pub success: bool,
     pub sha: String,
@@ -2584,6 +2600,36 @@ pub struct GhMergeResponse {
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffResponse {
     pub patch: String,
+}
+
+fn sanitize_git_branch_name(branch_name: &str) -> String {
+    branch_name
+        .trim()
+        .replace(' ', "-")
+        .replace("'", "")
+        .replace("\"", "")
+        .replace(":", "-")
+        .replace("..", "-")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '/')
+        .collect::<String>()
+}
+
+fn parse_numstat_totals(text: &str) -> (u32, u32) {
+    let mut added = 0_u32;
+    let mut removed = 0_u32;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let a = parts.next().unwrap_or("");
+        let r = parts.next().unwrap_or("");
+        if let Ok(v) = a.parse::<u32>() {
+            added = added.saturating_add(v);
+        }
+        if let Ok(v) = r.parse::<u32>() {
+            removed = removed.saturating_add(v);
+        }
+    }
+    (added, removed)
 }
 
 /// Create a GitHub issue via `gh issue create`.
@@ -2684,17 +2730,7 @@ pub async fn git_branch_create(
     cwd: String,
     branch_name: String,
 ) -> Result<GitBranchResponse, String> {
-    // Sanitize branch name: replace spaces and invalid chars with dashes
-    let sanitized = branch_name
-        .trim()
-        .replace(' ', "-")
-        .replace("'", "")
-        .replace("\"", "")
-        .replace(":", "-")
-        .replace("..", "-")
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_' || *c == '/')
-        .collect::<String>();
+    let sanitized = sanitize_git_branch_name(&branch_name);
 
     if sanitized.is_empty() {
         return Err("Invalid branch name".to_string());
@@ -2725,6 +2761,73 @@ pub async fn git_branch_create(
     })
 }
 
+/// List local git branches and current uncommitted summary.
+#[tauri::command]
+pub async fn git_branch_list(cwd: String) -> Result<GitBranchListResponse, String> {
+    let (_, current_branch_raw) = run_cmd_capture("git", &["branch", "--show-current"], Some(&cwd))?;
+    let current_branch = current_branch_raw.trim().to_string();
+
+    let (_, refs_out) = run_cmd_capture(
+        "git",
+        &["for-each-ref", "--sort=-committerdate", "--format=%(refname:short)", "refs/heads"],
+        Some(&cwd),
+    )?;
+
+    let mut branch_names: Vec<String> = refs_out
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if !current_branch.is_empty() && !branch_names.iter().any(|b| b == &current_branch) {
+        branch_names.insert(0, current_branch.clone());
+    }
+    if branch_names.is_empty() && !current_branch.is_empty() {
+        branch_names.push(current_branch.clone());
+    }
+
+    let branches = branch_names
+        .into_iter()
+        .map(|name| GitBranchItem { name })
+        .collect::<Vec<_>>();
+
+    let (_, status_short) = run_cmd_capture("git", &["status", "--short"], Some(&cwd))?;
+    let changed_files = status_short
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count() as u32;
+
+    let (_, unstaged_numstat) = run_cmd_capture("git", &["diff", "--numstat"], Some(&cwd))?;
+    let (_, staged_numstat) = run_cmd_capture("git", &["diff", "--cached", "--numstat"], Some(&cwd))?;
+    let (unstaged_added, unstaged_removed) = parse_numstat_totals(&unstaged_numstat);
+    let (staged_added, staged_removed) = parse_numstat_totals(&staged_numstat);
+
+    Ok(GitBranchListResponse {
+        current_branch,
+        branches,
+        changed_files,
+        added: unstaged_added.saturating_add(staged_added),
+        removed: unstaged_removed.saturating_add(staged_removed),
+    })
+}
+
+/// Checkout an existing git branch.
+#[tauri::command]
+pub async fn git_branch_checkout(cwd: String, branch_name: String) -> Result<GitBranchResponse, String> {
+    let sanitized = sanitize_git_branch_name(&branch_name);
+    if sanitized.is_empty() {
+        return Err("Invalid branch name".to_string());
+    }
+    let (code, text) = run_cmd_capture("git", &["checkout", &sanitized], Some(&cwd))?;
+    if code != 0 {
+        return Err(format!("git checkout failed (exit {}): {}", code, text));
+    }
+    Ok(GitBranchResponse {
+        success: true,
+        branch: sanitized,
+    })
+}
+
 /// Stage files, commit, and push to remote.
 #[tauri::command]
 pub async fn git_commit_and_push(
@@ -2732,14 +2835,30 @@ pub async fn git_commit_and_push(
     branch: String,
     message: String,
     files: Vec<String>,
+    include_unstaged: Option<bool>,
+    push: Option<bool>,
 ) -> Result<GitCommitPushResponse, String> {
-    // Stage files
-    if files.is_empty() {
-        let (code, text) = run_cmd_capture("git", &["add", "-A"], Some(&cwd))?;
-        if code != 0 {
-            return Err(format!("git add -A failed (exit {}): {}", code, text));
+    let should_stage = include_unstaged.unwrap_or(true);
+    let should_push = push.unwrap_or(true);
+
+    // Stage files (optional, for UI parity with "Include unstaged")
+    if should_stage {
+        if files.is_empty() {
+            let (code, text) = run_cmd_capture("git", &["add", "-A"], Some(&cwd))?;
+            if code != 0 {
+                return Err(format!("git add -A failed (exit {}): {}", code, text));
+            }
+        } else {
+            let mut args = vec!["add"];
+            let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+            args.extend(file_refs);
+            let (code, text) = run_cmd_capture("git", &args, Some(&cwd))?;
+            if code != 0 {
+                return Err(format!("git add failed (exit {}): {}", code, text));
+            }
         }
-    } else {
+    } else if !files.is_empty() {
+        // Explicit file list still stages those files even when include_unstaged=false.
         let mut args = vec!["add"];
         let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
         args.extend(file_refs);
@@ -2768,14 +2887,16 @@ pub async fn git_commit_and_push(
     let (_, sha_text) = run_cmd_capture("git", &["rev-parse", "HEAD"], Some(&cwd))?;
     let sha = sha_text.trim().to_string();
 
-    // Push
-    let (code, text) = run_cmd_capture(
-        "git",
-        &["push", "-u", "origin", &branch],
-        Some(&cwd),
-    )?;
-    if code != 0 {
-        return Err(format!("git push failed (exit {}): {}", code, text));
+    if should_push {
+        // Push
+        let (code, text) = run_cmd_capture(
+            "git",
+            &["push", "-u", "origin", &branch],
+            Some(&cwd),
+        )?;
+        if code != 0 {
+            return Err(format!("git push failed (exit {}): {}", code, text));
+        }
     }
 
     Ok(GitCommitPushResponse {

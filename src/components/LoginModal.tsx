@@ -123,8 +123,8 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-3xl border border-black/10 bg-white p-6 shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-1000 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-3xl border border-[color:var(--color-border)] bg-white p-6 shadow-2xl">
         {/* Header */}
         <div className="mb-6 flex items-center justify-between">
           <h2 className="text-xl font-bold tracking-tight">
@@ -132,7 +132,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
           </h2>
           <button
             onClick={handleCancel}
-            className="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -143,11 +143,11 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
         {/* Content based on step */}
         {step === 'select' && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-600">Choose your login method:</p>
+            <p className="text-sm text-slate-600">Choose your login method:</p>
 
             <button
               onClick={handleDeviceLogin}
-              className="flex w-full items-center gap-4 rounded-2xl border border-black/10 p-4 text-left transition hover:border-black/20 hover:bg-gray-50"
+              className="flex w-full items-center gap-4 rounded-2xl border border-[color:var(--color-border)] p-4 text-left transition hover:border-black/20 hover:bg-slate-50"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100">
                 <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,13 +161,13 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
               </div>
               <div>
                 <div className="font-semibold">Login with Browser</div>
-                <div className="text-sm text-gray-500">Sign in via your web browser</div>
+                <div className="text-sm text-slate-500">Sign in via your web browser</div>
               </div>
             </button>
 
             <button
               onClick={() => setStep('apikey')}
-              className="flex w-full items-center gap-4 rounded-2xl border border-black/10 p-4 text-left transition hover:border-black/20 hover:bg-gray-50"
+              className="flex w-full items-center gap-4 rounded-2xl border border-[color:var(--color-border)] p-4 text-left transition hover:border-black/20 hover:bg-slate-50"
             >
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-100">
                 <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -181,7 +181,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
               </div>
               <div>
                 <div className="font-semibold">Login with API Key</div>
-                <div className="text-sm text-gray-500">Enter your Anthropic API key directly</div>
+                <div className="text-sm text-slate-500">Enter your Anthropic API key directly</div>
               </div>
             </button>
 
@@ -199,26 +199,26 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
         {step === 'device' && (
           <div className="flex flex-col items-center py-8">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-200 border-t-blue-600"></div>
-            <p className="mt-4 text-gray-600">Starting device login...</p>
+            <p className="mt-4 text-slate-600">Starting device login...</p>
           </div>
         )}
 
         {step === 'polling' && deviceCode && (
           <div className="space-y-4">
-            <div className="rounded-2xl bg-gray-50 p-4">
-              <p className="mb-2 text-sm text-gray-500">Your verification code:</p>
+            <div className="rounded-2xl bg-[#f8fafc] p-4">
+              <p className="mb-2 text-sm text-slate-500">Your verification code:</p>
               <div className="flex items-center justify-between">
                 <code className="text-2xl font-bold tracking-wider">{deviceCode.userCode}</code>
                 <button
                   onClick={handleCopyUserCode}
-                  className="rounded-xl bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-gray-50"
+                  className="rounded-xl bg-white px-3 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
                 >
                   {copied ? 'Copied!' : 'Copy'}
                 </button>
               </div>
             </div>
 
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-slate-600">
               Enter this code in your browser to complete authentication.
               <br />
               The browser should open automatically.
@@ -226,7 +226,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
 
             <div className="flex items-center gap-2">
               <div className="h-2 w-2 animate-pulse rounded-full bg-blue-500"></div>
-              <span className="text-sm text-gray-500">{pollStatus}</span>
+              <span className="text-sm text-slate-500">{pollStatus}</span>
             </div>
 
             <div className="flex gap-3 pt-4">
@@ -246,7 +246,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
 
         {step === 'apikey' && (
           <div className="space-y-4">
-            <p className="text-sm text-gray-600">
+            <p className="text-sm text-slate-600">
               Enter your Anthropic API key. You can get one from{' '}
               <a
                 href="https://console.anthropic.com/settings/keys"
@@ -270,7 +270,7 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
                 }
               }}
               placeholder="sk-ant-..."
-              className="w-full rounded-xl border border-black/10 bg-gray-50 px-4 py-3 font-mono text-sm outline-none transition placeholder:text-gray-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
+              className="w-full rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-3 font-mono text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-300 focus:ring-2 focus:ring-blue-100"
               autoFocus
             />
 
@@ -297,8 +297,8 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <p className="mt-4 text-lg font-semibold text-gray-800">Login Successful!</p>
-            <p className="text-sm text-gray-500">Redirecting...</p>
+            <p className="mt-4 text-lg font-semibold text-slate-800">Login Successful!</p>
+            <p className="text-sm text-slate-500">Redirecting...</p>
           </div>
         )}
 
@@ -315,8 +315,8 @@ export function LoginModal({ isOpen, onClose, onSuccess, mode = 'login' }: Login
                   />
                 </svg>
               </div>
-              <p className="mt-4 text-lg font-semibold text-gray-800">Login Failed</p>
-              <p className="mt-2 text-center text-sm text-gray-500">{error}</p>
+              <p className="mt-4 text-lg font-semibold text-slate-800">Login Failed</p>
+              <p className="mt-2 text-center text-sm text-slate-500">{error}</p>
             </div>
 
             <div className="flex gap-3">

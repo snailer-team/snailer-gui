@@ -329,6 +329,89 @@ export function calculateTokenCost(model: string, inputTokens: number, outputTok
   return inputCost + outputCost
 }
 
+function ensureModelItems(
+  modelItems: Array<{ label: string; token: string; desc: string }>,
+): Array<{ label: string; token: string; desc: string }> {
+  const normalizeToken = (value: string) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[._\s]+/g, '-')
+      .replace(/-+/g, '-')
+
+  const normalizeLabel = (value: string) =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[._/-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+
+  const toCanonicalToken = (value: string) => {
+    const t = normalizeToken(value)
+    if (t === 'auto' || t === 'auto-select' || t === 'autoselect') return 'auto'
+    if (t === 'claude-opus-4.6'.replace(/\./g, '-')) return 'claude-opus-4-6'
+    return t
+  }
+
+  const deduped: Array<{ label: string; token: string; desc: string }> = []
+  const seenToken = new Set<string>()
+  const seenLabel = new Set<string>()
+
+  for (const raw of modelItems) {
+    const token = String(raw.token ?? '').trim()
+    const label = String(raw.label ?? '').trim()
+    if (!token || !label) continue
+
+    const canonicalToken = toCanonicalToken(token)
+    const canonicalLabel = normalizeLabel(label)
+    const isAutoFamily = canonicalToken === 'auto' || canonicalLabel === 'auto select'
+    const tokenKey = isAutoFamily ? 'auto' : canonicalToken
+    const labelKey = isAutoFamily ? 'auto select' : canonicalLabel
+
+    if (seenToken.has(tokenKey) || seenLabel.has(labelKey)) continue
+    seenToken.add(tokenKey)
+    seenLabel.add(labelKey)
+
+    deduped.push({
+      label: isAutoFamily ? 'Auto Select' : label,
+      token: isAutoFamily ? 'auto' : token,
+      desc: String(raw.desc ?? ''),
+    })
+  }
+
+  const items = deduped
+
+  // CLI parity: expose explicit auto-router option in GUI.
+  const autoIdx = items.findIndex((m) => toCanonicalToken(m.token) === 'auto' || normalizeLabel(m.label) === 'auto select')
+  if (autoIdx === -1) {
+    items.unshift({
+      label: 'Auto Select',
+      token: 'auto',
+      desc: 'Route model automatically (CLI parity)',
+    })
+  } else {
+    items[autoIdx] = {
+      ...items[autoIdx],
+      label: 'Auto Select',
+      desc: items[autoIdx]?.desc || 'Route model automatically (CLI parity)',
+    }
+  }
+
+  if (!items.some((m) => toCanonicalToken(m.token) === 'claude-opus-4-6')) {
+    const claudeIdx = items.findIndex((m) => normalizeToken(m.token).startsWith('claude-'))
+    const insertAt = claudeIdx >= 0 ? claudeIdx : 0
+    items.splice(insertAt, 0, { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' })
+  }
+
+  if (!items.some((m) => normalizeToken(m.token) === 'kimi-k2-5')) {
+    const kimiIdx = items.findIndex((m) => normalizeToken(m.token).startsWith('kimi-'))
+    const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
+    items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
+  }
+
+  return items
+}
+
 export interface ElonApprovalRequest {
   id: string
   agentId: string
@@ -1644,21 +1727,7 @@ export const useAppStore = create<AppState>()(
 
 	          try {
 	            const slash = await client.slashList()
-            const modelItems = (() => {
-              const items = [...slash.modelItems]
-              // Add Claude Opus 4.6 if not present
-              if (!items.some((m) => m.token === 'claude-opus-4-6')) {
-                const claudeIdx = items.findIndex((m) => m.token.startsWith('claude-'))
-                const insertAt = claudeIdx >= 0 ? claudeIdx : 0
-                items.splice(insertAt, 0, { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' })
-              }
-              if (!items.some((m) => m.token === 'kimi-k2.5')) {
-                const kimiIdx = items.findIndex((m) => m.token.startsWith('kimi-'))
-                const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
-                items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
-              }
-              return items
-            })()
+            const modelItems = ensureModelItems(slash.modelItems)
 	            set({
 	              slashItems: slash.slashItems,
 	              modeItems: ensureElonModeItem(
@@ -1682,12 +1751,13 @@ export const useAppStore = create<AppState>()(
 	                  { label: 'Classic', token: 'classic' },
 	                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
 	                ]),
-	                modelItems: [
+	                modelItems: ensureModelItems([
+                    { label: 'Auto Select', token: 'auto', desc: 'Route model automatically (CLI parity)' },
 	                  { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' },
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
-                  { label: 'gpt-5', token: 'gpt-5', desc: '' },
-                ],
+                    { label: 'gpt-5', token: 'gpt-5', desc: '' },
+                  ]),
               })
             } else {
               throw e

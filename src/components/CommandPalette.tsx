@@ -43,15 +43,6 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [createSession, selectSession])
 
-  useEffect(() => {
-    void (async () => {
-      const auth = await authService.refresh()
-      setIsLoggedIn(authService.isLoggedIn())
-      setUserEmail(auth?.email ?? null)
-      setUserName(auth?.name ?? null)
-    })()
-  }, [])
-
   const modeCommands = useMemo(
     () =>
       (modeItems.length ? modeItems : [{ label: 'Classic', token: 'classic' }]).map((m) => ({
@@ -112,7 +103,7 @@ export function CommandPalette() {
         onMouseDown={() => setOpen(false)}
       >
       <div
-        className="w-full max-w-xl rounded-2xl border border-black/10 bg-white/90 shadow-soft backdrop-blur"
+        className="w-full max-w-xl rounded-2xl border border-[color:var(--color-border)] bg-white shadow-[var(--shadow-md)] backdrop-blur"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <Command className="[&_[cmdk-input]]:w-full [&_[cmdk-input]]:rounded-2xl [&_[cmdk-input]]:border-0 [&_[cmdk-input]]:bg-transparent [&_[cmdk-input]]:px-4 [&_[cmdk-input]]:py-4 [&_[cmdk-input]]:text-sm [&_[cmdk-input]]:outline-none">
@@ -132,13 +123,13 @@ export function CommandPalette() {
                     setOpen(false)
                   })()
                 }}
-                className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
               >
                 New Session
               </Command.Item>
             </Command.Group>
 
-            <Command.Separator className="my-2 h-px bg-black/5" />
+            <Command.Separator className="my-2 h-px bg-slate-100" />
 
             <Command.Group heading="Account" className="px-2 py-2 text-xs text-[color:var(--color-text-muted)]">
               {!isLoggedIn ? (
@@ -150,7 +141,7 @@ export function CommandPalette() {
                       setLoginMode('login')
                       setShowLoginModal(true)
                     }}
-                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                   >
                     <div className="font-mono">/login</div>
                     <div className="text-xs text-[color:var(--color-text-muted)]">Login to Snailer account</div>
@@ -161,7 +152,7 @@ export function CommandPalette() {
                       setOpen(false)
                       authService.openCreateAccount()
                     }}
-                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                   >
                     <div className="font-mono">/create-account</div>
                     <div className="text-xs text-[color:var(--color-text-muted)]">Create new Anthropic account</div>
@@ -183,7 +174,7 @@ export function CommandPalette() {
                       setLoginMode('switch')
                       setShowLoginModal(true)
                     }}
-                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                   >
                     <div className="font-mono">/switch-account</div>
                     <div className="text-xs text-[color:var(--color-text-muted)]">Switch to another account</div>
@@ -197,7 +188,7 @@ export function CommandPalette() {
                       setUserEmail(null)
                       setUserName(null)
                     }}
-                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                   >
                     <div className="font-mono">/logout</div>
                     <div className="text-xs text-[color:var(--color-text-muted)]">Logout</div>
@@ -206,7 +197,7 @@ export function CommandPalette() {
               )}
             </Command.Group>
 
-            <Command.Separator className="my-2 h-px bg-black/5" />
+            <Command.Separator className="my-2 h-px bg-slate-100" />
 
             <Command.Group heading="Mode" className="px-2 py-2 text-xs text-[color:var(--color-text-muted)]">
               {modeCommands.map((c) => (
@@ -217,7 +208,7 @@ export function CommandPalette() {
                     void c.run()
                     setOpen(false)
                   }}
-                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                 >
                   {c.label}
                 </Command.Item>
@@ -233,7 +224,7 @@ export function CommandPalette() {
                     void c.run()
                     setOpen(false)
                   }}
-                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                 >
                   {c.label}
                 </Command.Item>
@@ -250,7 +241,7 @@ export function CommandPalette() {
                       void c.run()
                       setOpen(false)
                     }}
-                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                    className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                   >
                     {c.label}
                   </Command.Item>
@@ -258,7 +249,7 @@ export function CommandPalette() {
               </Command.Group>
             ) : null}
 
-            <Command.Separator className="my-2 h-px bg-black/5" />
+            <Command.Separator className="my-2 h-px bg-slate-100" />
 
             <Command.Group heading="Slash" className="px-2 py-2 text-xs text-[color:var(--color-text-muted)]">
               {slashItems.slice(0, 80).map((s) => (
@@ -293,7 +284,7 @@ export function CommandPalette() {
                       setOpen(false)
                     })()
                   }}
-                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-black/5"
+                  className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
                 >
                   <div className="font-mono">{s.cmd}</div>
                   <div className="text-xs text-[color:var(--color-text-muted)]">{s.desc}</div>

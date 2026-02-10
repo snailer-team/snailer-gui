@@ -63,20 +63,20 @@ export default function App() {
   }, [lastToast])
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#FAF9F6]">
+    <div className="h-screen w-screen overflow-hidden bg-[color:var(--color-app-bg)] p-0">
       <Toaster position="top-right" richColors />
       <CommandPalette />
 
       {error && (
         <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2">
-          <div className="rounded-2xl border border-red-200 bg-white px-5 py-3 shadow-lg">
+          <div className="rounded-2xl border border-red-200 bg-white px-5 py-3 shadow-[var(--shadow-md)]">
             <div className="flex items-center gap-4">
               <div className="text-sm">
                 <span className="font-semibold text-red-600">오류: </span>
-                <span className="text-gray-600">{error}</span>
+                <span className="text-slate-600">{error}</span>
               </div>
               <button
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 hover:bg-gray-100"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100"
                 onClick={clearError}
               >
                 닫기
@@ -86,20 +86,20 @@ export default function App() {
         </div>
       )}
 
-      <div className="flex h-full">
+      <div className="flex h-full overflow-hidden rounded-none border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface)] shadow-[var(--shadow-lg)]">
         {/* Sidebar */}
-        <div className="w-[300px] flex-shrink-0 border-r border-black/5 bg-[#F5F3EE]">
+        <div className="w-[290px] flex-shrink-0 border-r border-[color:var(--color-border)] bg-[#eff1f4]">
           <Sidebar />
         </div>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-hidden flex">
+        <main className="flex flex-1 overflow-hidden bg-[color:var(--color-panel)]">
           {isSettingsView ? (
-            <div className="h-full w-full overflow-hidden">
+            <div className="h-full w-full overflow-hidden bg-[color:var(--color-panel)]">
               <SettingsView />
             </div>
           ) : isElonMode ? (
-            <div className="h-full w-full overflow-hidden bg-[#FAF9F6]">
+            <div className="h-full w-full overflow-hidden bg-[color:var(--color-panel)]">
               <ElonLayout />
             </div>
           ) : (
@@ -112,7 +112,7 @@ export default function App() {
                     <div className="flex-1 min-h-0 overflow-hidden">
                       <ChatArea />
                     </div>
-                    <div className="flex-shrink-0 border-t border-black/5 bg-white/50">
+                    <div className="flex-shrink-0 bg-[color:var(--color-panel)]">
                       <ApprovalBar />
                       <div className="px-4 pt-4">
                         <PromptStageWizard />
@@ -120,7 +120,7 @@ export default function App() {
                       <div className="px-4 pt-4">
                         <ClarifyingPromptPanel />
                       </div>
-                      <div className="p-4">
+                      <div className="px-4 pb-1 pt-1">
                         <InputBar />
                       </div>
                     </div>
@@ -129,7 +129,7 @@ export default function App() {
               </div>
 
               {showSplitRightPanel ? (
-                <div className="h-full w-[420px] flex-shrink-0 border-l border-black/5 bg-white/30 p-4">
+                <div className="h-full w-[420px] flex-shrink-0 border-l border-[color:var(--color-border)] bg-[color:var(--color-surface)] p-3">
                   <RightPanel />
                 </div>
               ) : null}

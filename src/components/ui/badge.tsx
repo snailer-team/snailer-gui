@@ -4,15 +4,15 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/cn'
 
 const badgeVariants = cva(
-  'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+  'inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium',
   {
     variants: {
       variant: {
-        default: 'bg-black/5 text-[color:var(--color-text-secondary)]',
-        success: 'bg-[color:var(--color-success)]/60 text-black',
-        warning: 'bg-[color:var(--color-warning)]/70 text-black',
-        error: 'bg-[color:var(--color-error)]/70 text-black',
-        info: 'bg-[color:var(--color-info)]/60 text-black',
+        default: 'border-[color:var(--color-border)] bg-[color:var(--color-panel-muted)] text-[color:var(--color-text-secondary)]',
+        success: 'border-emerald-200 bg-[color:var(--color-success)] text-emerald-700',
+        warning: 'border-amber-200 bg-[color:var(--color-warning)] text-amber-700',
+        error: 'border-red-200 bg-[color:var(--color-error)] text-red-700',
+        info: 'border-blue-200 bg-[color:var(--color-info)] text-blue-700',
       },
     },
     defaultVariants: {
@@ -28,4 +28,3 @@ export interface BadgeProps
 export function Badge({ className, variant, ...props }: BadgeProps) {
   return <div className={cn(badgeVariants({ variant }), className)} {...props} />
 }
-
