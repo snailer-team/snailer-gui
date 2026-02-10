@@ -39,8 +39,8 @@ function CollapsibleDiff({ patch, maxLines = 15 }: CollapsibleDiffProps) {
   const hiddenCount = lines.length - maxLines
 
   return (
-    <div className="my-2 overflow-hidden rounded-xl border border-black/10 bg-transparent">
-      <div className="max-h-[300px] overflow-auto bg-transparent p-2">
+    <div className="my-2 overflow-hidden rounded-xl bg-transparent">
+      <div className="bg-transparent p-2">
         {visibleLines.map((line, i) => (
           <DiffLine key={i} line={line} lineNum={i + 1} />
         ))}
@@ -62,7 +62,7 @@ interface AgentLogItemProps {
   diffPatch?: string
 }
 
-function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
+function AgentLogItem({ event, diffPatch, isNew }: AgentLogItemProps & { isNew?: boolean }) {
   const { type, op, path, linesRead, linesAdded, linesRemoved, note, message, phase, line, preview } = event
 
   // FileOp events
@@ -75,12 +75,12 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
 
     // Bullet color
     const bulletColor = isBash
-      ? 'bg-amber-500/80'
+      ? 'bg-amber-500/70'
       : isEdit || isCreate
-        ? 'bg-emerald-500/80'
+        ? 'bg-emerald-500/70'
         : isSearch
-          ? 'bg-sky-500/80'
-          : 'bg-black/35'
+          ? 'bg-sky-500/70'
+          : 'bg-black/30'
 
     // Label
     const label = isBash ? 'Bash' : isEdit ? 'Edit' : isCreate ? 'Create' : isSearch ? 'Search' : 'Read'
@@ -102,65 +102,37 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
     const patchContent = diffPatch || (preview ? preview.join('\n') : '')
 
     return (
-      <div className="flex items-start gap-2 py-1.5">
-        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${bulletColor}`} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-sm font-semibold text-black/80">{label}</span>
-            {fileName && (
-              <code className="rounded-md bg-black/5 px-1.5 py-0.5 text-sm font-mono text-black/70">
-                {fileName}
-              </code>
-            )}
-            {resultText && !isBash && (
-              <span className="text-xs text-black/45">{resultText}</span>
-            )}
-          </div>
-          {/* Bash command and output */}
-          {isBash && note && (
-            <div className="mt-1 font-mono text-sm text-black/70">
-              <div className="text-amber-700">{note}</div>
-            </div>
-          )}
-          {/* Show output for bash if available */}
-          {isBash && preview && preview.length > 0 && (
-            <div className="mt-1 border-l border-black/10 pl-3 font-mono text-xs text-black/60">
-              {preview.slice(0, 5).map((line, i) => (
-                <div key={i} className="flex">
-                  <span className="mr-2 text-black/35">└</span>
-                  <span>{line}</span>
-                </div>
-              ))}
-              {preview.length > 5 && (
-                <div className="text-black/40">... +{preview.length - 5} lines</div>
-              )}
-            </div>
-          )}
-          {/* Diff preview for edits/creates */}
-          {(isEdit || isCreate) && patchContent && (
-            <CollapsibleDiff patch={patchContent} />
-          )}
-        </div>
+      <div className={`flex items-center gap-1.5 py-0.5 ${isNew ? 'animate-fade-in' : ''}`}>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${bulletColor}`} />
+        <span className="text-xs font-medium text-black/60">{label}</span>
+        {fileName && (
+          <code className="text-xs font-mono text-black/50">{fileName}</code>
+        )}
+        {resultText && !isBash && (
+          <span className="text-[10px] text-black/40">{resultText}</span>
+        )}
+        {/* Bash command inline */}
+        {isBash && note && (
+          <span className="text-xs font-mono text-amber-600/80 truncate max-w-[200px]">{note}</span>
+        )}
       </div>
     )
   }
 
   // Start/Done/Fail events
   if (type === 'Start' || type === 'Done' || type === 'Fail') {
-    const bulletColor = type === 'Done' ? 'bg-green-500' : type === 'Fail' ? 'bg-red-500' : 'bg-blue-500'
-    const textColor = type === 'Done' ? 'text-emerald-700' : type === 'Fail' ? 'text-rose-700' : 'text-sky-700'
+    const bulletColor = type === 'Done' ? 'bg-green-500/70' : type === 'Fail' ? 'bg-red-500/70' : 'bg-blue-500/70'
+    const textColor = type === 'Done' ? 'text-emerald-600' : type === 'Fail' ? 'text-rose-600' : 'text-sky-600'
 
     return (
-      <div className="flex items-start gap-2 py-2">
-        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${bulletColor}`} />
-        <div className="min-w-0 flex-1">
-          <span className={`text-sm font-semibold ${textColor}`}>
-            {type === 'Done' ? 'Done!' : type === 'Fail' ? 'Failed' : phase || 'Starting'}
-          </span>
-          {message && (
-            <span className="ml-1 text-sm text-black/65">{message}</span>
-          )}
-        </div>
+      <div className={`flex items-center gap-1.5 py-0.5 ${isNew ? 'animate-fade-in' : ''}`}>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${bulletColor}`} />
+        <span className={`text-xs font-medium ${textColor}`}>
+          {type === 'Done' ? 'Done' : type === 'Fail' ? 'Failed' : phase || 'Starting'}
+        </span>
+        {message && (
+          <span className="text-xs text-black/50 truncate">{message}</span>
+        )}
       </div>
     )
   }
@@ -168,9 +140,9 @@ function AgentLogItem({ event, diffPatch }: AgentLogItemProps) {
   // StatusLine - thinking indicator
   if (type === 'StatusLine' && line) {
     return (
-      <div className="flex items-center gap-2 py-1 text-sm text-black/55 italic">
-        <span className="text-black/45">Thought for</span>
-        <span className="text-black/65">{line}</span>
+      <div className={`flex items-center gap-1.5 py-0.5 text-xs text-black/45 ${isNew ? 'animate-fade-in' : ''}`}>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-purple-400/60 animate-pulse" />
+        <span className="italic">thinking {line}</span>
       </div>
     )
   }
@@ -194,6 +166,7 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const stickToBottomRef = useRef(true)
+  const seenIdsRef = useRef<Set<string>>(new Set())
 
   // Get agentEvents from the active session
   const session = sessions.find((s) => s.id === activeSessionId)
@@ -211,10 +184,13 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
           diffPatch = modifiedFile.patch
         }
       }
+      const isNew = !seenIdsRef.current.has(event.id)
+      if (isNew) seenIdsRef.current.add(event.id)
       return {
         id: event.id,
         event,
         diffPatch,
+        isNew,
       }
     })
   }, [visibleEvents, modifiedFilesByPath])
@@ -238,22 +214,22 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
   if (!hasItems) return null
 
   return (
-    <div className="rounded-2xl border border-black/10 bg-transparent text-black/80">
-      {/* Content */}
+    <div className="text-black/70">
+      {/* Compact streaming log */}
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="max-h-[420px] overflow-auto px-4 py-3 space-y-0.5"
+        className="px-3 py-1.5 space-y-0"
       >
-        {displayItems.map(({ id, event, diffPatch }) => (
-          <AgentLogItem key={id} event={event} diffPatch={diffPatch} />
+        {displayItems.map(({ id, event, diffPatch, isNew }) => (
+          <AgentLogItem key={id} event={event} diffPatch={diffPatch} isNew={isNew} />
         ))}
 
         {/* Working indicator */}
         {isRunning && (
-          <div className="flex items-center gap-2 py-2 text-sm text-black/55">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500/80" />
-            <span>Working…</span>
+          <div className="flex items-center gap-1.5 py-0.5 text-xs text-black/45">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500/70" />
+            <span>working…</span>
           </div>
         )}
         <div ref={bottomRef} />
