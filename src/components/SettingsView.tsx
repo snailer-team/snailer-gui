@@ -147,6 +147,7 @@ function ContextGrid({ used, max }: { used: number; max: number }) {
 
 export function SettingsView() {
   const daemon = useAppStore((s) => s.daemon)
+  const connect = useAppStore((s) => s.connect)
   const projectPath = useAppStore((s) => s.projectPath)
   const mode = useAppStore((s) => s.mode)
   const model = useAppStore((s) => s.model)
@@ -375,9 +376,18 @@ export function SettingsView() {
   const installCli = async () => {
     setCliInstalling(true)
     try {
+      // Kill existing daemon before repair/install
+      await invoke('engine_kill')
+      // Small delay to ensure process is fully terminated
+      await new Promise((r) => setTimeout(r, 500))
+
       await invoke<string>('snailer_cli_ensure_installed')
       toast('Snailer CLI installed')
       await refreshCliStatus()
+
+      // Reconnect to start fresh daemon
+      await connect()
+      toast('Daemon restarted')
     } catch (e) {
       toast('Failed to install Snailer CLI', { description: e instanceof Error ? e.message : String(e) })
     } finally {
@@ -509,29 +519,44 @@ export function SettingsView() {
                   <div className="text-sm font-semibold text-black/80">/account</div>
                   <div className="text-xs text-black/50 mt-1">Plan and account status</div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={!daemon || accountLoading}
-                  onClick={() => void refreshAccount()}
-                >
-                  {accountLoading ? 'Refreshing…' : 'Refresh'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!daemon || accountLoading}
+                    onClick={() => void refreshAccount()}
+                  >
+                    {accountLoading ? 'Refreshing…' : 'Refresh'}
+                  </Button>
+                  {isLoggedIn && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleLogout()}
+                    >
+                      Logout
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="rounded-xl border border-black/5 bg-white/70 p-3">
                   <div className="text-xs text-black/45">Email</div>
                   <div className="mt-1 text-sm text-black/80">
-                    {userName || userEmail || account?.email || '—'}
+                    {isLoggedIn ? (userName || userEmail || account?.email || '—') : '—'}
                   </div>
                 </div>
                 <div className="rounded-xl border border-black/5 bg-white/70 p-3">
                   <div className="text-xs text-black/45">Plan</div>
                   <div className="mt-1 text-sm text-black/80">
-                    {account?.planName || (account?.planError ? 'Unavailable' : '—')}
-                    {account?.isStarter ? <span className="ml-2 text-xs text-black/50">(Starter)</span> : null}
-                    {account?.isPremium ? <span className="ml-2 text-xs text-black/50">(Premium)</span> : null}
+                    {isLoggedIn ? (
+                      <>
+                        {account?.planName || (account?.planError ? 'Unavailable' : '—')}
+                        {account?.isStarter ? <span className="ml-2 text-xs text-black/50">(Starter)</span> : null}
+                        {account?.isPremium ? <span className="ml-2 text-xs text-black/50">(Premium)</span> : null}
+                      </>
+                    ) : '—'}
                   </div>
                 </div>
               </div>

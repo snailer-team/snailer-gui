@@ -1,9 +1,11 @@
 /**
  * Auth Service for Snailer GUI
  * Handles login, logout, account switching
+ * Uses daemon WebSocket RPC for device login flow
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import type { DaemonClient } from './daemon'
 
 export interface UserAuth {
   accessToken?: string
@@ -35,12 +37,64 @@ export interface TokenResponse {
 class AuthService {
   private pollAbortController: AbortController | null = null
   private cachedAuth: UserAuth | null = null
+  private daemonClient: DaemonClient | null = null
+
+  setDaemonClient(client: DaemonClient | null) {
+    this.daemonClient = client
+  }
 
   private hasTauri(): boolean {
     return (
       typeof window !== 'undefined' &&
       Boolean((window as unknown as { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke)
     )
+  }
+
+  private hasDaemon(): boolean {
+    return this.daemonClient !== null && this.daemonClient.status === 'connected'
+  }
+
+  private shouldFallbackToTauri(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    // Older daemon versions do not expose auth.* RPC methods.
+    if (msg.includes('method not found')) return true
+    // If daemon transport is flaky, desktop commands can still proceed.
+    if (msg.includes('daemon not connected')) return true
+    if (msg.includes('request timeout')) return true
+    return false
+  }
+
+  private isPendingError(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    return msg.includes('authorization_pending') || msg.includes('pending')
+  }
+
+  private isSlowDownError(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    return msg.includes('slow_down')
+  }
+
+  private isExpiredError(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    return msg.includes('expired_token') || msg.includes('device code expired')
+  }
+
+  private isTransientPollError(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    return (
+      msg.includes('unavailable') ||
+      msg.includes('deadline exceeded') ||
+      msg.includes('timed out') ||
+      msg.includes('timeout') ||
+      msg.includes('connection reset') ||
+      msg.includes('connection refused') ||
+      msg.includes('failed to connect')
+    )
+  }
+
+  private isDeniedError(errorMessage: string): boolean {
+    const msg = errorMessage.toLowerCase()
+    return msg.includes('access_denied') || msg.includes('authorization_declined')
   }
 
   private setCachedAuth(auth: UserAuth | null) {
@@ -105,18 +159,43 @@ class AuthService {
   /**
    * Start device login flow
    * Returns device code info for user to complete auth in browser
+   * Uses daemon RPC (auth.createDeviceCode) when connected.
+   * Falls back to Tauri command when daemon auth RPC is unavailable.
    */
   async startDeviceLogin(): Promise<DeviceCodeResponse> {
+    let daemonError: string | null = null
+
+    // Try daemon RPC first (preferred - handles auth server connection internally)
+    if (this.hasDaemon()) {
+      try {
+        const result = await this.daemonClient!.request<DeviceCodeResponse>('auth.createDeviceCode', {
+          clientId: 'snailer-gui',
+          scope: 'read write',
+        })
+        return result
+      } catch (e) {
+        daemonError = e instanceof Error ? e.message : String(e)
+        if (!this.hasTauri() || !this.shouldFallbackToTauri(daemonError)) {
+          throw new Error(`Failed to start device login: ${daemonError}`)
+        }
+      }
+    }
+
+    // Fallback to Tauri command (requires SNAILER_AUTH_ADDR)
     try {
       return await invoke<DeviceCodeResponse>('auth_start_device_login')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
+      if (daemonError) {
+        throw new Error(`Failed to start device login (daemon: ${daemonError}; desktop fallback: ${msg})`)
+      }
       throw new Error(`Failed to start device login (desktop app required): ${msg}`)
     }
   }
 
   /**
    * Poll for device token after user completes browser auth
+   * Uses daemon RPC (auth.pollDeviceToken) when connected, falls back to Tauri command
    */
   async pollDeviceToken(
     deviceCode: string,
@@ -128,6 +207,8 @@ class AuthService {
     let attempts = 0
     let currentInterval = interval
 
+    let useDaemon = this.hasDaemon()
+
     while (attempts < maxAttempts) {
       if (this.pollAbortController.signal.aborted) {
         return null
@@ -137,7 +218,26 @@ class AuthService {
       attempts++
 
       try {
-        const result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+        let result: TokenResponse
+
+        if (useDaemon) {
+          try {
+            // Use daemon RPC
+            result = await this.daemonClient!.request<TokenResponse>('auth.pollDeviceToken', {
+              deviceCode,
+              clientId: 'snailer-gui',
+            })
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (!this.hasTauri() || !this.shouldFallbackToTauri(msg)) throw e
+            useDaemon = false
+            result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+          }
+        } else {
+          // Fallback to Tauri command
+          result = await invoke<TokenResponse>('auth_poll_device_token', { deviceCode })
+        }
+
         onStatus?.('complete')
         const now = Math.floor(Date.now() / 1000)
         this.setCachedAuth({
@@ -150,21 +250,29 @@ class AuthService {
         })
         return result
       } catch (e) {
-        const error = e as Error
-        if (error.message?.includes('authorization_pending')) {
+        const rawMsg = e instanceof Error ? e.message : String(e)
+        if (this.isPendingError(rawMsg)) {
           onStatus?.('pending')
           continue
         }
-        if (error.message?.includes('slow_down')) {
+        if (this.isSlowDownError(rawMsg)) {
           currentInterval = Math.min(currentInterval + 1, 10)
           continue
         }
-        if (error.message?.includes('expired_token')) {
+        if (this.isExpiredError(rawMsg)) {
           onStatus?.('expired')
           return null
         }
+        if (this.isTransientPollError(rawMsg)) {
+          onStatus?.('pending')
+          continue
+        }
+        if (this.isDeniedError(rawMsg)) {
+          onStatus?.('error')
+          throw new Error('Login was denied in the browser. Please try again.')
+        }
         onStatus?.('error')
-        return null
+        throw new Error(`Failed to complete device login: ${rawMsg}`)
       }
     }
 
@@ -207,16 +315,27 @@ class AuthService {
 
   /**
    * Logout - clear stored auth
+   * Uses daemon RPC (auth.logout) when connected, falls back to Tauri command
    */
   async logout(): Promise<void> {
     this.cancelPoll()
     this.setCachedAuth(null)
 
-    // Notify daemon
+    // Use daemon RPC if connected
+    if (this.hasDaemon()) {
+      try {
+        await this.daemonClient!.request('auth.logout')
+        return
+      } catch {
+        // Fall through to Tauri command
+      }
+    }
+
+    // Fallback to Tauri command
     try {
       await invoke('auth_logout')
     } catch {
-      // OK if daemon doesn't support this
+      // OK if not supported
     }
   }
 

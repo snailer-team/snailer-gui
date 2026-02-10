@@ -964,6 +964,7 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
     })
 }
 
+#[tauri::command]
 pub fn engine_kill() {
     let Ok(mut guard) = engine_state().lock() else {
         return;
