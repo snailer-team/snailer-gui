@@ -52,7 +52,7 @@ export function CommandPalette() {
           await useAppStore.getState().setUiMode(m.token)
         },
       })),
-    [modeItems, daemon],
+    [modeItems],
   )
 
   const modelCommands = useMemo(

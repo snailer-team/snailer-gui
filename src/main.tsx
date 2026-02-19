@@ -7,7 +7,6 @@ import { useAppStore } from './lib/store'
 
 window.addEventListener('error', (e) => {
   const msg = e.error instanceof Error ? e.error.message : e.message
-  // eslint-disable-next-line no-console
   console.error('[window.error]', e.error || e.message)
   useAppStore.setState({ error: msg || 'unknown error' })
 })
@@ -15,7 +14,6 @@ window.addEventListener('error', (e) => {
 window.addEventListener('unhandledrejection', (e) => {
   const reason = (e as PromiseRejectionEvent).reason
   const msg = reason instanceof Error ? reason.message : String(reason ?? 'unhandled rejection')
-  // eslint-disable-next-line no-console
   console.error('[unhandledrejection]', reason)
   useAppStore.setState({ error: msg })
 })

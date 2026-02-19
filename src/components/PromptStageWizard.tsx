@@ -76,7 +76,7 @@ export function PromptStageWizard() {
     setAnswers(Array.from({ length: wizard.stages.length }, () => null))
     setSelectedIdx(null)
     setCustomText('')
-  }, [wizard?.originalPrompt])
+  }, [wizard])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

@@ -85,7 +85,7 @@ export function HomeScreen() {
     () => [
       'Build a classic Snake game in this repo.',
       'Create a one-page PDF summary of this app.',
-      "Summarize last week\'s PRs by teammate and theme.",
+      "Summarize last week's PRs by teammate and theme.",
     ],
     [],
   )

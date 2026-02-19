@@ -156,7 +156,7 @@ export function ChatArea() {
 
     lastSessionIdRef.current = session.id
     lastMessageCountRef.current = currentMessageCount
-  }, [session?.id, session?.messages.length])
+  }, [session, session?.id, session?.messages.length])
 
   const lastContent = session?.messages.at(-1)?.content ?? ''
   const bottomRef = useRef<HTMLDivElement>(null)

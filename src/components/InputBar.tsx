@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 
@@ -405,7 +405,7 @@ export function InputBar() {
     setShowPermissionDropdown(false)
   }
 
-  const refreshBranchState = async () => {
+  const refreshBranchState = useCallback(async () => {
     if (!projectPath) {
       setGitBranch('No workspace')
       setGitBranches([])
@@ -429,7 +429,7 @@ export function InputBar() {
       setGitAdded(0)
       setGitRemoved(0)
     }
-  }
+  }, [projectPath])
 
   const handleSwitchBranch = async (branchName: string) => {
     if (!projectPath || !branchName || branchName === gitBranch) {
@@ -655,12 +655,12 @@ export function InputBar() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [projectPath])
+  }, [projectPath, refreshBranchState])
 
   useEffect(() => {
     if (!showBranchDropdown || branchSwitching) return
     void refreshBranchState()
-  }, [showBranchDropdown, branchSwitching, projectPath])
+  }, [showBranchDropdown, branchSwitching, projectPath, refreshBranchState])
 
   useEffect(() => {
     let cancelled = false
