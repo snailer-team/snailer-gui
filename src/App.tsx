@@ -88,7 +88,7 @@ export default function App() {
 
       <div className="flex h-full overflow-hidden rounded-none border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface)] shadow-[var(--shadow-lg)]">
         {/* Sidebar */}
-        <div className="w-[290px] flex-shrink-0 border-r border-[color:var(--color-border)] bg-[#eff1f4]">
+        <div className="w-[336px] flex-shrink-0 border-r border-[color:var(--color-border)] bg-[#eff1f4]">
           <Sidebar />
         </div>
 

@@ -109,11 +109,16 @@ export function ChatArea() {
         e.type === 'Start' ||
         e.type === 'Done' ||
         e.type === 'Fail' ||
-        (e.type === 'StatusLine' && Boolean(e.line))
+        (e.type === 'StatusLine' && Boolean(e.line)) ||
+        e.type === 'RunStatusChanged' ||
+        e.type === 'LoopGuardTriggered'
       if (renderable && e.runId) out.add(e.runId)
     }
+    for (const m of session?.messages ?? []) {
+      if (m.role === 'system' && m.runId && m.content.trim()) out.add(m.runId)
+    }
     return out
-  }, [session?.agentEvents])
+  }, [session?.agentEvents, session?.messages])
 
   // Track if we should animate title (only for new sessions/prompts)
   const [animatingTitle, setAnimatingTitle] = useState<string | null>(null)

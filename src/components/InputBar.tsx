@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 
 import { useAppStore } from '../lib/store'
@@ -110,6 +110,57 @@ function baseName(p: string) {
   const cleaned = (p || '').replace(/\/$/, '')
   const parts = cleaned.split('/')
   return parts[parts.length - 1] || cleaned || 'Local'
+}
+
+function nameFromFilePath(path: string) {
+  const normalized = (path || '').replace(/\\/g, '/')
+  const parts = normalized.split('/')
+  return parts[parts.length - 1] || 'image'
+}
+
+function fileUriToPath(uri: string): string | null {
+  const raw = uri.trim()
+  if (!raw) return null
+
+  if (raw.startsWith('file://')) {
+    try {
+      const parsed = new URL(raw)
+      if (parsed.protocol !== 'file:') return null
+      let path = decodeURIComponent(parsed.pathname || '')
+      // Windows file URI path format: /C:/Users/...
+      if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1)
+      return path || null
+    } catch {
+      return null
+    }
+  }
+
+  if (/^[A-Za-z]:[\\/]/.test(raw)) return raw
+  if (raw.startsWith('/')) return raw
+  return null
+}
+
+function extractFilePathsFromTransfer(dt: DataTransfer | null): string[] {
+  if (!dt) return []
+
+  const out: string[] = []
+  const seen = new Set<string>()
+  const candidates = [dt.getData('text/uri-list'), dt.getData('text/plain')]
+
+  for (const raw of candidates) {
+    if (!raw) continue
+    const lines = raw.split(/\r?\n/g)
+    for (const line of lines) {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) continue
+      const path = fileUriToPath(trimmed)
+      if (!path || seen.has(path)) continue
+      seen.add(path)
+      out.push(path)
+    }
+  }
+
+  return out
 }
 
 // Get icon for mode
@@ -241,9 +292,13 @@ export function InputBar() {
   const hasDroppedFiles = (dt: DataTransfer | null): boolean => {
     if (!dt) return false
     if ((dt.files?.length ?? 0) > 0) return true
-    if (Array.from(dt.items ?? []).some((x) => x.kind === 'file')) return true
-    // Some platforms only expose types
-    if (Array.from(dt.types ?? []).some((t) => t.toLowerCase() === 'files')) return true
+    if (Array.from(dt.items ?? []).some((x) => x.kind === 'file' || x.type.startsWith('image/'))) return true
+    // Some platforms only expose drag types (Finder/WebView/macOS)
+    const types = Array.from(dt.types ?? []).map((t) => t.toLowerCase())
+    if (types.includes('files')) return true
+    if (types.includes('text/uri-list')) return true
+    if (types.includes('public.file-url')) return true
+    if (types.includes('application/x-moz-file')) return true
     return false
   }
 
@@ -473,6 +528,31 @@ export function InputBar() {
     }
   }
 
+  const saveImagePath = async (localPath: string) => {
+    const remaining = 10 - attachedImages.length
+    if (remaining <= 0) {
+      toast('You can attach up to 10 images.')
+      return
+    }
+
+    const id = crypto.randomUUID()
+    const savedPath = await invoke<string>(
+      'attachment_save_image_from_path',
+      {
+        req: {
+          path: localPath,
+        },
+      } as unknown as Record<string, unknown>,
+    )
+
+    addAttachedImage({
+      id,
+      path: savedPath,
+      name: nameFromFilePath(localPath),
+      previewUrl: convertFileSrc(savedPath),
+    })
+  }
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files) return
@@ -523,6 +603,39 @@ export function InputBar() {
         }
       }
     })()
+  }
+
+  const onDropPaths = (paths: string[]) => {
+    if (paths.length === 0) return
+    const remaining = 10 - attachedImages.length
+    if (remaining <= 0) {
+      toast('You can attach up to 10 images.')
+      return
+    }
+    if (paths.length > remaining) {
+      toast('Image limit reached', { description: 'You can attach up to 10 images.' })
+    }
+    void (async () => {
+      for (const p of paths.slice(0, Math.max(0, remaining))) {
+        try {
+          await saveImagePath(p)
+        } catch (err) {
+          toast('Failed to attach image', { description: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    })()
+  }
+
+  const handleDataTransferDrop = (dt: DataTransfer | null) => {
+    const files = extractDroppedFiles(dt)
+    if (files.length > 0) {
+      onDropFiles(files)
+      return
+    }
+    const paths = extractFilePathsFromTransfer(dt)
+    if (paths.length > 0) {
+      onDropPaths(paths)
+    }
   }
 
   useEffect(() => {
@@ -581,42 +694,6 @@ export function InputBar() {
       />
 
       <div className="mx-auto w-full max-w-[760px]">
-        {/* Attached images preview */}
-        {attachedImages.length > 0 && (
-          <div className="mb-2 flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {attachedImages.map((img) => (
-              <div
-                key={img.id}
-                className="group relative flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-[#f7f9fc] px-2.5 py-1.5 text-sm shadow-sm"
-              >
-                {img.previewUrl ? (
-                  <img
-                    src={img.previewUrl}
-                    alt={img.name}
-                    className="h-8 w-8 rounded-full object-cover border border-slate-200 bg-white"
-                  />
-                ) : (
-                  <div className="grid h-8 w-8 place-items-center rounded-full border border-slate-200 bg-[#f8fafc]">
-                    <IconImage className="h-4 w-4 text-slate-500" />
-                  </div>
-                )}
-                <div className="min-w-0">
-                  <div className="max-w-[160px] truncate text-sm text-slate-700" title={img.name}>
-                    {img.name}
-                  </div>
-                  <div className="text-[11px] text-slate-400">Attached</div>
-                </div>
-                <button
-                  onClick={() => handleRemove(img.id)}
-                  className="absolute -right-1 -top-1 rounded-full border border-slate-200 bg-white p-1 text-slate-500 opacity-0 shadow transition group-hover:opacity-100 hover:bg-slate-50"
-                >
-                  <IconX className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Main input card */}
         <div
           className={[
@@ -625,10 +702,8 @@ export function InputBar() {
           ].join(' ')}
           onDragEnter={(e) => {
             if (busy) return
-            if (hasDroppedFiles(e.dataTransfer)) {
-              e.preventDefault()
-              setDragActive(true)
-            }
+            e.preventDefault()
+            setDragActive(true)
           }}
           onDragLeave={(e) => {
             if (e.currentTarget.contains(e.relatedTarget as Node)) return
@@ -636,19 +711,16 @@ export function InputBar() {
           }}
           onDragOver={(e) => {
             if (busy) return
-            if (!hasDroppedFiles(e.dataTransfer)) return
             e.preventDefault()
             e.dataTransfer.dropEffect = 'copy'
             setDragActive(true)
           }}
           onDrop={(e) => {
             if (busy) return
-            if (!hasDroppedFiles(e.dataTransfer)) return
             e.preventDefault()
             e.stopPropagation()
             setDragActive(false)
-            onDropFiles(extractDroppedFiles(e.dataTransfer))
-            setDragActive(false)
+            handleDataTransferDrop(e.dataTransfer)
           }}
         >
           {!elonEnabled ? null : (
@@ -725,6 +797,41 @@ export function InputBar() {
             </div>
           ) : null}
 
+          {/* Attached images preview (inside prompt area, top) */}
+          {attachedImages.length > 0 && (
+            <div className="px-3.5 pt-3">
+              <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {attachedImages.map((img) => (
+                  <div
+                    key={img.id}
+                    className="group relative flex shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm"
+                  >
+                    {img.previewUrl ? (
+                      <img
+                        src={img.previewUrl}
+                        alt={img.name}
+                        className="h-7 w-7 rounded-full border border-slate-200 bg-white object-cover"
+                      />
+                    ) : (
+                      <div className="grid h-7 w-7 place-items-center rounded-full border border-slate-200 bg-[#f8fafc]">
+                        <IconImage className="h-4 w-4 text-slate-500" />
+                      </div>
+                    )}
+                    <div className="max-w-[185px] truncate text-[13px] leading-5 text-slate-800" title={img.name}>
+                      {img.name}
+                    </div>
+                    <button
+                      onClick={() => handleRemove(img.id)}
+                      className="absolute -right-1 -top-1 rounded-full border border-slate-200 bg-white p-0.5 text-slate-500 opacity-0 shadow-sm transition group-hover:opacity-100 hover:bg-slate-50"
+                    >
+                      <IconX className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Text area */}
           <div className="px-3.5 pt-2.5">
             <textarea
@@ -745,21 +852,22 @@ export function InputBar() {
                   e.preventDefault()
                   e.stopPropagation()
                   setDragActive(false)
-                  onDropFiles(extractDroppedFiles(e.dataTransfer))
+                  handleDataTransferDrop(e.dataTransfer)
                   return
                 }
                 const text = e.dataTransfer.getData('text/plain')
                 if (!text) return
                 e.preventDefault()
+                setDragActive(false)
                 const insert = text.endsWith(' ') ? text : text + ' '
                 appendToDraftPrompt(insert)
                 requestAnimationFrame(() => textareaRef.current?.focus())
               }}
               onDragOver={(e) => e.preventDefault()}
-              placeholder={busy ? 'Running...' : 'Add a follow-up'}
+              placeholder={busy ? 'Running...' : 'Snailer Coder'}
               rows={1}
               className={[
-                'min-h-[40px] max-h-[140px] w-full resize-none bg-transparent text-[14px] leading-[1.4] text-slate-800 placeholder:text-slate-400 focus:outline-none',
+                'min-h-[40px] max-h-[140px] w-full resize-none border-0 bg-transparent text-[14px] leading-[1.4] text-slate-800 placeholder:text-slate-400 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
                 elonEnabled ? 'placeholder:text-slate-400' : '',
               ].join(' ')}
             />

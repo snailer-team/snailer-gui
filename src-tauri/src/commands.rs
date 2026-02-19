@@ -618,6 +618,12 @@ fn ext_from_mime(mime: &str) -> Option<&'static str> {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentSavePathRequest {
+    pub path: String,
+}
+
 /// Save an uploaded image into `~/.snailer/gui_attachments` and return the file path.
 #[tauri::command]
 pub async fn attachment_save_image(req: AttachmentSaveRequest) -> Result<String, String> {
@@ -656,6 +662,55 @@ pub async fn attachment_save_image(req: AttachmentSaveRequest) -> Result<String,
         let file_name = format!("{}.{}", uuid::Uuid::new_v4(), ext);
         let path = dir.join(file_name);
         std::fs::write(&path, data).map_err(|e| format!("write failed: {}", e))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| format!("save task failed: {}", e))?
+}
+
+/// Copy an existing local image file into `~/.snailer/gui_attachments` and return the new file path.
+#[tauri::command]
+pub async fn attachment_save_image_from_path(req: AttachmentSavePathRequest) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let raw = req.path.trim();
+        if raw.is_empty() {
+            return Err("Image path is empty.".to_string());
+        }
+
+        let source = PathBuf::from(raw);
+        if !source.is_file() {
+            return Err("Dropped file does not exist.".to_string());
+        }
+
+        let meta = std::fs::metadata(&source).map_err(|e| format!("stat failed: {}", e))?;
+        const MAX_BYTES: u64 = 12 * 1024 * 1024;
+        if meta.len() == 0 {
+            return Err("Empty file.".to_string());
+        }
+        if meta.len() > MAX_BYTES {
+            return Err("Image is too large (max 12MB).".to_string());
+        }
+
+        let ext = source
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.trim().to_lowercase())
+            .and_then(|e| match e.as_str() {
+                "png" => Some("png"),
+                "jpg" | "jpeg" => Some("jpg"),
+                "webp" => Some("webp"),
+                "gif" => Some("gif"),
+                "bmp" => Some("bmp"),
+                _ => None,
+            })
+            .ok_or_else(|| "Unsupported image type.".to_string())?;
+
+        let dir = snailer_attachments_dir();
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir failed: {}", e))?;
+
+        let file_name = format!("{}.{}", uuid::Uuid::new_v4(), ext);
+        let path = dir.join(file_name);
+        std::fs::copy(&source, &path).map_err(|e| format!("copy failed: {}", e))?;
         Ok(path.to_string_lossy().to_string())
     })
     .await

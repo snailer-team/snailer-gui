@@ -312,6 +312,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'gpt-4o': { input: 2.5, output: 10.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   // Anthropic
+  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
   'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
   'claude-opus-4-20250514': { input: 15.0, output: 75.0 },
   'claude-opus-4-6': { input: 5.0, output: 25.0 },
@@ -321,9 +322,34 @@ export const MODEL_PRICING: Record<string, { input: number; output: number }> = 
   'moonshot-v1-128k': { input: 0.8, output: 3.2 },
 }
 
+function normalizeModelToken(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+function toCanonicalModelToken(value: string): string {
+  const t = normalizeModelToken(value)
+  if (t === 'auto' || t === 'auto-select' || t === 'autoselect') return 'auto'
+
+  const withoutProvider = t.startsWith('anthropic-') ? t.slice('anthropic-'.length) : t
+
+  if (withoutProvider.startsWith('claude-sonnet-4-6')) return 'claude-sonnet-4-6'
+  if (withoutProvider === 'claude-sonnet-4-20250514') return 'claude-sonnet-4-20250514'
+  if (withoutProvider.startsWith('claude-opus-4-6')) return 'claude-opus-4-6'
+  if (withoutProvider === 'claude-opus-4-20250514') return 'claude-opus-4-20250514'
+  if (withoutProvider === 'kimi-k2-5') return 'kimi-k2.5'
+
+  return withoutProvider
+}
+
 // Calculate cost from token usage
 export function calculateTokenCost(model: string, inputTokens: number, outputTokens: number): number {
-  const pricing = MODEL_PRICING[model] || { input: 1.0, output: 3.0 } // fallback pricing
+  const canonical = toCanonicalModelToken(model)
+  const pricing = MODEL_PRICING[canonical] || MODEL_PRICING[model] || { input: 1.0, output: 3.0 } // fallback pricing
   const inputCost = (inputTokens / 1_000_000) * pricing.input
   const outputCost = (outputTokens / 1_000_000) * pricing.output
   return inputCost + outputCost
@@ -332,26 +358,12 @@ export function calculateTokenCost(model: string, inputTokens: number, outputTok
 function ensureModelItems(
   modelItems: Array<{ label: string; token: string; desc: string }>,
 ): Array<{ label: string; token: string; desc: string }> {
-  const normalizeToken = (value: string) =>
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[._\s]+/g, '-')
-      .replace(/-+/g, '-')
-
   const normalizeLabel = (value: string) =>
     value
       .trim()
       .toLowerCase()
       .replace(/[._/-]+/g, ' ')
       .replace(/\s+/g, ' ')
-
-  const toCanonicalToken = (value: string) => {
-    const t = normalizeToken(value)
-    if (t === 'auto' || t === 'auto-select' || t === 'autoselect') return 'auto'
-    if (t === 'claude-opus-4.6'.replace(/\./g, '-')) return 'claude-opus-4-6'
-    return t
-  }
 
   const deduped: Array<{ label: string; token: string; desc: string }> = []
   const seenToken = new Set<string>()
@@ -362,7 +374,7 @@ function ensureModelItems(
     const label = String(raw.label ?? '').trim()
     if (!token || !label) continue
 
-    const canonicalToken = toCanonicalToken(token)
+    const canonicalToken = toCanonicalModelToken(token)
     const canonicalLabel = normalizeLabel(label)
     const isAutoFamily = canonicalToken === 'auto' || canonicalLabel === 'auto select'
     const tokenKey = isAutoFamily ? 'auto' : canonicalToken
@@ -382,7 +394,7 @@ function ensureModelItems(
   const items = deduped
 
   // CLI parity: expose explicit auto-router option in GUI.
-  const autoIdx = items.findIndex((m) => toCanonicalToken(m.token) === 'auto' || normalizeLabel(m.label) === 'auto select')
+  const autoIdx = items.findIndex((m) => toCanonicalModelToken(m.token) === 'auto' || normalizeLabel(m.label) === 'auto select')
   if (autoIdx === -1) {
     items.unshift({
       label: 'Auto Select',
@@ -397,14 +409,24 @@ function ensureModelItems(
     }
   }
 
-  if (!items.some((m) => toCanonicalToken(m.token) === 'claude-opus-4-6')) {
-    const claudeIdx = items.findIndex((m) => normalizeToken(m.token).startsWith('claude-'))
+  if (!items.some((m) => toCanonicalModelToken(m.token) === 'claude-sonnet-4-6')) {
+    const claudeIdx = items.findIndex((m) => toCanonicalModelToken(m.token).startsWith('claude-'))
+    const insertAt = claudeIdx >= 0 ? claudeIdx : 0
+    items.splice(insertAt, 0, {
+      label: 'Claude Sonnet 4.6',
+      token: 'claude-sonnet-4-6',
+      desc: 'Best speed/intelligence - 200K context',
+    })
+  }
+
+  if (!items.some((m) => toCanonicalModelToken(m.token) === 'claude-opus-4-6')) {
+    const claudeIdx = items.findIndex((m) => toCanonicalModelToken(m.token).startsWith('claude-'))
     const insertAt = claudeIdx >= 0 ? claudeIdx : 0
     items.splice(insertAt, 0, { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' })
   }
 
-  if (!items.some((m) => normalizeToken(m.token) === 'kimi-k2-5')) {
-    const kimiIdx = items.findIndex((m) => normalizeToken(m.token).startsWith('kimi-'))
+  if (!items.some((m) => normalizeModelToken(m.token) === 'kimi-k2-5')) {
+    const kimiIdx = items.findIndex((m) => normalizeModelToken(m.token).startsWith('kimi-'))
     const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
     items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
   }
@@ -999,7 +1021,31 @@ export const useAppStore = create<AppState>()(
           const state = get()
           if (method === 'run.status') {
             const p = params as { runId: string; status: string; message?: string | null }
-            if (p.runId && p.runId === state.currentRunId) {
+            const runMatchesCurrent = Boolean(p.runId && state.currentRunId && p.runId === state.currentRunId)
+            const adoptAsCurrent = Boolean(
+              p.runId &&
+                !state.currentRunId &&
+                (state.currentRunStatus === 'running' ||
+                  state.currentRunStatus === 'queued' ||
+                  state.currentRunStatus === 'awaiting_approval' ||
+                  p.status === 'running' ||
+                  p.status === 'awaiting_approval'),
+            )
+            if (runMatchesCurrent || adoptAsCurrent) {
+              const sidForStatusEvent = state.activeSessionId
+              if (sidForStatusEvent) {
+                const agentEvent: AgentEvent = {
+                  id: crypto.randomUUID(),
+                  type: 'RunStatusChanged',
+                  timestamp: Date.now(),
+                  runId: p.runId,
+                  message: p.message?.trim()
+                    ? p.message
+                    : `Run status: ${String(p.status ?? 'unknown')}`,
+                }
+                set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, agentEvent) }))
+              }
+
               if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
                 const sid = state.activeSessionId
                 if (sid) {
@@ -1013,6 +1059,7 @@ export const useAppStore = create<AppState>()(
                 }
               }
               set({
+                currentRunId: adoptAsCurrent ? p.runId : state.currentRunId,
                 currentRunStatus: p.status as RunStatus,
                 error: p.status === 'failed' ? p.message ?? 'run failed' : state.error,
               })
@@ -1247,6 +1294,7 @@ export const useAppStore = create<AppState>()(
           const { event, runId } = env
           const activeSessionId = get().activeSessionId
           if (!activeSessionId) return
+          const effectiveRunId = String(runId ?? get().currentRunId ?? '').trim() || undefined
 
           const normalizeRole = (v: unknown): TeamRole | null => {
             const s = String(v ?? '').trim()
@@ -1634,7 +1682,7 @@ export const useAppStore = create<AppState>()(
               const session = state.sessions.find((s) => s.id === activeSessionId)
               const last = session?.messages[session.messages.length - 1]
 
-              if (last && last.isStreaming && last.role === 'assistant' && last.runId === runId) {
+              if (last && last.isStreaming && last.role === 'assistant' && last.runId === effectiveRunId) {
                 set({
                   sessions: updateStreamingMessage(state.sessions, activeSessionId, last.id, {
                     content: last.content + text + '\n',
@@ -1647,7 +1695,7 @@ export const useAppStore = create<AppState>()(
                   role: 'assistant',
                   content: text + '\n',
                   createdAt: now(),
-                  runId,
+                  runId: effectiveRunId,
                   isStreaming: true,
                 }
                 set({ sessions: appendMessage(state.sessions, activeSessionId, msg) })
@@ -1661,7 +1709,7 @@ export const useAppStore = create<AppState>()(
               role: 'system',
               content: `[${stream}] ${text}`,
               createdAt: now(),
-              runId,
+              runId: effectiveRunId,
               stream,
             }
             set((st) => ({ sessions: appendMessage(st.sessions, activeSessionId, msg) }))
@@ -1753,6 +1801,7 @@ export const useAppStore = create<AppState>()(
 	                ]),
 	                modelItems: ensureModelItems([
                     { label: 'Auto Select', token: 'auto', desc: 'Route model automatically (CLI parity)' },
+	                  { label: 'Claude Sonnet 4.6', token: 'claude-sonnet-4-6', desc: 'Best speed/intelligence - 200K context' },
 	                  { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' },
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
@@ -2068,9 +2117,88 @@ export const useAppStore = create<AppState>()(
 
       cancelRun: async () => {
         const daemon = get().daemon
-        const runId = get().currentRunId
-        if (!daemon || !runId) return
-        await daemon.runCancel(runId)
+        if (!daemon) return
+
+        try {
+          const state = get()
+          const runIds = new Set<string>()
+          const session = state.activeSessionId
+            ? state.sessions.find((s) => s.id === state.activeSessionId)
+            : null
+
+          const pushRunId = (v: unknown) => {
+            const id = String(v ?? '').trim()
+            if (id) runIds.add(id)
+          }
+
+          pushRunId(state.currentRunId)
+          state.pendingApprovals.forEach((p) => pushRunId(p.runId))
+          session?.messages.forEach((m) => {
+            if (m.isStreaming) pushRunId(m.runId)
+          })
+          session?.agentEvents.forEach((e) => {
+            if (e.type === 'RunStatusChanged') pushRunId(e.runId)
+          })
+
+          // Loop guard / approval 대기 상태는 approval.cancel로 먼저 닫아준다.
+          const approvalIds = state.pendingApprovals.map((p) => p.approvalId)
+          if (approvalIds.length > 0) {
+            await Promise.allSettled(
+              approvalIds.map((approvalId) =>
+                daemon.approvalRespond({
+                  approvalId,
+                  decision: 'cancel',
+                }),
+              ),
+            )
+          }
+
+          if (runIds.size === 0) {
+            set((st) => ({
+              pendingApprovals: [],
+              error: st.error ?? 'No active run id found to cancel.',
+            }))
+            return
+          }
+
+          const cancelResults = await Promise.allSettled([...runIds].map((id) => daemon.runCancel(id)))
+          const cancelled = cancelResults.some((r) => r.status === 'fulfilled')
+          if (!cancelled) {
+            const firstRejected = cancelResults.find((r) => r.status === 'rejected') as
+              | PromiseRejectedResult
+              | undefined
+            if (firstRejected?.reason) throw firstRejected.reason
+            throw new Error('run.cancel failed')
+          }
+
+          set((st) => {
+            const sid = st.activeSessionId
+            if (!sid) {
+              return {
+                pendingApprovals: [],
+                currentRunId: null,
+                currentRunStatus: 'cancelled' as RunStatus,
+              }
+            }
+            const currentSession = st.sessions.find((s) => s.id === sid)
+            const streaming = currentSession?.messages
+              .slice()
+              .reverse()
+              .find((m) => m.role === 'assistant' && m.isStreaming)
+            return {
+              pendingApprovals: [],
+              currentRunId: null,
+              currentRunStatus: 'cancelled' as RunStatus,
+              sessions:
+                streaming && currentSession
+                  ? updateStreamingMessage(st.sessions, sid, streaming.id, { isStreaming: false })
+                  : st.sessions,
+            }
+          })
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'run.cancel failed'
+          set({ error: msg })
+        }
       },
 
       approve: async (approvalId, decision, feedback) => {

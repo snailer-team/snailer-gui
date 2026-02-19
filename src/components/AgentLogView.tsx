@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAppStore } from '../lib/store'
-import type { AgentEvent } from '../lib/store'
+import type { AgentEvent, ChatMessage } from '../lib/store'
 
 interface AgentLogItemProps {
   event: AgentEvent
@@ -89,6 +89,35 @@ function AgentLogItem({ event, isNew }: AgentLogItemProps) {
     )
   }
 
+  // Run status changes
+  if (type === 'RunStatusChanged') {
+    const statusText = (message || phase || 'status').toLowerCase()
+    const isFail = statusText.includes('fail') || statusText.includes('cancel')
+    const isDone = statusText.includes('complete') || statusText.includes('done')
+    return (
+      <div className={`flex items-center gap-1.5 py-0.5 text-xs ${isNew ? 'animate-fade-in' : ''}`}>
+        <span
+          className={[
+            'h-1.5 w-1.5 shrink-0 rounded-full',
+            isFail ? 'bg-rose-500/70' : isDone ? 'bg-emerald-500/70' : 'bg-slate-500/70',
+          ].join(' ')}
+        />
+        <span className={isFail ? 'text-rose-600' : isDone ? 'text-emerald-600' : 'text-black/55'}>
+          {message || phase || 'run status changed'}
+        </span>
+      </div>
+    )
+  }
+
+  if (type === 'LoopGuardTriggered') {
+    return (
+      <div className={`flex items-center gap-1.5 py-0.5 text-xs text-amber-700 ${isNew ? 'animate-fade-in' : ''}`}>
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/70" />
+        <span>Loop guard triggered</span>
+      </div>
+    )
+  }
+
   return null
 }
 
@@ -96,7 +125,28 @@ function isRenderableAgentEvent(event: AgentEvent): boolean {
   if (event.type === 'FileOp') return Boolean(event.op)
   if (event.type === 'Start' || event.type === 'Done' || event.type === 'Fail') return true
   if (event.type === 'StatusLine') return Boolean(event.line)
+  if (event.type === 'RunStatusChanged') return Boolean(event.message)
+  if (event.type === 'LoopGuardTriggered') return true
   return false
+}
+
+function parseSystemStreamText(content: string): string {
+  const trimmed = (content || '').trim()
+  if (!trimmed) return ''
+  const m = trimmed.match(/^\[[^\]]+\]\s*(.*)$/)
+  if (m?.[1]) return m[1].trim()
+  return trimmed
+}
+
+function renderSystemStreamItem(msg: ChatMessage, isNew?: boolean) {
+  const text = parseSystemStreamText(msg.content)
+  if (!text) return null
+  return (
+    <div className={`flex items-center gap-1.5 py-0.5 text-xs text-black/45 ${isNew ? 'animate-fade-in' : ''}`}>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-500/70" />
+      <span className="truncate italic">{text}</span>
+    </div>
+  )
 }
 
 export function AgentLogView({ runId }: { runId?: string } = {}) {
@@ -113,19 +163,38 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
   const session = sessions.find((s) => s.id === activeSessionId)
   const agentEvents = (session?.agentEvents ?? []).filter((e) => (runId ? e.runId === runId : true))
   const visibleEvents = useMemo(() => agentEvents.filter(isRenderableAgentEvent), [agentEvents])
+  const streamMessages = useMemo(
+    () =>
+      (session?.messages ?? []).filter(
+        (m) =>
+          m.role === 'system' &&
+          Boolean(m.runId) &&
+          (!runId || m.runId === runId) &&
+          Boolean(m.content?.trim()),
+      ),
+    [session?.messages, runId],
+  )
 
   // Track new items for animation
   const displayItems = useMemo(() => {
-    return visibleEvents.map((event) => ({
+    const eventItems = visibleEvents.map((event) => ({
       id: event.id,
+      kind: 'event' as const,
       event,
       isNew: !seenIds.has(event.id),
     }))
-  }, [visibleEvents, seenIds])
+    const streamItems = streamMessages.map((msg) => ({
+      id: msg.id,
+      kind: 'stream' as const,
+      msg,
+      isNew: !seenIds.has(msg.id),
+    }))
+    return [...eventItems, ...streamItems]
+  }, [visibleEvents, streamMessages, seenIds])
 
   // Update seen IDs after render
   useEffect(() => {
-    const newIds = visibleEvents.map((e) => e.id).filter((id) => !seenIds.has(id))
+    const newIds = displayItems.map((x) => x.id).filter((id) => !seenIds.has(id))
     if (newIds.length > 0) {
       setSeenIds((prev) => {
         const next = new Set(prev)
@@ -133,7 +202,7 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
         return next
       })
     }
-  }, [visibleEvents, seenIds])
+  }, [displayItems, seenIds])
 
   const hasItems = displayItems.length > 0
 
@@ -162,9 +231,13 @@ export function AgentLogView({ runId }: { runId?: string } = {}) {
         onScroll={onScroll}
         className="px-3 py-1.5 space-y-0"
       >
-        {displayItems.map(({ id, event, isNew }) => (
-          <AgentLogItem key={id} event={event} isNew={isNew} />
-        ))}
+        {displayItems.map((item) =>
+          item.kind === 'event' ? (
+            <AgentLogItem key={item.id} event={item.event} isNew={item.isNew} />
+          ) : (
+            <div key={item.id}>{renderSystemStreamItem(item.msg, item.isNew)}</div>
+          ),
+        )}
 
         {/* Working indicator */}
         {isRunning && (
