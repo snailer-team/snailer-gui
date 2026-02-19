@@ -15,6 +15,24 @@ import {
 } from './modes'
 import type { PlanTree, PlanNode } from './elonPlan'
 import type { Evidence } from './elonEvidence'
+import {
+  buildDefaultAgentEmployees,
+  buildDefaultAgentTemplates,
+  createAgentEmployeeFromDraft,
+  findTemplate,
+  normalizeAgentEmployeeId,
+  validateAgentEmployeeDraft,
+  type AgentAssignmentDecision,
+  type AgentEmployee,
+  type AgentEmployeeDraft,
+  type AgentEmployeeStatus,
+  type AgentLifecycleEvent,
+  type AgentTemplate,
+} from './elonAgentRegistry'
+import { selectAgentsForCycle } from './elonAgentFactory'
+import { planCycleBroadcasts } from './elonBroadcastPlanner'
+import { computeAutonomyScore } from './elonAutonomyScore'
+import { runBroadcastNorms } from './elonNorms'
 
 export type ChatRole = 'user' | 'assistant' | 'system'
 
@@ -275,10 +293,16 @@ export interface ElonAgentState {
 export interface ElonMetrics {
   cycleStartMs: number
   autonomyRate: number // 0-100
+  loaLevel: 'L3' | 'L4' | 'L5'
   completedTasks: number
   totalTasks: number
   estimatedCost: number
   interventions: number // Human interventions count
+  lastCycleViolationCount: number
+  lastCycleNormDecisionCount: number
+  lastFactoryHeadcount: number
+  lastFactoryComplexityScore: number
+  lastFactoryReason: string
   // Token usage tracking
   totalInputTokens: number
   totalOutputTokens: number
@@ -466,6 +490,7 @@ export interface ElonXState {
   autoCycle: AutoCycleState
   broadcasts: Broadcast[]
   cycleRuns: CycleRun[]
+  selectedCycleRunId: string | null
 
   // Agent Input Requests
   agentInputRequests: AgentInputRequest[]
@@ -488,6 +513,21 @@ export interface ElonXState {
   // GitHub Integration (M2)
   githubStatus: GitHubReadStatus
 }
+
+export interface ElonRegistryState {
+  agentEmployees: AgentEmployee[]
+  agentTemplates: AgentTemplate[]
+  agentLifecycleEvents: AgentLifecycleEvent[]
+  agentAssignmentDecisions: AgentAssignmentDecision[]
+}
+
+type AgentEmployeeActionResult =
+  | { ok: true; employee: AgentEmployee }
+  | { ok: false; errors: string[] }
+
+type AgentTemplateActionResult =
+  | { ok: true; template: AgentTemplate }
+  | { ok: false; errors: string[] }
 
 // ==================== CEO Auto-Cycle Types ====================
 
@@ -710,6 +750,7 @@ interface AppState {
 
   // ElonX HARD state
   elonX: ElonXState
+  elonRegistry: ElonRegistryState
 
   lastToast: { title: string; message: string } | null
   draftPrompt: string
@@ -759,6 +800,32 @@ interface AppState {
   elonSetCeoFeedback: (agentId: string, feedback: string) => void
   elonAddEvidence: (evidence: Evidence) => void
   elonUpdatePlanNode: (nodeId: string, patch: Partial<PlanNode>) => void
+  elonSelectCycleRun: (cycleRunId: string | null) => void
+  elonAddAgentEmployee: (draft: AgentEmployeeDraft) => AgentEmployeeActionResult
+  elonUpdateAgentEmployee: (
+    agentId: string,
+    patch: Partial<
+      Pick<
+        AgentEmployee,
+        'displayName' | 'category' | 'roleTemplateId' | 'autonomyLevel' | 'toolScopes' | 'modelPolicy' | 'maxParallelTasks'
+      >
+    >,
+  ) => AgentEmployeeActionResult
+  elonCloneAgentEmployee: (
+    sourceAgentId: string,
+    nextAgentId?: string,
+    displayName?: string,
+  ) => AgentEmployeeActionResult
+  elonSetAgentEmployeeStatus: (
+    agentId: string,
+    status: AgentEmployeeStatus,
+    reason?: string,
+    actor?: 'system' | 'user',
+  ) => AgentEmployeeActionResult
+  elonUpdateAgentTemplate: (
+    templateId: string,
+    patch: Partial<Pick<AgentTemplate, 'promptBase' | 'normProfile'>>,
+  ) => AgentTemplateActionResult
 
   // Agent Input Request actions
   agentRequestInput: (params: { agentId: string; cycleRunId: string; label: string; why: string; inputType: AgentInputType; options?: AgentInputRequestOption[]; placeholder?: string }) => Promise<string>
@@ -923,10 +990,16 @@ export const useAppStore = create<AppState>()(
         metrics: {
           cycleStartMs: 0,
           autonomyRate: 100,
+          loaLevel: 'L5',
           completedTasks: 0,
           totalTasks: 0,
           estimatedCost: 0,
           interventions: 0,
+          lastCycleViolationCount: 0,
+          lastCycleNormDecisionCount: 0,
+          lastFactoryHeadcount: 0,
+          lastFactoryComplexityScore: 0,
+          lastFactoryReason: '',
           totalInputTokens: 0,
           totalOutputTokens: 0,
         },
@@ -942,6 +1015,7 @@ export const useAppStore = create<AppState>()(
         },
         broadcasts: [],
         cycleRuns: [],
+        selectedCycleRunId: null,
         agentInputRequests: [],
         // Self-Correction
         reasoningTraces: [],
@@ -963,6 +1037,13 @@ export const useAppStore = create<AppState>()(
           ciStatus: 'unknown',
           summary: null,
         },
+      },
+
+      elonRegistry: {
+        agentEmployees: buildDefaultAgentEmployees(),
+        agentTemplates: buildDefaultAgentTemplates(),
+        agentLifecycleEvents: [],
+        agentAssignmentDecisions: [],
       },
 
       lastToast: null,
@@ -2640,6 +2721,195 @@ export const useAppStore = create<AppState>()(
         })
       },
 
+      elonSelectCycleRun: (cycleRunId) => {
+        set((st) => ({
+          elonX: {
+            ...st.elonX,
+            selectedCycleRunId: cycleRunId,
+          },
+        }))
+      },
+
+      elonAddAgentEmployee: (draft) => {
+        const state = get()
+        const errors = validateAgentEmployeeDraft(
+          draft,
+          state.elonRegistry.agentTemplates,
+          state.elonRegistry.agentEmployees,
+        )
+        if (errors.length > 0) return { ok: false as const, errors }
+
+        const nowMs = Date.now()
+        const employee = createAgentEmployeeFromDraft(
+          draft,
+          state.elonRegistry.agentTemplates,
+          nowMs,
+        )
+        const event: AgentLifecycleEvent = {
+          eventType: 'hired',
+          agentId: employee.id,
+          reason: 'Added from Agent Employees UI',
+          actor: 'user',
+          at: nowMs,
+        }
+
+        set((st) => ({
+          elonRegistry: {
+            ...st.elonRegistry,
+            agentEmployees: [employee, ...st.elonRegistry.agentEmployees],
+            agentLifecycleEvents: [event, ...st.elonRegistry.agentLifecycleEvents].slice(0, 300),
+          },
+        }))
+        return { ok: true as const, employee }
+      },
+
+      elonUpdateAgentEmployee: (agentId, patch) => {
+        const state = get()
+        const idx = state.elonRegistry.agentEmployees.findIndex((e) => e.id === agentId)
+        if (idx < 0) return { ok: false as const, errors: [`Unknown agent employee: ${agentId}`] }
+
+        const current = state.elonRegistry.agentEmployees[idx]
+        const next: AgentEmployee = {
+          ...current,
+          ...patch,
+          toolScopes: patch.toolScopes ? [...patch.toolScopes] : [...current.toolScopes],
+          modelPolicy: patch.modelPolicy
+            ? { ...patch.modelPolicy }
+            : { ...current.modelPolicy },
+          updatedAt: Date.now(),
+        }
+
+        const errors: string[] = []
+        const template = findTemplate(state.elonRegistry.agentTemplates, next.roleTemplateId)
+        if (!template) errors.push('roleTemplate must map to an existing workflow template.')
+        if (next.toolScopes.length === 0) errors.push('At least one tool scope is required.')
+        if (template) {
+          const missingDefaultTools = template.defaultTools.filter((tool) => !next.toolScopes.includes(tool))
+          if (missingDefaultTools.length > 0) {
+            errors.push(`Missing required tool scopes: ${missingDefaultTools.join(', ')}`)
+          }
+        }
+        if (next.modelPolicy.mode === 'fixed' && !String(next.modelPolicy.model ?? '').trim()) {
+          errors.push('fixed model must be set when modelPolicy is fixed.')
+        }
+        if (
+          !Number.isFinite(next.maxParallelTasks) ||
+          next.maxParallelTasks < 1 ||
+          next.maxParallelTasks > 20
+        ) {
+          errors.push('maxParallelTasks must be between 1 and 20.')
+        }
+        if (!next.displayName.trim()) errors.push('displayName is required.')
+
+        if (errors.length > 0) return { ok: false as const, errors }
+
+        const event: AgentLifecycleEvent = {
+          eventType: 'updated',
+          agentId: next.id,
+          reason: 'Updated from Agent Employees UI',
+          actor: 'user',
+          at: Date.now(),
+        }
+        set((st) => ({
+          elonRegistry: {
+            ...st.elonRegistry,
+            agentEmployees: st.elonRegistry.agentEmployees.map((e) =>
+              e.id === agentId ? next : e,
+            ),
+            agentLifecycleEvents: [event, ...st.elonRegistry.agentLifecycleEvents].slice(0, 300),
+          },
+        }))
+        return { ok: true as const, employee: next }
+      },
+
+      elonCloneAgentEmployee: (sourceAgentId, nextAgentId, displayName) => {
+        const state = get()
+        const source = state.elonRegistry.agentEmployees.find((e) => e.id === sourceAgentId)
+        if (!source) return { ok: false as const, errors: [`Unknown agent employee: ${sourceAgentId}`] }
+        const cloneId = normalizeAgentEmployeeId(nextAgentId ?? `${source.id}-copy`)
+        const result = get().elonAddAgentEmployee({
+          id: cloneId,
+          displayName: displayName?.trim() || `Copy of ${source.displayName}`,
+          category: source.category,
+          roleTemplateId: source.roleTemplateId,
+          autonomyLevel: source.autonomyLevel,
+          toolScopes: [...source.toolScopes],
+          modelPolicyMode: source.modelPolicy.mode,
+          fixedModel: source.modelPolicy.model,
+          maxParallelTasks: source.maxParallelTasks,
+        })
+        return result
+      },
+
+      elonSetAgentEmployeeStatus: (agentId, status, reason, actor = 'user') => {
+        const state = get()
+        const idx = state.elonRegistry.agentEmployees.findIndex((e) => e.id === agentId)
+        if (idx < 0) return { ok: false as const, errors: [`Unknown agent employee: ${agentId}`] }
+
+        if (state.elonFrame.collapsed && status === 'terminated') {
+          return {
+            ok: false as const,
+            errors: ['Frame Lock policy blocks terminate while locked. Use disable instead.'],
+          }
+        }
+
+        const current = state.elonRegistry.agentEmployees[idx]
+        const next: AgentEmployee = {
+          ...current,
+          status,
+          updatedAt: Date.now(),
+        }
+        const eventType: AgentLifecycleEvent['eventType'] =
+          status === 'disabled'
+            ? 'disabled'
+            : status === 'terminated'
+              ? 'terminated'
+              : 'updated'
+        const event: AgentLifecycleEvent = {
+          eventType,
+          agentId,
+          reason: reason?.trim() || `Set status to ${status}`,
+          actor,
+          at: Date.now(),
+        }
+
+        set((st) => ({
+          elonRegistry: {
+            ...st.elonRegistry,
+            agentEmployees: st.elonRegistry.agentEmployees.map((e) =>
+              e.id === agentId ? next : e,
+            ),
+            agentLifecycleEvents: [event, ...st.elonRegistry.agentLifecycleEvents].slice(0, 300),
+          },
+        }))
+        return { ok: true as const, employee: next }
+      },
+
+      elonUpdateAgentTemplate: (templateId, patch) => {
+        const state = get()
+        const idx = state.elonRegistry.agentTemplates.findIndex((t) => t.templateId === templateId)
+        if (idx < 0) return { ok: false as const, errors: [`Unknown template: ${templateId}`] }
+        const current = state.elonRegistry.agentTemplates[idx]
+        const norm =
+          patch.normProfile === 'strict' || patch.normProfile === 'default' || patch.normProfile === 'fast'
+            ? patch.normProfile
+            : current.normProfile
+        const next: AgentTemplate = {
+          ...current,
+          normProfile: norm,
+          promptBase: patch.promptBase ?? current.promptBase,
+        }
+        set((st) => ({
+          elonRegistry: {
+            ...st.elonRegistry,
+            agentTemplates: st.elonRegistry.agentTemplates.map((t) =>
+              t.templateId === templateId ? next : t,
+            ),
+          },
+        }))
+        return { ok: true as const, template: next }
+      },
+
       // ==================== End ElonX HARD Actions ====================
 
       // ==================== Self-Correction Actions ====================
@@ -2890,9 +3160,42 @@ export const useAppStore = create<AppState>()(
 
         const cycleId = crypto.randomUUID()
         const startedAt = Date.now()
+        const objective = state.elonFrame.problem || 'Autonomous execution objective'
+        const constraints = state.elonFrame.constraints || ''
+        const verification = state.elonFrame.verification || ''
+
+        const activeEmployees = state.elonRegistry.agentEmployees.filter((e) => e.status === 'active')
+        const activeAgentIds = activeEmployees.map((e) => e.id)
+        const factorySelection = selectAgentsForCycle({
+          objective,
+          constraints,
+          verification,
+          activeEmployees,
+        })
+        const factorySelectedAgentIds = factorySelection.selectedAgentIds.filter((id) =>
+          activeAgentIds.includes(id),
+        )
+        const factoryDecisionAt = Date.now()
+        const factoryDecisions: AgentAssignmentDecision[] = factorySelectedAgentIds.map((agentId, idx) => ({
+          cycleRunId: cycleId,
+          agentId,
+          taskId: `factory:${cycleId}:${idx + 1}`,
+          selectedBy: 'factory',
+          why: factorySelection.reason,
+          at: factoryDecisionAt,
+        }))
+        let cycleNormDecisionCount = 0
+        let cycleViolationCount = 0
 
         // Mark cycle as running and reset metrics for this cycle
         set((st) => ({
+          elonRegistry: {
+            ...st.elonRegistry,
+            agentAssignmentDecisions: [
+              ...factoryDecisions,
+              ...st.elonRegistry.agentAssignmentDecisions,
+            ].slice(0, 600),
+          },
           elonX: {
             ...st.elonX,
             autoCycle: {
@@ -2904,6 +3207,11 @@ export const useAppStore = create<AppState>()(
               cycleStartMs: startedAt,
               completedTasks: 0,
               totalTasks: 0, // Will be updated when broadcasts are created
+              lastCycleViolationCount: 0,
+              lastCycleNormDecisionCount: 0,
+              lastFactoryHeadcount: factorySelection.targetHeadcount,
+              lastFactoryComplexityScore: factorySelection.complexityScore,
+              lastFactoryReason: factorySelection.reason,
             },
             cycleRuns: [
               {
@@ -2973,56 +3281,91 @@ export const useAppStore = create<AppState>()(
           // Parse the CEO LLM output
           const llmOutput = parseCeoLlmOutput(rawResponse)
 
-          // Create broadcasts from LLM output
-          const broadcastIds: string[] = []
-          const now = Date.now()
-          const newBroadcasts: Broadcast[] = llmOutput.broadcasts.map((b) => {
-            const id = crypto.randomUUID()
-            broadcastIds.push(id)
+	          // Create broadcasts from LLM output + registry/factory fallback planning
+	          const broadcastIds: string[] = []
+	          const now = Date.now()
+	          const rawBroadcasts = llmOutput.broadcasts.map((b) => ({
+	            to: b.to,
+	            message: b.message,
+	            expiresMins: b.expiresMins,
+	          }))
+	          const broadcastNormResult = runBroadcastNorms(rawBroadcasts, activeAgentIds)
+	          const planned = planCycleBroadcasts({
+	            objective,
+	            constraints,
+	            activeAgentIds,
+	            factorySelectedAgentIds,
+	            factoryReason: factorySelection.reason,
+	            llmOutput,
+	            sanitizedBroadcasts: broadcastNormResult.broadcasts,
+	          })
+	          cycleNormDecisionCount +=
+	            broadcastNormResult.decisions.length + (planned.usedFallback ? 1 : 0)
+	          cycleViolationCount +=
+	            broadcastNormResult.decisions.filter((d) => d.decision !== 'allow').length +
+	            (planned.usedFallback ? 1 : 0)
 
-            // Set CEO feedback for the agent (visible in UI)
-            const leverageItem = llmOutput.topLeverage.find((l) => l.assignee === b.to)
-            const ceoFeedback = leverageItem
-              ? `Task: ${leverageItem.title} | Why: ${leverageItem.why} | Risk: ${leverageItem.risk}`
-              : b.message.slice(0, 100)
-            get().elonSetCeoFeedback(b.to, ceoFeedback)
-            get().elonAddAgentLog(b.to, {
-              timestamp: now,
-              type: 'ceo_feedback',
-              message: `CEO assigned: ${leverageItem?.title || 'New directive'}`,
-              detail: leverageItem?.why || b.message,
-            })
+	          const ceoDecisionAt = Date.now()
+	          const ceoDecisions: AgentAssignmentDecision[] = planned.directives.map((d, idx) => ({
+	            cycleRunId: cycleId,
+	            agentId: d.to,
+	            taskId: `ceo:${cycleId}:${idx + 1}`,
+	            selectedBy: 'ceo',
+	            why: d.why,
+	            at: ceoDecisionAt,
+	          }))
 
-            return {
-              id,
-              cycleRunId: cycleId,
-              toAgentIds: [b.to],
-              message: b.message,
-              why: leverageItem?.why || 'Top leverage item',
-              evidenceLinks: [],
-              expiresAt: now + b.expiresMins * 60 * 1000,
-              createdAt: now,
-              status: 'active' as const,
-            }
-          })
+	          const newBroadcasts: Broadcast[] = planned.directives.map((d) => {
+	            const id = crypto.randomUUID()
+	            broadcastIds.push(id)
+	            const leverageItem = llmOutput.topLeverage.find((l) => l.assignee === d.to)
+	            const ceoFeedback = leverageItem
+	              ? `Task: ${leverageItem.title} | Why: ${leverageItem.why} | Risk: ${leverageItem.risk}`
+	              : d.message.slice(0, 140)
+	            get().elonSetCeoFeedback(d.to, ceoFeedback)
+	            get().elonAddAgentLog(d.to, {
+	              timestamp: now,
+	              type: 'ceo_feedback',
+	              message: `CEO assigned: ${leverageItem?.title || 'New directive'}`,
+	              detail: d.why,
+	            })
+	            return {
+	              id,
+	              cycleRunId: cycleId,
+	              toAgentIds: [d.to],
+	              message: d.message,
+	              why: d.why,
+	              evidenceLinks: [],
+	              expiresAt: now + d.expiresMins * 60 * 1000,
+	              createdAt: now,
+	              status: 'active' as const,
+	            }
+	          })
 
-          // Mark previous active broadcasts as superseded and update task count
-          const totalAgentTasks = newBroadcasts.reduce((sum, b) => sum + b.toAgentIds.length, 0)
-          set((st) => ({
-            elonX: {
-              ...st.elonX,
-              broadcasts: [
-                ...newBroadcasts,
-                ...st.elonX.broadcasts.map((b) =>
-                  b.status === 'active' ? { ...b, status: 'superseded' as const } : b,
-                ),
-              ].slice(0, 100), // Keep last 100 broadcasts
-              metrics: {
-                ...st.elonX.metrics,
-                totalTasks: totalAgentTasks,
-              },
-            },
-          }))
+	          // Mark previous active broadcasts as superseded and update task count
+	          const totalAgentTasks = newBroadcasts.reduce((sum, b) => sum + b.toAgentIds.length, 0)
+	          set((st) => ({
+	            elonRegistry: {
+	              ...st.elonRegistry,
+	              agentAssignmentDecisions: [
+	                ...ceoDecisions,
+	                ...st.elonRegistry.agentAssignmentDecisions,
+	              ].slice(0, 600),
+	            },
+	            elonX: {
+	              ...st.elonX,
+	              broadcasts: [
+	                ...newBroadcasts,
+	                ...st.elonX.broadcasts.map((b) =>
+	                  b.status === 'active' ? { ...b, status: 'superseded' as const } : b,
+	                ),
+	              ].slice(0, 100), // Keep last 100 broadcasts
+	              metrics: {
+	                ...st.elonX.metrics,
+	                totalTasks: totalAgentTasks,
+	              },
+	            },
+	          }))
 
           // Phase 3: Meeting Simulation — check if meeting needed before agent execution
           const {
@@ -3052,21 +3395,21 @@ export const useAppStore = create<AppState>()(
               }
             }
 
-            for (const agentId of b.toAgentIds) {
-              // Mark agent as evaluating
-              set((st) => ({
-                elonX: {
-                  ...st.elonX,
-                  agentStatuses: {
-                    ...st.elonX.agentStatuses,
-                    [agentId]: {
-                      id: agentId,
-                      status: 'evaluating',
-                      currentTask: b.message,
-                      startedAt: Date.now(),
-                    },
-                  },
-                },
+	            for (const agentId of b.toAgentIds) {
+	              // Mark agent as planning
+	              set((st) => ({
+	                elonX: {
+	                  ...st.elonX,
+	                  agentStatuses: {
+	                    ...st.elonX.agentStatuses,
+	                    [agentId]: {
+	                      id: agentId,
+	                      status: 'planning',
+	                      currentTask: b.message,
+	                      startedAt: Date.now(),
+	                    },
+	                  },
+	                },
               }))
 
               // Phase 2: Knowledge Sharing — inject relevant knowledge into prompt
@@ -3230,18 +3573,19 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
 
                 try {
                   const broadcastWithContext = b.message + meetingDecisionContext + dmContext + projectContext + githubPreflightContext
-                  const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(
-                    agentId,
-                    currentPromptOverride ?? broadcastWithContext,
-                    undefined,
-                    knowledgeContext || undefined,
-                  )
+	                  const { systemPrompt: agentSys, userPrompt: agentUsr } = buildAgentPrompt(
+	                    agentId,
+	                    currentPromptOverride ?? broadcastWithContext,
+	                    undefined,
+	                    knowledgeContext || undefined,
+	                  )
 
-                  // Update live activity - calling LLM
-                  get().elonSetAgentLiveActivity(agentId, 'Thinking...')
-                  get().elonAddAgentLog(agentId, {
-                    timestamp: Date.now(),
-                    type: 'thinking',
+	                  // Update status/activity - calling LLM
+	                  get().elonUpdateAgentStatus(agentId, 'acting', b.message)
+	                  get().elonSetAgentLiveActivity(agentId, 'Thinking...')
+	                  get().elonAddAgentLog(agentId, {
+	                    timestamp: Date.now(),
+	                    type: 'thinking',
                     message: 'Analyzing task and generating response...',
                     detail: b.message.slice(0, 100),
                   })
@@ -3921,26 +4265,44 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
             }
           }
 
-          // Complete the cycle run
-          const endedAt = Date.now()
-          set((st) => ({
-            elonX: {
-              ...st.elonX,
-              autoCycle: {
-                ...st.elonX.autoCycle,
-                status: st.elonX.autoCycle.enabled ? 'cooldown' : 'idle',
+	          // Complete the cycle run
+	          const endedAt = Date.now()
+	          set((st) => ({
+	            // Recompute autonomy after this cycle closes.
+	            // (completed/total are already accumulated in metrics during execution.)
+	            elonX: {
+	              ...st.elonX,
+	              autoCycle: {
+	                ...st.elonX.autoCycle,
+	                status: st.elonX.autoCycle.enabled ? 'cooldown' : 'idle',
                 lastRunAt: endedAt,
                 nextRunAt: st.elonX.autoCycle.enabled ? endedAt + st.elonX.autoCycle.intervalMs : null,
                 consecutiveFailures: 0,
               },
-              cycleRuns: st.elonX.cycleRuns.map((r) =>
-                r.id === cycleId
-                  ? { ...r, endedAt, status: 'completed' as const, llmOutput, broadcastIds }
-                  : r,
-              ),
-            },
-          }))
-        } catch (error) {
+	              cycleRuns: st.elonX.cycleRuns.map((r) =>
+	                r.id === cycleId
+	                  ? { ...r, endedAt, status: 'completed' as const, llmOutput, broadcastIds }
+	                  : r,
+	              ),
+	              metrics: (() => {
+	                const scoreCard = computeAutonomyScore({
+	                  completedTasks: st.elonX.metrics.completedTasks,
+	                  totalTasks: st.elonX.metrics.totalTasks,
+	                  humanInterventionCount: st.elonX.metrics.interventions,
+	                  violationCount: cycleViolationCount,
+	                  reworkCount: 0,
+	                })
+	                return {
+	                  ...st.elonX.metrics,
+	                  autonomyRate: scoreCard.score,
+	                  loaLevel: scoreCard.loaLevel,
+	                  lastCycleViolationCount: cycleViolationCount,
+	                  lastCycleNormDecisionCount: cycleNormDecisionCount,
+	                }
+	              })(),
+	            },
+	          }))
+	        } catch (error) {
           // Handle failure
           const endedAt = Date.now()
           const errorMsg = error instanceof Error ? error.message : 'Cycle execution failed'
@@ -3949,9 +4311,9 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
             const failures = st.elonX.autoCycle.consecutiveFailures + 1
             const shouldPause = failures >= 3 // Drift Guard: auto-pause after 3 failures
 
-            return {
-              elonX: {
-                ...st.elonX,
+	            return {
+	              elonX: {
+	                ...st.elonX,
                 autoCycle: {
                   ...st.elonX.autoCycle,
                   status: shouldPause ? 'paused' : st.elonX.autoCycle.enabled ? 'cooldown' : 'idle',
@@ -3960,12 +4322,17 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                   nextRunAt: shouldPause ? null : st.elonX.autoCycle.enabled ? endedAt + st.elonX.autoCycle.intervalMs : null,
                   consecutiveFailures: failures,
                 },
-                cycleRuns: st.elonX.cycleRuns.map((r) =>
-                  r.id === cycleId ? { ...r, endedAt, status: 'failed' as const, errorMessage: errorMsg } : r,
-                ),
-              },
-            }
-          })
+	                cycleRuns: st.elonX.cycleRuns.map((r) =>
+	                  r.id === cycleId ? { ...r, endedAt, status: 'failed' as const, errorMessage: errorMsg } : r,
+	                ),
+	                metrics: {
+	                  ...st.elonX.metrics,
+	                  lastCycleViolationCount: cycleViolationCount,
+	                  lastCycleNormDecisionCount: cycleNormDecisionCount,
+	                },
+	              },
+	            }
+	          })
         }
       },
 
@@ -4057,8 +4424,14 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
           agentEvents: s.agentEvents,
         })),
         activeSessionId: state.activeSessionId,
+        elonRegistry: {
+          agentEmployees: state.elonRegistry.agentEmployees,
+          agentTemplates: state.elonRegistry.agentTemplates,
+          agentLifecycleEvents: state.elonRegistry.agentLifecycleEvents,
+          agentAssignmentDecisions: state.elonRegistry.agentAssignmentDecisions,
+        },
       }),
-      version: 4,
+      version: 5,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>
         // Migration from version 2 to 3: add agentEvents to sessions
@@ -4092,6 +4465,23 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
             }
             return { ...s, messages }
           })
+        }
+        if (version < 5) {
+          const rawRegistry = (state.elonRegistry as Record<string, unknown> | undefined) ?? {}
+          state.elonRegistry = {
+            agentEmployees: Array.isArray(rawRegistry.agentEmployees)
+              ? rawRegistry.agentEmployees
+              : buildDefaultAgentEmployees(),
+            agentTemplates: Array.isArray(rawRegistry.agentTemplates)
+              ? rawRegistry.agentTemplates
+              : buildDefaultAgentTemplates(),
+            agentLifecycleEvents: Array.isArray(rawRegistry.agentLifecycleEvents)
+              ? rawRegistry.agentLifecycleEvents
+              : [],
+            agentAssignmentDecisions: Array.isArray(rawRegistry.agentAssignmentDecisions)
+              ? rawRegistry.agentAssignmentDecisions
+              : [],
+          }
         }
         return state
       },
