@@ -87,6 +87,26 @@ function IconBranch({ className }: { className?: string }) {
   )
 }
 
+function IconTerminal({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <path d="m8 10 2 2-2 2M12.5 16h3.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function parseQueueItem(raw: string): { kind: string; text: string } {
+  const source = String(raw ?? '').trim()
+  if (!source) return { kind: 'task', text: '' }
+  const m = source.match(/^\[([^\]]+)\]\s*(.+)$/)
+  if (!m) return { kind: 'task', text: source }
+  return {
+    kind: String(m[1] || 'task').trim().toLowerCase(),
+    text: String(m[2] || '').trim(),
+  }
+}
+
 type BudgetStatus = {
   mainLimitUsd: number
   mainSpentUsd: number
@@ -229,8 +249,6 @@ export function InputBar() {
     daemon,
     setUiMode,
     promptStageWizard,
-    elonFrame,
-    setElonFrame,
     attachedImages,
     addAttachedImage,
     removeAttachedImage,
@@ -238,6 +256,8 @@ export function InputBar() {
     setProjectPath,
     autoApprove,
     setViewMode,
+    queuePreviewCount,
+    queuePreviewItems,
   } = useAppStore()
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -259,6 +279,8 @@ export function InputBar() {
   const [gitRemoved, setGitRemoved] = useState(0)
   const [branchSwitching, setBranchSwitching] = useState(false)
   const [budgetStatus, setBudgetStatus] = useState<BudgetStatus | null>(null)
+  const [queueExpanded, setQueueExpanded] = useState(true)
+  const [queuePulse, setQueuePulse] = useState(false)
 
   const extractDroppedFiles = (dt: DataTransfer | null): File[] => {
     if (!dt) return []
@@ -351,11 +373,19 @@ export function InputBar() {
     textarea.style.height = Math.min(textarea.scrollHeight, 160) + 'px'
   }, [draftPrompt])
 
+  const selectableModeItems = modeItems.filter((m) => {
+    const token = String(m.token ?? '').toLowerCase()
+    const label = String(m.label ?? '').toLowerCase()
+    if (token === 'elon') return false
+    if (label.includes('elonx hard')) return false
+    return true
+  })
+
   // Format mode/model display
-  const modeDisplayRaw = modeItems.find((m) => m.token === mode)?.label || 'Agent'
+  const normalizedMode = mode === 'elon' ? 'classic' : mode
+  const modeDisplayRaw = selectableModeItems.find((m) => m.token === normalizedMode)?.label || 'Agent'
   const isOrchestratorMode = mode.toLowerCase().includes('orchestrator') || mode.toLowerCase().includes('team')
-  const modeDisplay = mode === 'elon' ? 'ElonX HARD' : isOrchestratorMode ? 'Orchestrator' : modeDisplayRaw
-  const elonEnabled = mode === 'elon'
+  const modeDisplay = isOrchestratorMode ? 'Orchestrator' : modeDisplayRaw
   const modelDisplay = model
     ? (
       model === 'auto'
@@ -371,11 +401,44 @@ export function InputBar() {
   const budgetLimit = budgetStatus?.mainLimitUsd ?? 0
   const budgetSpent = budgetStatus?.mainSpentUsd ?? 0
   const budgetRatio = budgetLimit > 0 ? Math.max(0, Math.min(1, budgetSpent / budgetLimit)) : 0
+  const queueVisible = queuePreviewCount > 0 || busy
+  const queueItems = queuePreviewItems.filter(Boolean)
+  const queueLead = queueItems[0] ?? ''
+  const queueRows = queueItems.slice(0, 4)
+  const queueSignature = queueItems.join('\n')
+  const activeTerminalCount = busy ? Math.max(1, queuePreviewCount + 1) : queuePreviewCount
+  const queueHeaderTitle = busy ? `터미널 ${activeTerminalCount}개 실행 중` : `대기열 ${queuePreviewCount}개`
+  const queueHeaderSubtext = queueLead || (busy ? '현재 작업이 끝나면 다음 작업이 자동으로 실행됩니다.' : '대기 중인 작업이 없습니다.')
+
+  useEffect(() => {
+    if (!queueVisible) return
+    setQueuePulse(true)
+    const t = window.setTimeout(() => setQueuePulse(false), 260)
+    return () => window.clearTimeout(t)
+  }, [queuePreviewCount, queueSignature, currentRunStatus, queueVisible])
+
+  useEffect(() => {
+    if (queuePreviewCount > 0) setQueueExpanded(true)
+  }, [queuePreviewCount])
 
   const handleSend = () => {
     const prompt = draftPrompt.trim()
     if (!prompt || busy) return
     void sendPrompt(prompt)
+  }
+
+  const handleClearQueue = async () => {
+    try {
+      await daemon?.queueClear()
+      useAppStore.setState({
+        localQueueItems: [],
+        queuePreviewCount: 0,
+        queuePreviewItems: [],
+      })
+      toast('Queue cleared')
+    } catch (e) {
+      toast('Failed to clear queue', { description: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   const handleModeSelect = async (token: string) => {
@@ -694,6 +757,108 @@ export function InputBar() {
       />
 
       <div className="mx-auto w-full max-w-[760px]">
+        <div
+          className={[
+            'overflow-hidden transition-all duration-400 ease-out',
+            queueVisible ? 'mb-2.5 max-h-[260px] translate-y-0 opacity-100' : 'mb-0 max-h-0 -translate-y-2 opacity-0',
+          ].join(' ')}
+        >
+          <div
+            className={[
+              'rounded-[24px] border bg-[#f7f8fa]/96 shadow-[0_6px_20px_rgba(15,23,42,0.06)] transition-all duration-300 ease-out',
+              queuePulse ? 'border-slate-300 ring-2 ring-slate-200/70' : 'border-[color:var(--color-border)]',
+            ].join(' ')}
+          >
+            <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+              <div className="min-w-0 flex items-center gap-2.5">
+                <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]">
+                  <IconTerminal className="h-4.5 w-4.5" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-700">
+                    <span className={['inline-block h-1.5 w-1.5 rounded-full', busy ? 'bg-slate-500 animate-pulse' : 'bg-slate-300'].join(' ')} />
+                    <span>{queueHeaderTitle}</span>
+                  </div>
+                  <div className="max-w-[560px] truncate text-[12px] text-slate-500">
+                    {queueHeaderSubtext}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                {busy ? (
+                  <button
+                    type="button"
+                    onClick={cancelRun}
+                    className="rounded-lg p-1.5 text-slate-400 transition duration-200 hover:scale-105 hover:bg-slate-200/70 hover:text-slate-700 active:scale-95"
+                    title="Stop current run"
+                  >
+                    <IconStop className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setQueueExpanded((v) => !v)}
+                  className="rounded-lg p-1.5 text-slate-400 transition duration-200 hover:scale-105 hover:bg-slate-200/70 hover:text-slate-600 active:scale-95"
+                  title={queueExpanded ? 'Collapse queue' : 'Expand queue'}
+                >
+                  <IconChevronDown className={['h-4 w-4 transition-transform duration-200', queueExpanded ? 'rotate-180' : ''].join(' ')} />
+                </button>
+              </div>
+            </div>
+
+            <div
+              className={[
+                'overflow-hidden border-t border-slate-200/90 transition-all duration-300 ease-out',
+                queueExpanded && queueRows.length > 0 ? 'max-h-[180px] opacity-100' : 'max-h-0 opacity-0',
+              ].join(' ')}
+            >
+              <div className="space-y-1.5 px-4 pb-3 pt-2">
+                {queueRows.map((item, idx) => {
+                  const parsed = parseQueueItem(item)
+                  const kindLabel = parsed.kind === 'pair' ? 'PAIR' : 'TASK'
+                  return (
+                    <div
+                      key={`${item}-${idx}`}
+                      className="flex items-center gap-2 rounded-xl border border-slate-200/90 bg-white px-2.5 py-1.5 text-[12px] text-slate-600 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] transition-all duration-250 ease-out"
+                      style={{
+                        transitionDelay: `${idx * 45}ms`,
+                        opacity: queueExpanded ? 1 : 0,
+                        transform: queueExpanded ? 'translateY(0px)' : 'translateY(-4px)',
+                      }}
+                    >
+                      <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-500">
+                        {idx === 0 && busy ? 'NEXT' : idx === 0 ? 'NOW' : `#${idx + 1}`}
+                      </span>
+                      <span
+                        className={[
+                          'rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide',
+                          kindLabel === 'PAIR' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600',
+                        ].join(' ')}
+                      >
+                        {kindLabel}
+                      </span>
+                      <span className="min-w-0 truncate">{parsed.text || item}</span>
+                    </div>
+                  )
+                })}
+                {queuePreviewCount > 0 ? (
+                  <div className="flex justify-end pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => void handleClearQueue()}
+                      className="rounded-md px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+                      title="Clear queue"
+                    >
+                      대기열 비우기
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Main input card */}
         <div
           className={[
@@ -723,72 +888,6 @@ export function InputBar() {
             handleDataTransferDrop(e.dataTransfer)
           }}
         >
-          {!elonEnabled ? null : (
-            <div className="border-b border-black/5 px-4 py-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-slate-100 text-slate-700">
-                    {getModeIcon('elon')}
-                  </div>
-                  <div className="text-xs font-semibold tracking-wide text-slate-700">ElonX HARD Frame</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setElonFrame({ collapsed: !elonFrame.collapsed })}
-                  className="rounded-lg border border-[color:var(--color-border)] bg-[#f8fafc] px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-white"
-                >
-                  {elonFrame.collapsed ? 'Show' : 'Hide'}
-                </button>
-              </div>
-
-              {elonFrame.collapsed ? (
-                <div className="mt-2 text-[12px] text-slate-500">
-                  {(elonFrame.problem || elonFrame.constraints || elonFrame.verification)
-                    ? [
-                        elonFrame.problem ? `Problem: ${elonFrame.problem}` : null,
-                        elonFrame.constraints ? `Constraints: ${elonFrame.constraints}` : null,
-                        elonFrame.verification ? `Verification: ${elonFrame.verification}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(' · ')
-                    : 'Set a one-line problem, constraints, and verification.'}
-                </div>
-              ) : (
-                <div className="mt-3 grid grid-cols-1 gap-2">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Problem</div>
-                      <input
-                        value={elonFrame.problem}
-                        onChange={(e) => setElonFrame({ problem: e.target.value })}
-                        placeholder="What are we fixing/building?"
-                        className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Constraints</div>
-                      <input
-                        value={elonFrame.constraints}
-                        onChange={(e) => setElonFrame({ constraints: e.target.value })}
-                        placeholder="Hard limits / don't break"
-                        className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
-                      />
-                    </div>
-                    <div className="rounded-xl border border-[color:var(--color-border)] bg-[#f8fafc] px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Verification</div>
-                      <input
-                        value={elonFrame.verification}
-                        onChange={(e) => setElonFrame({ verification: e.target.value })}
-                        placeholder="How do we prove it's done?"
-                        className="mt-1 w-full bg-transparent text-[13px] text-slate-700 placeholder:text-slate-400 outline-none"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {dragActive ? (
             <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-2xl bg-blue-50/40 backdrop-blur-[1px]">
               <div className="rounded-xl border border-blue-200 bg-white/80 px-4 py-2 text-sm text-blue-900 shadow-sm">
@@ -868,7 +967,6 @@ export function InputBar() {
               rows={1}
               className={[
                 'min-h-[40px] max-h-[140px] w-full resize-none border-0 bg-transparent text-[14px] leading-[1.4] text-slate-800 placeholder:text-slate-400 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
-                elonEnabled ? 'placeholder:text-slate-400' : '',
               ].join(' ')}
             />
           </div>
@@ -890,7 +988,7 @@ export function InputBar() {
 
                 {showModeDropdown && (
                   <div className="absolute bottom-full left-0 mb-2 w-52 rounded-xl border border-[color:var(--color-border)] bg-white py-1 shadow-xl z-[100]">
-                    {modeItems.map((m) => {
+                    {selectableModeItems.map((m) => {
                       const icon = getModeIcon(m.token)
                       return (
                         <button

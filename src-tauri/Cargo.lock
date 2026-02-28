@@ -3,6 +3,32 @@
 version = 3
 
 [[package]]
+name = "Snailer"
+version = "0.3.5"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "keyring",
+ "log",
+ "prost",
+ "prost-types",
+ "rfd",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-log",
+ "tokio",
+ "tonic",
+ "tonic-build",
+ "ureq",
+ "url",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -85,30 +111,6 @@ name = "anyhow"
 version = "1.0.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
-
-[[package]]
-name = "app"
-version = "0.3.5"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "keyring",
- "log",
- "prost",
- "prost-types",
- "rfd",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-log",
- "tokio",
- "tonic",
- "tonic-build",
- "ureq",
- "uuid",
- "walkdir",
-]
 
 [[package]]
 name = "arrayvec"

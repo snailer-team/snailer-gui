@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { Button } from './ui/button'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
@@ -77,14 +77,6 @@ function SegmentedToggle() {
   )
 }
 
-function IconBolt({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function IconNewSession({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -102,12 +94,9 @@ export function Sidebar() {
     activeSessionId,
     selectSession,
     createSession,
+    deleteSession,
     daemon,
     projectPath,
-    mode,
-    lastStandardMode,
-    setUiMode,
-    currentRunStatus,
   } = useAppStore()
 
   // Auth state
@@ -117,6 +106,8 @@ export function Sidebar() {
   const [userEmail, setUserEmail] = useState<string | null>(() => authService.getCurrentEmail())
   const [userName, setUserName] = useState<string | null>(() => authService.getCurrentName())
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null)
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null)
 
   const subtitle = useMemo(() => {
     if (connectionStatus === 'connected') return 'Ready'
@@ -124,12 +115,6 @@ export function Sidebar() {
     if (connectionStatus === 'error') return 'Error'
     return 'Disconnected'
   }, [connectionStatus])
-
-  const busy =
-    currentRunStatus === 'running' ||
-    currentRunStatus === 'queued' ||
-    currentRunStatus === 'awaiting_approval'
-  const elonEnabled = mode === 'elon'
 
   const sessionDiff = (s: (typeof sessions)[number]) => {
     let added = 0
@@ -140,6 +125,42 @@ export function Sidebar() {
       removed += e.linesRemoved ?? 0
     }
     return { added, removed }
+  }
+
+  useEffect(() => {
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target) return
+      if (!target.closest('[data-session-menu-root="true"]')) {
+        setOpenSessionMenuId(null)
+      }
+      if (!target.closest('[data-user-menu-root="true"]')) {
+        setShowUserMenu(false)
+      }
+    }
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpenSessionMenuId(null)
+        setShowUserMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [])
+
+  const handleDeleteSession = async (sessionId: string) => {
+    setOpenSessionMenuId(null)
+    setDeletingSessionId(sessionId)
+    await new Promise((resolve) => window.setTimeout(resolve, 160))
+    try {
+      await deleteSession(sessionId)
+    } finally {
+      setDeletingSessionId((prev) => (prev === sessionId ? null : prev))
+    }
   }
 
   return (
@@ -153,12 +174,6 @@ export function Sidebar() {
             <StatusDot status={connectionStatus} />
             <div className="text-sm font-semibold tracking-tight text-slate-800">Snailer</div>
             <div className="text-xs text-slate-500">{subtitle}</div>
-            {!elonEnabled ? null : (
-              <div className="ml-1 inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold tracking-wide text-slate-700">
-                <IconBolt className="h-3.5 w-3.5" />
-                ElonX HARD
-              </div>
-            )}
           </div>
           <Button
             variant="ghost"
@@ -184,30 +199,6 @@ export function Sidebar() {
         <div className="mt-4">
           <SegmentedToggle />
         </div>
-
-        <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
-          <div className="text-xs font-semibold tracking-wide text-slate-700">ElonX HARD</div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={elonEnabled}
-            disabled={!daemon || busy}
-            onClick={() => void setUiMode(elonEnabled ? lastStandardMode : 'elon')}
-            className={[
-              'relative inline-flex h-6 w-10 items-center rounded-full transition',
-              elonEnabled ? 'bg-slate-700' : 'bg-slate-300',
-              !daemon || busy ? 'opacity-50 cursor-not-allowed' : 'hover:bg-slate-400',
-            ].join(' ')}
-            title={elonEnabled ? 'Disable ElonX HARD' : 'Enable ElonX HARD'}
-          >
-            <span
-              className={[
-                'inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition',
-                elonEnabled ? 'translate-x-4' : 'translate-x-1',
-              ].join(' ')}
-            />
-          </button>
-        </div>
       </div>
 
 
@@ -229,24 +220,31 @@ export function Sidebar() {
                 const title = sessionDisplayTitle(s.name, firstUserMessage)
                 const diff = sessionDiff(s)
                 const hasDiff = diff.added > 0 || diff.removed > 0
+                const menuOpen = openSessionMenuId === s.id
+                const deleting = deletingSessionId === s.id
                 return (
                   <div
                     key={s.id}
                     role="button"
                     tabIndex={0}
-                    onClick={() => selectSession(s.id)}
+                    onClick={() => {
+                      setOpenSessionMenuId(null)
+                      selectSession(s.id)
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
+                        setOpenSessionMenuId(null)
                         selectSession(s.id)
                       }
                     }}
                     className={[
-                      'group w-full rounded-xl px-3 py-1.5 text-left transition',
+                      'group relative w-full rounded-xl px-3 py-1.5 text-left transition-all duration-200 ease-out',
                       active ? 'bg-slate-200/80' : 'hover:bg-white/60',
+                      deleting ? 'pointer-events-none translate-x-1 scale-[0.985] opacity-0' : '',
                     ].join(' ')}
                   >
-                    <div className="grid w-full grid-cols-[minmax(0,1fr)_110px] items-center gap-2">
+                    <div className="grid w-full grid-cols-[minmax(0,1fr)_140px] items-center gap-2">
                       <div className="min-w-0 flex items-center gap-2">
                         {active ? <span className="shrink-0 text-[18px] leading-none text-slate-700">›</span> : null}
                         <div
@@ -268,6 +266,53 @@ export function Sidebar() {
                           </>
                         ) : null}
                         <span className="font-normal text-slate-400">{formatRecent(s.updatedAt)}</span>
+                        <div className="relative" data-session-menu-root="true">
+                          <button
+                            type="button"
+                            aria-label="Session actions"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setOpenSessionMenuId((prev) => (prev === s.id ? null : s.id))
+                            }}
+                            className={[
+                              'inline-flex h-6 w-6 items-center justify-center rounded-md border border-transparent text-slate-400 transition-all duration-150',
+                              menuOpen
+                                ? 'bg-white text-slate-600 shadow-sm'
+                                : 'opacity-0 group-hover:opacity-100 hover:bg-white/90 hover:text-slate-600',
+                            ].join(' ')}
+                          >
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+                              <circle cx="5" cy="12" r="1.8" />
+                              <circle cx="12" cy="12" r="1.8" />
+                              <circle cx="19" cy="12" r="1.8" />
+                            </svg>
+                          </button>
+                          <div
+                            className={[
+                              'absolute right-0 top-7 z-20 min-w-[132px] origin-top-right rounded-xl border border-slate-200 bg-white p-1 shadow-lg transition-all duration-150',
+                              menuOpen
+                                ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
+                                : 'pointer-events-none -translate-y-1 scale-95 opacity-0',
+                            ].join(' ')}
+                          >
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                void handleDeleteSession(s.id)
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs font-medium text-rose-600 transition hover:bg-rose-50"
+                            >
+                              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                <path d="M3 6h18" strokeLinecap="round" />
+                                <path d="M8 6V4h8v2M7 6l1 14h8l1-14M10 10v7M14 10v7" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                              Delete session
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -283,7 +328,7 @@ export function Sidebar() {
         {/* Auth Section */}
         <div className="border-t border-slate-200 pt-4">
           {isLoggedIn ? (
-            <div className="relative">
+            <div className="relative" data-user-menu-root="true">
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
                 className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:bg-slate-50 hover:shadow-sm"
@@ -299,34 +344,39 @@ export function Sidebar() {
                 </div>
               </button>
 
-              {showUserMenu && (
-                <div className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-slate-200 bg-white py-2 shadow-lg">
-                  <button
-                    onClick={() => {
-                      setShowUserMenu(false)
-                      setLoginMode('switch')
-                      setShowLoginModal(true)
-                    }}
-                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
-                  >
-                    <IconUser className="h-4 w-4 text-slate-500" />
-                    <span>Switch Account</span>
-                  </button>
-                  <button
-                    onClick={async () => {
-                      setShowUserMenu(false)
-                      await authService.logout()
-                      setIsLoggedIn(false)
-                      setUserEmail(null)
-                      setUserName(null)
-                    }}
-                    className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    <IconLogOut className="h-4 w-4" />
-                    <span>Logout</span>
-                  </button>
-                </div>
-              )}
+              <div
+                className={[
+                  'absolute bottom-full left-0 right-0 mb-2 origin-bottom rounded-2xl border border-slate-200 bg-white py-2 shadow-lg transition-all duration-200 ease-out',
+                  showUserMenu
+                    ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
+                    : 'pointer-events-none translate-y-2 scale-[0.98] opacity-0',
+                ].join(' ')}
+              >
+                <button
+                  onClick={() => {
+                    setShowUserMenu(false)
+                    setLoginMode('switch')
+                    setShowLoginModal(true)
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                >
+                  <IconUser className="h-4 w-4 text-slate-500" />
+                  <span>Switch Account</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowUserMenu(false)
+                    await authService.logout()
+                    setIsLoggedIn(false)
+                    setUserEmail(null)
+                    setUserName(null)
+                  }}
+                  className="flex w-full items-center gap-3 px-4 py-2 text-left text-sm text-red-600 transition-colors hover:bg-red-50"
+                >
+                  <IconLogOut className="h-4 w-4" />
+                  <span>Logout</span>
+                </button>
+              </div>
             </div>
           ) : (
             <Button

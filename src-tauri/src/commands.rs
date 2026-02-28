@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
+use base64::Engine;
+use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use url::Url;
 use walkdir::WalkDir;
 
 /// LLM API response with token usage information
@@ -11,6 +16,7 @@ pub struct LlmCompletionResponse {
     pub model: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cached_input_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -356,6 +362,47 @@ fn snailer_cli_is_installed(prefix: &Path) -> bool {
     pkg.is_file() && snailer_cli_bin_path(prefix).is_file()
 }
 
+fn run_quick_cmd(program: &Path, args: &[&str], extra_path: Option<&Path>) -> Result<bool, String> {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(bin) = extra_path {
+        cmd.env("PATH", prepend_path(bin));
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to start {:?} {:?}: {}", program, args, e))?;
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(4);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status.success()),
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(false);
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Failed while waiting {:?}: {}", program, e));
+            }
+        }
+    }
+}
+
+fn snailer_cli_health_ok(bin_path: &Path, extra_path: Option<&Path>) -> Result<bool, String> {
+    if !run_quick_cmd(bin_path, &["--version"], extra_path)? {
+        return Ok(false);
+    }
+    if !run_quick_cmd(bin_path, &["daemon", "--help"], extra_path)? {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 fn gui_settings_path() -> PathBuf {
     snailer_home_dir().join("gui_settings.json")
 }
@@ -483,31 +530,123 @@ fn default_auth_addr() -> Option<String> {
     let build_default = option_env!("SNAILER_AUTH_ADDR_DEFAULT")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+        .map(normalize_legacy_auth_addr);
     if build_default.is_some() {
         return build_default;
     }
-    None
+    Some(DEFAULT_AUTH_ADDR.to_string())
 }
 
 fn resolve_auth_addr() -> Result<String, String> {
     if let Ok(v) = std::env::var("SNAILER_AUTH_ADDR") {
         if !v.trim().is_empty() {
-            return Ok(v);
+            return Ok(normalize_legacy_auth_addr(&v));
+        }
+    }
+
+    if let Ok(v) = std::env::var("SNAILER_GRPC_ADDR") {
+        if !v.trim().is_empty() {
+            return Ok(normalize_legacy_auth_addr(&v));
+        }
+    }
+
+    if let Ok(v) = std::env::var("USAGE_GRPC_ADDR") {
+        if !v.trim().is_empty() {
+            return Ok(normalize_legacy_auth_addr(&v));
         }
     }
 
     if let Some(v) = read_gui_settings_auth_addr() {
         if !v.trim().is_empty() {
-            return Ok(v);
+            return Ok(normalize_legacy_auth_addr(&v));
         }
     }
 
     if let Some(v) = default_auth_addr() {
-        return Ok(v);
+        return Ok(normalize_legacy_auth_addr(&v));
     }
 
-    Err("Auth server address is not configured. Set SNAILER_AUTH_ADDR (environment) or set `authAddr` in `~/.snailer/gui_settings.json` (or provide a build default).".to_string())
+    Ok(DEFAULT_AUTH_ADDR.to_string())
+}
+
+const DEFAULT_AUTH_ADDR: &str = "https://grpc.snailer.ai:443";
+
+fn normalize_legacy_auth_addr(input: &str) -> String {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return DEFAULT_AUTH_ADDR.to_string();
+    }
+
+    if raw.contains("://") {
+        if let Ok(mut url) = Url::parse(raw) {
+            if matches!(
+                url.host_str(),
+                Some("snailer.ai") | Some("www.snailer.ai") | Some("auth.snailer.dev")
+            ) {
+                let _ = url.set_host(Some("grpc.snailer.ai"));
+                return url.to_string();
+            }
+            return raw.to_string();
+        }
+    }
+
+    if raw == "snailer.ai"
+        || raw.starts_with("snailer.ai:")
+        || raw == "www.snailer.ai"
+        || raw.starts_with("www.snailer.ai:")
+        || raw == "auth.snailer.dev"
+        || raw.starts_with("auth.snailer.dev:")
+    {
+        return raw
+            .replacen("auth.snailer.dev", "grpc.snailer.ai", 1)
+            .replacen("www.snailer.ai", "grpc.snailer.ai", 1)
+            .replacen("snailer.ai", "grpc.snailer.ai", 1);
+    }
+
+    raw.to_string()
+}
+
+fn candidate_auth_addrs(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let primary = normalize_legacy_auth_addr(input);
+    out.push(primary.clone());
+    if primary != DEFAULT_AUTH_ADDR {
+        out.push(DEFAULT_AUTH_ADDR.to_string());
+    }
+
+    // Optional fallback for emergency rollout/testing only.
+    if let Ok(v) = std::env::var("SNAILER_AUTH_ADDR_FALLBACK") {
+        let fallback = normalize_legacy_auth_addr(&v);
+        if !fallback.trim().is_empty() && !out.iter().any(|a| a == &fallback) {
+            out.push(fallback);
+        }
+    }
+    out
+}
+
+fn join_attempt_errors(errors: &[(String, String)]) -> String {
+    errors
+        .iter()
+        .map(|(addr, err)| format!("{} => {}", addr, err))
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn is_retryable_auth_rpc_error(code: tonic::Code, message: &str) -> bool {
+    use tonic::Code;
+    if matches!(
+        code,
+        Code::Unavailable | Code::Unknown | Code::Internal | Code::DeadlineExceeded
+    ) {
+        return true;
+    }
+    let m = message.to_ascii_lowercase();
+    m.contains("upstream connect error")
+        || m.contains("disconnect/reset before headers")
+        || m.contains("protocol error")
+        || m.contains("transport")
+        || m.contains("connection reset")
+        || m.contains("connection refused")
 }
 
 const KEYCHAIN_SERVICE: &str = "com.snailer.gui";
@@ -571,6 +710,725 @@ fn auth_keychain_clear() -> Result<(), String> {
     }
 }
 
+const OPENAI_AUTH_BASE: &str = "https://auth.openai.com";
+const OPENAI_API_BASE: &str = "https://api.openai.com";
+const OPENAI_DEFAULT_SCOPE: &str = "openid profile email offline_access";
+const OPENAI_DEFAULT_LOCAL_PORT: u16 = 1455;
+const OPENAI_DEFAULT_CALLBACK_PATH: &str = "/auth/callback";
+const OPENAI_DEFAULT_CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_KEYRING_SERVICE: &str = "snailer";
+const OPENAI_KEYRING_OAUTH_ENTRY: &str = "openai_oauth_session";
+const OPENAI_KEYRING_API_KEY_ENTRY: &str = "openai_api_key";
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct OpenAiOAuthSession {
+    access_token: String,
+    refresh_token: Option<String>,
+    token_type: Option<String>,
+    scope: Option<String>,
+    expires_at: Option<i64>,
+    id_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct OAuthTokenResponse {
+    access_token: String,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    token_type: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    expires_in: Option<i64>,
+    #[serde(default)]
+    id_token: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OpenAiOAuthConfig {
+    client_id: String,
+    auth_base: String,
+    api_base: String,
+    scope: String,
+    preferred_port: u16,
+    allow_port_fallback: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiLoginStatusResponse {
+    pub connected: bool,
+    pub source: String,
+    pub status: String,
+    pub storage: Option<String>,
+    pub expires_at: Option<i64>,
+    pub has_refresh_token: bool,
+    pub identity: Option<String>,
+    pub account_id: Option<String>,
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiLoginStartResponse {
+    pub connected: bool,
+    pub browser_opened: bool,
+    pub authorize_url: String,
+    pub redirect_uri: String,
+    pub port: u16,
+    pub warning: Option<String>,
+    pub status: OpenAiLoginStatusResponse,
+}
+
+fn user_config_dir() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        return home_dir().join("Library").join("Application Support");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(v) = std::env::var("APPDATA") {
+            if !v.trim().is_empty() {
+                return PathBuf::from(v);
+            }
+        }
+        return home_dir().join("AppData").join("Roaming");
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        if let Ok(v) = std::env::var("XDG_CONFIG_HOME") {
+            if !v.trim().is_empty() {
+                return PathBuf::from(v);
+            }
+        }
+        home_dir().join(".config")
+    }
+}
+
+fn openai_provider_auth_dir() -> PathBuf {
+    user_config_dir().join("snailer").join("provider_auth")
+}
+
+fn openai_oauth_session_path() -> PathBuf {
+    openai_provider_auth_dir().join("openai_oauth.json")
+}
+
+fn openai_api_key_path() -> PathBuf {
+    openai_provider_auth_dir().join("openai_api_key")
+}
+
+fn openai_keyring_entry(name: &str) -> Option<keyring::Entry> {
+    keyring::Entry::new(OPENAI_KEYRING_SERVICE, name).ok()
+}
+
+fn openai_keyring_get(name: &str) -> Option<String> {
+    let entry = openai_keyring_entry(name)?;
+    entry.get_password().ok()
+}
+
+fn openai_keyring_set(name: &str, value: &str) -> bool {
+    let Some(entry) = openai_keyring_entry(name) else {
+        return false;
+    };
+    entry.set_password(value).is_ok()
+}
+
+fn openai_keyring_delete(name: &str) {
+    if let Some(entry) = openai_keyring_entry(name) {
+        let _ = entry.delete_password();
+    }
+}
+
+fn chmod_600(path: &PathBuf) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mut perms = meta.permissions();
+            perms.set_mode(0o600);
+            let _ = std::fs::set_permissions(path, perms);
+        }
+    }
+}
+
+fn load_openai_oauth_session() -> Result<Option<(OpenAiOAuthSession, String)>, String> {
+    if let Some(raw) = openai_keyring_get(OPENAI_KEYRING_OAUTH_ENTRY) {
+        if let Ok(sess) = serde_json::from_str::<OpenAiOAuthSession>(&raw) {
+            if !sess.access_token.trim().is_empty() {
+                return Ok(Some((sess, "keyring".to_string())));
+            }
+        }
+    }
+
+    let path = openai_oauth_session_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read OpenAI OAuth session file: {}", e))?;
+    let sess = serde_json::from_str::<OpenAiOAuthSession>(&raw)
+        .map_err(|e| format!("Invalid OpenAI OAuth session file: {}", e))?;
+    if sess.access_token.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((sess, "file".to_string())))
+}
+
+fn save_openai_oauth_session(sess: &OpenAiOAuthSession) -> Result<String, String> {
+    let raw = serde_json::to_string(sess).map_err(|e| format!("serialize session failed: {}", e))?;
+    if openai_keyring_set(OPENAI_KEYRING_OAUTH_ENTRY, &raw) {
+        let path = openai_oauth_session_path();
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+        return Ok("keyring".to_string());
+    }
+
+    let path = openai_oauth_session_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+    let pretty = serde_json::to_string_pretty(sess).map_err(|e| format!("serialize session failed: {}", e))?;
+    std::fs::write(&path, pretty).map_err(|e| format!("session write failed: {}", e))?;
+    chmod_600(&path);
+    Ok("file".to_string())
+}
+
+fn clear_openai_oauth_session() {
+    openai_keyring_delete(OPENAI_KEYRING_OAUTH_ENTRY);
+    let path = openai_oauth_session_path();
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn load_openai_legacy_api_key() -> Result<Option<(String, String)>, String> {
+    if let Some(v) = openai_keyring_get(OPENAI_KEYRING_API_KEY_ENTRY) {
+        let key = v.trim().to_string();
+        if !key.is_empty() {
+            return Ok(Some((key, "keyring".to_string())));
+        }
+    }
+
+    let path = openai_api_key_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let key = std::fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read OpenAI API key file: {}", e))?
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((key, "file".to_string())))
+}
+
+fn clear_openai_legacy_api_key() {
+    openai_keyring_delete(OPENAI_KEYRING_API_KEY_ENTRY);
+    let path = openai_api_key_path();
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn decode_jwt_payload_claims(jwt: &str) -> Option<serde_json::Value> {
+    let mut parts = jwt.split('.');
+    let _header = parts.next()?;
+    let payload = parts.next()?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.as_bytes())
+        .ok()?;
+    serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+}
+
+fn openai_identity_from_session(sess: &OpenAiOAuthSession) -> Option<String> {
+    let id_token = sess.id_token.as_deref()?;
+    let claims = decode_jwt_payload_claims(id_token)?;
+    if let Some(email) = claims.get("email").and_then(|v| v.as_str()) {
+        let trimmed = email.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    if let Some(sub) = claims.get("sub").and_then(|v| v.as_str()) {
+        let trimmed = sub.trim();
+        if !trimmed.is_empty() {
+            return Some(format!("sub:{}", trimmed));
+        }
+    }
+    None
+}
+
+fn openai_account_id_from_session(sess: &OpenAiOAuthSession) -> Option<String> {
+    for key in ["SNAILER_OPENAI_ACCOUNT_ID", "OPENAI_ACCOUNT_ID"] {
+        if let Ok(v) = std::env::var(key) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+
+    for token in [sess.id_token.as_deref(), Some(sess.access_token.as_str())] {
+        let Some(tok) = token else { continue };
+        let Some(claims) = decode_jwt_payload_claims(tok) else {
+            continue;
+        };
+        for key in ["account_id", "accountId", "x_account_id", "sub"] {
+            if let Some(v) = claims.get(key).and_then(|it| it.as_str()) {
+                let t = v.trim();
+                if !t.is_empty() {
+                    return Some(t.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn build_openai_login_status() -> Result<OpenAiLoginStatusResponse, String> {
+    if let Some((sess, storage)) = load_openai_oauth_session()? {
+        let has_refresh = sess
+            .refresh_token
+            .as_deref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        let expired = sess
+            .expires_at
+            .map(|ts| chrono::Utc::now().timestamp() >= ts)
+            .unwrap_or(false);
+        return Ok(OpenAiLoginStatusResponse {
+            connected: true,
+            source: "oauth".to_string(),
+            status: if expired {
+                "connected_expired".to_string()
+            } else {
+                "connected".to_string()
+            },
+            storage: Some(storage),
+            expires_at: sess.expires_at,
+            has_refresh_token: has_refresh,
+            identity: openai_identity_from_session(&sess),
+            account_id: openai_account_id_from_session(&sess),
+            scope: sess.scope.clone(),
+        });
+    }
+
+    if let Some((_key, storage)) = load_openai_legacy_api_key()? {
+        return Ok(OpenAiLoginStatusResponse {
+            connected: true,
+            source: "api_key".to_string(),
+            status: "connected_legacy_api_key".to_string(),
+            storage: Some(storage),
+            expires_at: None,
+            has_refresh_token: false,
+            identity: None,
+            account_id: None,
+            scope: None,
+        });
+    }
+
+    Ok(OpenAiLoginStatusResponse {
+        connected: false,
+        source: "none".to_string(),
+        status: "not_connected".to_string(),
+        storage: None,
+        expires_at: None,
+        has_refresh_token: false,
+        identity: None,
+        account_id: None,
+        scope: None,
+    })
+}
+
+fn openai_oauth_config_from_env() -> OpenAiOAuthConfig {
+    let client_id = std::env::var("OPENAI_CODEX_CLIENT_ID")
+        .or_else(|_| std::env::var("OPENAI_OAUTH_CLIENT_ID"))
+        .or_else(|_| std::env::var("SNAILER_OPENAI_CLIENT_ID"))
+        .unwrap_or_else(|_| OPENAI_DEFAULT_CODEX_CLIENT_ID.to_string());
+    let preferred_port = std::env::var("SNAILER_OPENAI_OAUTH_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(OPENAI_DEFAULT_LOCAL_PORT);
+    let scope = std::env::var("SNAILER_OPENAI_OAUTH_SCOPE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| OPENAI_DEFAULT_SCOPE.to_string());
+    let allow_port_fallback = client_id != OPENAI_DEFAULT_CODEX_CLIENT_ID
+        || std::env::var("SNAILER_OPENAI_OAUTH_ALLOW_PORT_FALLBACK")
+            .ok()
+            .as_deref()
+            == Some("1");
+    OpenAiOAuthConfig {
+        client_id,
+        auth_base: std::env::var("SNAILER_OPENAI_OAUTH_AUTH_BASE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| OPENAI_AUTH_BASE.to_string()),
+        api_base: OPENAI_API_BASE.to_string(),
+        scope,
+        preferred_port,
+        allow_port_fallback,
+    }
+}
+
+fn generate_tokenish_string(min_len: usize) -> String {
+    let mut out = String::new();
+    while out.len() < min_len {
+        out.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    out.truncate(min_len);
+    out
+}
+
+fn pkce_s256_challenge(verifier: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(verifier.as_bytes());
+    let digest = hasher.finalize();
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+}
+
+fn build_openai_authorize_url(
+    cfg: &OpenAiOAuthConfig,
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: &str,
+) -> Result<String, String> {
+    let mut url = Url::parse(&format!("{}/oauth/authorize", cfg.auth_base))
+        .map_err(|e| format!("Invalid OpenAI authorize URL: {}", e))?;
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.append_pair("response_type", "code");
+        qp.append_pair("client_id", &cfg.client_id);
+        qp.append_pair("redirect_uri", redirect_uri);
+        qp.append_pair("scope", &cfg.scope);
+        qp.append_pair("state", state);
+        qp.append_pair("code_challenge", code_challenge);
+        qp.append_pair("code_challenge_method", "S256");
+        qp.append_pair("codex_cli_simplified_flow", "true");
+        qp.append_pair("originator", "codex_cli_rs");
+    }
+    Ok(url.to_string())
+}
+
+fn bind_openai_callback_listener(
+    preferred_port: u16,
+    allow_fallback_port: bool,
+) -> Result<(std::net::TcpListener, u16), String> {
+    let listener = if allow_fallback_port {
+        std::net::TcpListener::bind(("127.0.0.1", preferred_port))
+            .or_else(|_| std::net::TcpListener::bind(("127.0.0.1", 0)))
+            .map_err(|e| format!("Failed to bind localhost callback listener: {}", e))?
+    } else {
+        std::net::TcpListener::bind(("127.0.0.1", preferred_port)).map_err(|e| {
+            format!(
+                "Failed to bind localhost callback listener on port {}: {}",
+                preferred_port, e
+            )
+        })?
+    };
+    listener
+        .set_nonblocking(true)
+        .map_err(|e| format!("Failed to set callback listener nonblocking: {}", e))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("callback listener local_addr failed: {}", e))?
+        .port();
+    Ok((listener, port))
+}
+
+fn write_openai_http_response(socket: &mut std::net::TcpStream, status_line: &str, body: &str) {
+    let response = format!(
+        "HTTP/1.1 {}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status_line,
+        body.len(),
+        body
+    );
+    let _ = socket.write_all(response.as_bytes());
+    let _ = socket.flush();
+}
+
+fn parse_openai_code_from_http_target(target: &str, expected_state: &str) -> Result<String, String> {
+    if !(target.starts_with("/callback") || target.starts_with(OPENAI_DEFAULT_CALLBACK_PATH)) {
+        return Err("Ignoring non-callback path".to_string());
+    }
+    let full = format!("http://localhost{}", target);
+    let url = Url::parse(&full).map_err(|e| format!("Invalid callback URL: {}", e))?;
+    let mut code: Option<String> = None;
+    let mut state: Option<String> = None;
+    let mut err: Option<String> = None;
+    let mut err_desc: Option<String> = None;
+
+    for (k, v) in url.query_pairs() {
+        match k.as_ref() {
+            "code" => code = Some(v.into_owned()),
+            "state" => state = Some(v.into_owned()),
+            "error" => err = Some(v.into_owned()),
+            "error_description" => err_desc = Some(v.into_owned()),
+            _ => {}
+        }
+    }
+
+    if let Some(e) = err {
+        return Err(format!(
+            "Authorization denied: {}{}",
+            e,
+            err_desc
+                .as_deref()
+                .map(|d| format!(" ({})", d))
+                .unwrap_or_default()
+        ));
+    }
+
+    let recv_state = state.ok_or_else(|| "Missing callback state".to_string())?;
+    if recv_state != expected_state {
+        return Err("Callback state mismatch".to_string());
+    }
+
+    let c = code.ok_or_else(|| "Missing authorization code".to_string())?;
+    if c.trim().is_empty() {
+        return Err("Empty authorization code".to_string());
+    }
+    Ok(c)
+}
+
+fn parse_openai_code_from_http_request(req: &str, expected_state: &str) -> Result<String, String> {
+    let request_line = req
+        .lines()
+        .next()
+        .ok_or_else(|| "Empty callback request".to_string())?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or("");
+    let target = parts.next().unwrap_or("");
+    if method != "GET" {
+        return Err(format!("Unexpected callback method: {}", method));
+    }
+    parse_openai_code_from_http_target(target, expected_state)
+}
+
+fn wait_for_openai_oauth_callback(
+    listener: std::net::TcpListener,
+    expected_state: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("Timed out waiting for OpenAI OAuth callback on localhost".to_string());
+        }
+
+        match listener.accept() {
+            Ok((mut socket, _addr)) => {
+                let _ = socket.set_read_timeout(Some(Duration::from_secs(10)));
+                let mut buf = [0u8; 8192];
+                let n = socket
+                    .read(&mut buf)
+                    .map_err(|e| format!("callback socket read failed: {}", e))?;
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+
+                match parse_openai_code_from_http_request(&req, expected_state) {
+                    Ok(code) => {
+                        let body = "<html><body><h2>Snailer OpenAI login succeeded</h2><p>You can return to the app.</p></body></html>";
+                        write_openai_http_response(&mut socket, "200 OK", body);
+                        return Ok(code);
+                    }
+                    Err(e) => {
+                        let body = format!(
+                            "<html><body><h2>Snailer OpenAI login failed</h2><pre>{}</pre></body></html>",
+                            e
+                        );
+                        write_openai_http_response(&mut socket, "400 Bad Request", &body);
+                        if req.contains("GET /callback") || req.contains("GET /auth/callback") {
+                            return Err(e);
+                        }
+                    }
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(40));
+            }
+            Err(e) => return Err(format!("callback listener accept failed: {}", e)),
+        }
+    }
+}
+
+fn open_url_in_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return run_cmd_capture("open", &[url], None)
+            .map(|(code, _)| code == 0)
+            .unwrap_or(false);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return run_cmd_capture("cmd", &["/C", "start", "", url], None)
+            .map(|(code, _)| code == 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        run_cmd_capture("xdg-open", &[url], None)
+            .map(|(code, _)| code == 0)
+            .unwrap_or(false)
+    }
+}
+
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<bool, String> {
+    let raw = url.trim();
+    if raw.is_empty() {
+        return Err("URL is empty".to_string());
+    }
+    let parsed = Url::parse(raw).map_err(|e| format!("Invalid URL: {}", e))?;
+    let scheme = parsed.scheme();
+    if scheme != "https" && scheme != "http" {
+        return Err("Only http/https URLs are allowed".to_string());
+    }
+    Ok(open_url_in_browser(raw))
+}
+
+fn token_response_to_oauth_session(token: OAuthTokenResponse) -> OpenAiOAuthSession {
+    let now = chrono::Utc::now().timestamp();
+    let expires_at = token.expires_in.map(|secs| now + secs.max(0));
+    OpenAiOAuthSession {
+        access_token: token.access_token,
+        refresh_token: token.refresh_token,
+        token_type: token.token_type,
+        scope: token.scope,
+        expires_at,
+        id_token: token.id_token,
+    }
+}
+
+fn openai_exchange_code_for_tokens(
+    cfg: &OpenAiOAuthConfig,
+    code: &str,
+    code_verifier: &str,
+    redirect_uri: &str,
+) -> Result<OAuthTokenResponse, String> {
+    let req = ureq::post(&format!("{}/oauth/token", cfg.auth_base))
+        .set("originator", "codex_cli_rs");
+    let resp = match req.send_form(&[
+        ("grant_type", "authorization_code"),
+        ("client_id", cfg.client_id.as_str()),
+        ("code", code),
+        ("redirect_uri", redirect_uri),
+        ("code_verifier", code_verifier),
+    ]) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            return Err(format!(
+                "OpenAI OAuth token exchange failed (status {}): {}",
+                code, body
+            ));
+        }
+        Err(e) => return Err(format!("OpenAI OAuth token exchange request failed: {}", e)),
+    };
+    resp.into_json::<OAuthTokenResponse>()
+        .map_err(|e| format!("Invalid OpenAI token response: {}", e))
+}
+
+fn validate_openai_bearer_token(token: &str, api_base: &str) -> Result<(), String> {
+    let req = ureq::get(&format!("{}/v1/models", api_base))
+        .set("Authorization", &format!("Bearer {}", token.trim()));
+    match req.call() {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            Err(format!(
+                "OpenAI bearer validation failed (status {}): {}",
+                code, body
+            ))
+        }
+        Err(e) => Err(format!("OpenAI bearer validation request failed: {}", e)),
+    }
+}
+
+fn is_missing_openai_model_read_scope_error(msg: &str) -> bool {
+    let m = msg.to_lowercase();
+    m.contains("api.model.read")
+        || (m.contains("missing scopes") && m.contains("model.read"))
+        || (m.contains("insufficient permissions") && m.contains("/v1/models"))
+}
+
+fn resolve_openai_bearer_for_gui() -> Result<String, String> {
+    if let Some((sess, _storage)) = load_openai_oauth_session()? {
+        if !sess.access_token.trim().is_empty() {
+            return Ok(sess.access_token);
+        }
+    }
+    read_env_key("OPENAI_API_KEY")
+}
+
+fn openai_login_start_blocking(no_browser: bool) -> Result<OpenAiLoginStartResponse, String> {
+    let cfg = openai_oauth_config_from_env();
+    let (listener, port) = bind_openai_callback_listener(cfg.preferred_port, cfg.allow_port_fallback)?;
+    let redirect_uri = format!("http://localhost:{}{}", port, OPENAI_DEFAULT_CALLBACK_PATH);
+
+    let state = generate_tokenish_string(48);
+    let code_verifier = generate_tokenish_string(96);
+    let code_challenge = pkce_s256_challenge(&code_verifier);
+    let authorize_url = build_openai_authorize_url(&cfg, &redirect_uri, &state, &code_challenge)?;
+
+    let browser_opened = if no_browser {
+        false
+    } else {
+        open_url_in_browser(&authorize_url)
+    };
+
+    let code = wait_for_openai_oauth_callback(listener, &state, Duration::from_secs(240))?;
+    let token_resp = openai_exchange_code_for_tokens(&cfg, &code, &code_verifier, &redirect_uri)?;
+    let session = token_response_to_oauth_session(token_resp);
+
+    let mut warning = None;
+    if let Err(e) = validate_openai_bearer_token(&session.access_token, &cfg.api_base) {
+        if is_missing_openai_model_read_scope_error(&e) {
+            warning = Some("OAuth login succeeded, but /v1/models scope check was denied (api.model.read). Snailer saved the token and will still prefer OAuth for GPT requests.".to_string());
+        } else {
+            return Err(e);
+        }
+    }
+
+    let _storage = save_openai_oauth_session(&session)?;
+    clear_openai_legacy_api_key();
+    std::env::set_var("OPENAI_API_KEY", session.access_token.clone());
+
+    let status = build_openai_login_status()?;
+    Ok(OpenAiLoginStartResponse {
+        connected: status.connected,
+        browser_opened,
+        authorize_url,
+        redirect_uri,
+        port,
+        warning,
+        status,
+    })
+}
+
+#[tauri::command]
+pub async fn openai_login_status() -> Result<OpenAiLoginStatusResponse, String> {
+    build_openai_login_status()
+}
+
+#[tauri::command]
+pub async fn openai_login_logout() -> Result<OpenAiLoginStatusResponse, String> {
+    clear_openai_oauth_session();
+    clear_openai_legacy_api_key();
+    std::env::remove_var("OPENAI_API_KEY");
+    build_openai_login_status()
+}
+
+#[tauri::command]
+pub async fn openai_login_start(no_browser: Option<bool>) -> Result<OpenAiLoginStartResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || openai_login_start_blocking(no_browser.unwrap_or(false)))
+        .await
+        .map_err(|e| format!("OpenAI login task failed: {}", e))?
+}
+
 /// Get the configured auth server address persisted by this GUI (does not include env overrides).
 #[tauri::command]
 pub async fn auth_addr_get() -> Result<Option<String>, String> {
@@ -582,8 +1440,9 @@ pub async fn auth_addr_get() -> Result<Option<String>, String> {
 pub async fn auth_addr_set(addr: Option<String>) -> Result<Option<String>, String> {
     match addr.as_deref() {
         Some(v) if !v.trim().is_empty() => {
-            write_gui_settings_auth_addr(Some(v))?;
-            Ok(Some(v.to_string()))
+            let normalized = normalize_legacy_auth_addr(v);
+            write_gui_settings_auth_addr(Some(&normalized))?;
+            Ok(Some(normalized))
         }
         _ => {
             write_gui_settings_auth_addr(None)?;
@@ -725,18 +1584,16 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let (npm_cmd, maybe_node_bin) = resolve_npm_command()?;
 
-        if let Ok(ok) = std::process::Command::new("snailer")
-            .arg("--version")
-            .output()
-        {
-            if ok.status.success() {
-                return Ok("snailer".to_string());
-            }
+        if snailer_cli_health_ok(Path::new("snailer"), None).unwrap_or(false) {
+            return Ok("snailer".to_string());
         }
 
         let prefix = snailer_cli_prefix_dir();
         if snailer_cli_is_installed(&prefix) {
-            return Ok(snailer_cli_bin_path(&prefix).to_string_lossy().to_string());
+            let local_bin = snailer_cli_bin_path(&prefix);
+            if snailer_cli_health_ok(&local_bin, maybe_node_bin.as_deref()).unwrap_or(false) {
+                return Ok(local_bin.to_string_lossy().to_string());
+            }
         }
 
         std::fs::create_dir_all(&prefix).map_err(|e| format!("Failed to create install dir: {}", e))?;
@@ -771,7 +1628,7 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
                 "install",
                 "--no-fund",
                 "--no-audit",
-                "@snailer-team/snailer",
+                "@snailer-team/snailer@latest",
             ])
             .output()
             .map_err(|e| format!("Failed to run npm install: {}", e))?;
@@ -824,7 +1681,15 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
             return Err(diag);
         }
 
-        Ok(snailer_cli_bin_path(&prefix).to_string_lossy().to_string())
+        let final_bin = snailer_cli_bin_path(&prefix);
+        if !snailer_cli_health_ok(&final_bin, maybe_node_bin.as_deref()).unwrap_or(false) {
+            return Err(format!(
+                "Snailer CLI installed but failed health check (version/help). bin={}",
+                final_bin.display()
+            ));
+        }
+
+        Ok(final_bin.to_string_lossy().to_string())
     })
     .await
     .map_err(|e| format!("Install task failed: {}", e))?
@@ -875,14 +1740,27 @@ pub async fn snailer_cli_status() -> Result<SnailerCliStatus, String> {
         let prefix_dir = prefix.to_string_lossy().to_string();
 
         // Installed CLI resolution order: global `snailer` then local prefix.
-        if let Ok(ok) = std::process::Command::new("snailer")
-            .arg("--version")
-            .output()
-        {
-            if ok.status.success() {
+        if snailer_cli_health_ok(Path::new("snailer"), None).unwrap_or(false) {
+            return Ok(SnailerCliStatus {
+                installed: true,
+                cli_path: Some("snailer".to_string()),
+                npm_available,
+                using_bundled_node,
+                bundled_node_path: if bundled_ok {
+                    Some(bundled_bin.to_string_lossy().to_string())
+                } else {
+                    None
+                },
+                prefix_dir,
+            });
+        }
+
+        if snailer_cli_is_installed(&prefix) {
+            let local_bin = snailer_cli_bin_path(&prefix);
+            if snailer_cli_health_ok(&local_bin, Some(&bundled_bin)).unwrap_or(false) {
                 return Ok(SnailerCliStatus {
                     installed: true,
-                    cli_path: Some("snailer".to_string()),
+                    cli_path: Some(local_bin.to_string_lossy().to_string()),
                     npm_available,
                     using_bundled_node,
                     bundled_node_path: if bundled_ok {
@@ -893,21 +1771,6 @@ pub async fn snailer_cli_status() -> Result<SnailerCliStatus, String> {
                     prefix_dir,
                 });
             }
-        }
-
-        if snailer_cli_is_installed(&prefix) {
-            return Ok(SnailerCliStatus {
-                installed: true,
-                cli_path: Some(snailer_cli_bin_path(&prefix).to_string_lossy().to_string()),
-                npm_available,
-                using_bundled_node,
-                bundled_node_path: if bundled_ok {
-                    Some(bundled_bin.to_string_lossy().to_string())
-                } else {
-                    None
-                },
-                prefix_dir,
-            });
         }
 
         Ok(SnailerCliStatus {
@@ -971,6 +1834,8 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
         .or(shared_env)
         .or_else(|| shared_env_path().ok());
     let env_file = env_file.map(|p| p.to_string_lossy().to_string());
+    let auth_addr_for_daemon = resolve_auth_addr().ok();
+    let openai_bearer_for_daemon = non_empty_trimmed(resolve_openai_bearer_for_gui().ok());
 
     let child = tauri::async_runtime::spawn_blocking(move || -> Result<std::process::Child, String> {
         let mut cmd = std::process::Command::new(&cli_bin);
@@ -983,6 +1848,13 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
         if let Some(p) = env_file.as_deref() {
             cmd.env("SNAILER_ENV_FILE", p);
         }
+        if let Some(addr) = auth_addr_for_daemon.as_deref() {
+            cmd.env("SNAILER_AUTH_ADDR", addr);
+        }
+        if let Some(openai_bearer) = openai_bearer_for_daemon.as_deref() {
+            // Match CLI priority: use connected OpenAI account token first for GPT models.
+            cmd.env("OPENAI_API_KEY", openai_bearer);
+        }
 
         // If we installed Node/npm under ~/.snailer/node/current, ensure it's on PATH
         // so `#!/usr/bin/env node` shims work.
@@ -994,8 +1866,23 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
         // Avoid inherited interactive prompts from npm.
         cmd.env("CI", "true");
 
-        let child = cmd.spawn().map_err(|e| format!("Failed to spawn Snailer daemon: {e}"))?;
-        wait_for_port(port, Duration::from_secs(8))?;
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn Snailer daemon: {e}"))?;
+        if let Err(e) = wait_for_port(port, Duration::from_secs(8)) {
+            let status = child.try_wait().ok().flatten();
+            let status_text = status
+                .map(|s| format!("exited early with status {}", s))
+                .unwrap_or_else(|| "did not exit but did not bind port".to_string());
+            if status.is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            return Err(format!(
+                "{}. Daemon {}. cli_bin={}",
+                e,
+                status_text,
+                cli_bin
+            ));
+        }
         Ok(child)
     })
     .await
@@ -1016,6 +1903,17 @@ pub async fn engine_start() -> Result<EngineStartResponse, String> {
         url,
         token,
         default_project_path: default_project_path().to_string_lossy().to_string(),
+    })
+}
+
+fn non_empty_trimmed(value: Option<String>) -> Option<String> {
+    value.and_then(|raw| {
+        let trimmed = raw.trim().to_string();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
     })
 }
 
@@ -1648,30 +2546,50 @@ pub async fn auth_start_device_login() -> Result<DeviceCodeResponse, String> {
     use crate::auth_pb as pb;
 
     let auth_addr = get_auth_addr()?;
+    let candidates = candidate_auth_addrs(&auth_addr);
+    let mut attempt_errors: Vec<(String, String)> = Vec::new();
+    let mut selected: Option<pb::CreateDeviceCodeResponse> = None;
 
-    // Build channel
-    let channel = build_auth_channel(&auth_addr)
-        .await
-        .map_err(|e| format!("Failed to connect to auth server: {}", e))?;
+    for candidate in candidates {
+        let channel = match build_auth_channel(&candidate).await {
+            Ok(ch) => ch,
+            Err(e) => {
+                attempt_errors.push((candidate.clone(), format!("connect: {}", e)));
+                continue;
+            }
+        };
 
-    let mut client = pb::device_auth_service_client::DeviceAuthServiceClient::new(channel);
+        let mut client = pb::device_auth_service_client::DeviceAuthServiceClient::new(channel);
+        let req = pb::CreateDeviceCodeRequest {
+            client_id: "snailer-cli".to_string(),
+            scope: "read write".to_string(),
+            idempotency_key: uuid::Uuid::new_v4().to_string(),
+            user_agent: format!("snailer-gui/{}", env!("CARGO_PKG_VERSION")),
+        };
+        let mut creq = tonic::Request::new(req);
+        creq.set_timeout(Duration::from_secs(10));
 
-    // Create device code
-    let req = pb::CreateDeviceCodeRequest {
-        client_id: "snailer-cli".to_string(),
-        scope: "read write".to_string(),
-        idempotency_key: uuid::Uuid::new_v4().to_string(),
-        user_agent: format!("snailer-gui/{}", env!("CARGO_PKG_VERSION")),
+        match client.create_device_code(creq).await {
+            Ok(resp) => {
+                selected = Some(resp.into_inner());
+                break;
+            }
+            Err(status) => {
+                let msg = status.message().to_string();
+                attempt_errors.push((candidate.clone(), format!("rpc {:?}: {}", status.code(), msg)));
+                if !is_retryable_auth_rpc_error(status.code(), &msg) {
+                    return Err(format!("Failed to create device code: {}", status));
+                }
+            }
+        }
+    }
+
+    let Some(resp) = selected else {
+        return Err(format!(
+            "Failed to create device code after endpoint retries: {}",
+            join_attempt_errors(&attempt_errors)
+        ));
     };
-
-    let mut creq = tonic::Request::new(req);
-    creq.set_timeout(Duration::from_secs(10));
-
-    let resp = client
-        .create_device_code(creq)
-        .await
-        .map_err(|e| format!("Failed to create device code: {}", e))?
-        .into_inner();
 
     let device_code_resp = DeviceCodeResponse {
         device_code: resp.device_code.clone(),
@@ -1715,71 +2633,92 @@ pub async fn auth_poll_device_token(device_code: String) -> Result<TokenResponse
     use crate::auth_pb as pb;
 
     let auth_addr = get_auth_addr()?;
+    let candidates = candidate_auth_addrs(&auth_addr);
+    let mut attempt_errors: Vec<(String, String)> = Vec::new();
 
-    let channel = build_auth_channel(&auth_addr)
-        .await
-        .map_err(|e| format!("Failed to connect to auth server: {}", e))?;
-
-    let mut client = pb::device_auth_service_client::DeviceAuthServiceClient::new(channel);
-
-    let poll = pb::PollDeviceTokenRequest {
-        device_code,
-        client_id: "snailer-cli".to_string(),
-    };
-
-    let mut preq = tonic::Request::new(poll);
-    preq.set_timeout(Duration::from_secs(5));
-
-    match client.poll_device_token(preq).await {
-        Ok(ok) => {
-            let t = ok.into_inner();
-            let now = chrono::Utc::now().timestamp();
-            let expires_at = now + (t.expires_in as i64);
-
-            // Store tokens in OS keychain / secure storage
-            auth_keychain_set(&StoredAuth {
-                access_token: t.access_token.clone(),
-                refresh_token: t.refresh_token.clone(),
-                account_id: t.account_id.clone(),
-                email: t.email.clone(),
-                name: t.name.clone(),
-                expires_at: Some(expires_at),
-            })
-            .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
-
-            // Clear stored device code
-            if let Ok(mut guard) = auth_state().lock() {
-                *guard = None;
+    for candidate in candidates {
+        let channel = match build_auth_channel(&candidate).await {
+            Ok(ch) => ch,
+            Err(e) => {
+                attempt_errors.push((candidate.clone(), format!("connect: {}", e)));
+                continue;
             }
+        };
+        let mut client = pb::device_auth_service_client::DeviceAuthServiceClient::new(channel);
 
-            Ok(TokenResponse {
-                access_token: t.access_token,
-                refresh_token: t.refresh_token,
-                account_id: t.account_id,
-                email: t.email,
-                name: t.name,
-                expires_in: t.expires_in,
-            })
-        }
-        Err(status) => {
-            use tonic::Code;
-            match status.code() {
-                Code::FailedPrecondition => {
-                    let msg = status.message().to_string();
-                    if msg.contains("authorization_pending") {
-                        Err("authorization_pending".to_string())
-                    } else if msg.contains("expired_token") {
-                        Err("expired_token".to_string())
-                    } else {
-                        Err(format!("Precondition failed: {}", msg))
+        let poll = pb::PollDeviceTokenRequest {
+            device_code: device_code.clone(),
+            client_id: "snailer-cli".to_string(),
+        };
+
+        let mut preq = tonic::Request::new(poll);
+        preq.set_timeout(Duration::from_secs(5));
+
+        match client.poll_device_token(preq).await {
+            Ok(ok) => {
+                let t = ok.into_inner();
+                let now = chrono::Utc::now().timestamp();
+                let expires_at = now + (t.expires_in as i64);
+
+                // Store tokens in OS keychain / secure storage
+                auth_keychain_set(&StoredAuth {
+                    access_token: t.access_token.clone(),
+                    refresh_token: t.refresh_token.clone(),
+                    account_id: t.account_id.clone(),
+                    email: t.email.clone(),
+                    name: t.name.clone(),
+                    expires_at: Some(expires_at),
+                })
+                .map_err(|e| format!("Failed to store credentials in OS keychain: {}", e))?;
+
+                // Clear stored device code
+                if let Ok(mut guard) = auth_state().lock() {
+                    *guard = None;
+                }
+
+                return Ok(TokenResponse {
+                    access_token: t.access_token,
+                    refresh_token: t.refresh_token,
+                    account_id: t.account_id,
+                    email: t.email,
+                    name: t.name,
+                    expires_in: t.expires_in,
+                });
+            }
+            Err(status) => {
+                use tonic::Code;
+                match status.code() {
+                    Code::FailedPrecondition => {
+                        let msg = status.message().to_string();
+                        if msg.contains("authorization_pending") {
+                            return Err("authorization_pending".to_string());
+                        } else if msg.contains("expired_token") {
+                            return Err("expired_token".to_string());
+                        } else {
+                            return Err(format!("Precondition failed: {}", msg));
+                        }
+                    }
+                    Code::ResourceExhausted => return Err("slow_down".to_string()),
+                    Code::Unauthenticated => return Err("Invalid client".to_string()),
+                    _ => {
+                        let msg = status.message().to_string();
+                        attempt_errors.push((
+                            candidate.clone(),
+                            format!("rpc {:?}: {}", status.code(), msg.clone()),
+                        ));
+                        if !is_retryable_auth_rpc_error(status.code(), &msg) {
+                            return Err(format!("Error polling token: {}", status));
+                        }
                     }
                 }
-                Code::ResourceExhausted => Err("slow_down".to_string()),
-                Code::Unauthenticated => Err("Invalid client".to_string()),
-                _ => Err(format!("Error polling token: {}", status)),
             }
         }
     }
+
+    Err(format!(
+        "Error polling token after endpoint retries: {}",
+        join_attempt_errors(&attempt_errors)
+    ))
 }
 
 /// Set API key directly (for users who prefer API key auth)
@@ -1855,13 +2794,14 @@ async fn build_auth_channel(
         .or_else(|| std::env::var("USAGE_GRPC_CA_CERT").ok());
     let domain_override = std::env::var("SNAILER_GRPC_DOMAIN").ok();
 
-    let has_scheme = addr.starts_with("http://") || addr.starts_with("https://");
+    let normalized = normalize_legacy_auth_addr(addr);
+    let has_scheme = normalized.starts_with("http://") || normalized.starts_with("https://");
     let url = if has_scheme {
-        addr.to_string()
+        normalized
     } else if insecure {
-        format!("http://{}", addr)
+        format!("http://{}", normalized)
     } else {
-        format!("https://{}", addr)
+        format!("https://{}", normalized)
     };
 
     let host_for_sni = domain_override.or_else(|| {
@@ -2003,6 +2943,7 @@ pub async fn xai_chat_completion(
             model: model_name.to_string(),
             input_tokens,
             output_tokens,
+            cached_input_tokens: 0,
         })
     })
     .await
@@ -2016,7 +2957,7 @@ pub async fn openai_chat_completion(
     user_prompt: String,
 ) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let api_key = read_env_key("OPENAI_API_KEY")?;
+        let api_key = resolve_openai_bearer_for_gui()?;
         let model_name = "gpt-4o";
 
         let body = serde_json::json!({
@@ -2061,12 +3002,18 @@ pub async fn openai_chat_completion(
             .and_then(|u| u.get("completion_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
+        let cached_input_tokens = usage
+            .and_then(|u| u.get("prompt_tokens_details"))
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
 
         Ok(LlmCompletionResponse {
             content: content.to_string(),
             model: model_name.to_string(),
             input_tokens,
             output_tokens,
+            cached_input_tokens,
         })
     })
     .await
@@ -2081,7 +3028,7 @@ pub async fn openai_gpt52_completion(
     reasoning_effort: Option<String>,
 ) -> Result<LlmCompletionResponse, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let api_key = read_env_key("OPENAI_API_KEY")?;
+        let api_key = resolve_openai_bearer_for_gui()?;
         let model_name = "gpt-5.2";
         let effort = reasoning_effort.unwrap_or_else(|| "medium".to_string());
 
@@ -2139,12 +3086,18 @@ pub async fn openai_gpt52_completion(
             .and_then(|u| u.get("output_tokens"))
             .and_then(|t| t.as_u64())
             .unwrap_or(0);
+        let cached_input_tokens = usage
+            .and_then(|u| u.get("input_tokens_details"))
+            .and_then(|d| d.get("cached_tokens"))
+            .and_then(|t| t.as_u64())
+            .unwrap_or(0);
 
         Ok(LlmCompletionResponse {
             content: content.to_string(),
             model: model_name.to_string(),
             input_tokens,
             output_tokens,
+            cached_input_tokens,
         })
     })
     .await
@@ -2249,6 +3202,7 @@ pub async fn kimi_web_search_completion(
                     model: model_name.clone(),
                     input_tokens: total_input_tokens,
                     output_tokens: total_output_tokens,
+                    cached_input_tokens: 0,
                 });
             }
 
@@ -2292,6 +3246,7 @@ pub async fn kimi_web_search_completion(
                     model: model_name.clone(),
                     input_tokens: total_input_tokens,
                     output_tokens: total_output_tokens,
+                    cached_input_tokens: 0,
                 });
             }
 
@@ -2363,6 +3318,7 @@ pub async fn xai_web_search_completion(
                                             model: model_name.to_string(),
                                             input_tokens,
                                             output_tokens,
+                                            cached_input_tokens: 0,
                                         });
                                     }
                                 }
@@ -2441,6 +3397,7 @@ pub async fn anthropic_chat_completion(
             model: model_name,
             input_tokens,
             output_tokens,
+            cached_input_tokens: 0,
         })
     })
     .await
@@ -3381,5 +4338,38 @@ mod tests {
     fn default_project_path_is_absoluteish() {
         let p = default_project_path();
         assert!(!p.to_string_lossy().is_empty());
+    }
+
+    #[test]
+    fn normalizes_legacy_auth_host_to_grpc_host() {
+        assert_eq!(
+            normalize_legacy_auth_addr("auth.snailer.dev:443"),
+            "grpc.snailer.ai:443"
+        );
+        assert_eq!(
+            normalize_legacy_auth_addr("https://auth.snailer.dev:443"),
+            "https://grpc.snailer.ai/"
+        );
+    }
+
+    #[test]
+    fn auth_candidates_do_not_include_legacy_auth_host_by_default() {
+        let candidates = candidate_auth_addrs("https://grpc.snailer.ai:443");
+        assert!(!candidates.iter().any(|a| a.contains("auth.snailer.dev")));
+    }
+
+    #[test]
+    fn non_empty_trimmed_drops_empty_values() {
+        assert_eq!(non_empty_trimmed(None), None);
+        assert_eq!(non_empty_trimmed(Some("".to_string())), None);
+        assert_eq!(non_empty_trimmed(Some("   ".to_string())), None);
+    }
+
+    #[test]
+    fn non_empty_trimmed_keeps_trimmed_value() {
+        assert_eq!(
+            non_empty_trimmed(Some("  sk-test-token  ".to_string())),
+            Some("sk-test-token".to_string())
+        );
     }
 }

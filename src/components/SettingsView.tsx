@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 
 import { useAppStore } from '../lib/store'
 import { authService } from '../lib/authService'
+import { resolveContextWindowUsage } from '../lib/contextUsage'
 import { Button } from './ui/button'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
 import { LoginModal } from './LoginModal'
@@ -48,6 +49,28 @@ type SnailerCliStatus = {
   prefixDir: string
 }
 
+type OpenAiLoginStatus = {
+  connected: boolean
+  source: string
+  status: string
+  storage?: string | null
+  expiresAt?: number | null
+  hasRefreshToken: boolean
+  identity?: string | null
+  accountId?: string | null
+  scope?: string | null
+}
+
+type OpenAiLoginStartResponse = {
+  connected: boolean
+  browserOpened: boolean
+  authorizeUrl: string
+  redirectUri: string
+  port: number
+  warning?: string | null
+  status: OpenAiLoginStatus
+}
+
 type Provider = {
   id: string
   label: string
@@ -72,6 +95,15 @@ const PROVIDERS: Provider[] = [
 function clamp01(x: number) {
   if (Number.isNaN(x) || !Number.isFinite(x)) return 0
   return Math.max(0, Math.min(1, x))
+}
+
+function formatUnixSeconds(ts?: number | null): string {
+  if (!ts || !Number.isFinite(ts)) return '—'
+  try {
+    return new Date(ts * 1000).toLocaleString()
+  } catch {
+    return '—'
+  }
 }
 
 function parseDotenvKeys(text: string): Set<string> {
@@ -151,10 +183,31 @@ export function SettingsView() {
   const projectPath = useAppStore((s) => s.projectPath)
   const mode = useAppStore((s) => s.mode)
   const model = useAppStore((s) => s.model)
+  const sessions = useAppStore((s) => s.sessions)
+  const activeSessionId = useAppStore((s) => s.activeSessionId)
   const workMode = useAppStore((s) => s.workMode)
   const prMode = useAppStore((s) => s.prMode)
   const teamConfigName = useAppStore((s) => s.teamConfigName)
   const contextBudget = useAppStore((s) => s.orchestrator.contextBudget)
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  )
+  const resolvedContextUsage = useMemo(
+    () =>
+      resolveContextWindowUsage({
+        liveUsedTokens: contextBudget.windowUsedTokens,
+        liveMaxTokens: contextBudget.windowMaxTokens,
+        modelToken: model,
+        messages: activeSession?.messages ?? [],
+      }),
+    [
+      contextBudget.windowUsedTokens,
+      contextBudget.windowMaxTokens,
+      model,
+      activeSession?.messages,
+    ],
+  )
 
   const [account, setAccount] = useState<AccountGetResult | null>(null)
   const [accountLoading, setAccountLoading] = useState(false)
@@ -180,6 +233,8 @@ export function SettingsView() {
   const [selectedProviderId, setSelectedProviderId] = useState(PROVIDERS[0]?.id ?? 'anthropic')
   const [apiKeyDraft, setApiKeyDraft] = useState('')
   const [savedKeyTail, setSavedKeyTail] = useState<string | null>(null)
+  const [openAiStatus, setOpenAiStatus] = useState<OpenAiLoginStatus | null>(null)
+  const [openAiBusy, setOpenAiBusy] = useState(false)
 
   const selectedProvider = useMemo(
     () => PROVIDERS.find((p) => p.id === selectedProviderId) ?? PROVIDERS[0],
@@ -194,17 +249,29 @@ export function SettingsView() {
   }, [account])
 
   const keyPolicy = useMemo(() => {
+    const openAiOauthConfigured =
+      selectedProviderId === 'openai' &&
+      Boolean(openAiStatus?.connected) &&
+      String(openAiStatus?.source || '').toLowerCase() === 'oauth'
     const localConfigured = Boolean(selectedProvider?.envVar && envStatus.keysPresent.has(selectedProvider.envVar))
     const managedConfigured =
-      !localConfigured &&
+      (!localConfigured || openAiOauthConfigured) &&
       planFlags.hasAccountToken &&
       (planFlags.isPremium || (planFlags.isStarter && selectedProviderId === 'google'))
 
-    const effectiveConfigured = localConfigured || managedConfigured
-    const sourceLabel = localConfigured ? 'Shared .env' : managedConfigured ? 'Snailer-managed' : '—'
+    const effectiveConfigured = localConfigured || managedConfigured || openAiOauthConfigured
+    const sourceLabel = openAiOauthConfigured
+      ? 'OpenAI account (OAuth)'
+      : localConfigured
+        ? 'Shared .env'
+        : managedConfigured
+          ? 'Snailer-managed'
+          : '—'
 
     const requirementHint =
-      planFlags.isPremium && planFlags.hasAccountToken
+      openAiOauthConfigured
+        ? 'OpenAI account is connected. GPT calls prefer this token before OPENAI_API_KEY in shared .env.'
+        : planFlags.isPremium && planFlags.hasAccountToken
         ? 'Premium: provider keys are issued by Snailer. Local keys are optional fallback.'
         : planFlags.isStarter && planFlags.hasAccountToken
           ? selectedProviderId === 'google'
@@ -213,7 +280,85 @@ export function SettingsView() {
           : 'Not logged in: set your provider keys in .env.'
 
     return { localConfigured, managedConfigured, effectiveConfigured, sourceLabel, requirementHint }
-  }, [envStatus.keysPresent, planFlags, selectedProvider, selectedProviderId])
+  }, [envStatus.keysPresent, openAiStatus, planFlags, selectedProvider, selectedProviderId])
+
+  const refreshOpenAiStatus = async () => {
+    try {
+      const status = await invoke<OpenAiLoginStatus>('openai_login_status')
+      setOpenAiStatus(status)
+    } catch {
+      setOpenAiStatus(null)
+    }
+  }
+
+  const restartDaemonForProviderAuth = async () => {
+    try {
+      await invoke('engine_kill')
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      await connect()
+    } catch (e) {
+      console.warn('[SettingsView] daemon restart skipped:', e)
+    }
+  }
+
+  const startOpenAiLogin = async () => {
+    setOpenAiBusy(true)
+    try {
+      const res = await invoke<OpenAiLoginStartResponse>('openai_login_start', { noBrowser: false } as unknown as Record<string, unknown>)
+      setOpenAiStatus(res.status)
+      if (!res.browserOpened && res.authorizeUrl) {
+        await invoke<boolean>('open_external_url', { url: res.authorizeUrl } as unknown as Record<string, unknown>)
+      }
+      if (res.warning) {
+        toast('OpenAI connected (warning)', { description: res.warning })
+      } else {
+        toast('OpenAI account connected')
+      }
+      await restartDaemonForProviderAuth()
+      await refreshOpenAiStatus()
+    } catch (e) {
+      toast('OpenAI login failed', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setOpenAiBusy(false)
+    }
+  }
+
+  const startOpenAiLoginNoBrowser = async () => {
+    setOpenAiBusy(true)
+    try {
+      const res = await invoke<OpenAiLoginStartResponse>('openai_login_start', { noBrowser: true } as unknown as Record<string, unknown>)
+      setOpenAiStatus(res.status)
+      if (res.authorizeUrl) {
+        await invoke<boolean>('open_external_url', { url: res.authorizeUrl } as unknown as Record<string, unknown>)
+      }
+      if (res.warning) {
+        toast('OpenAI connected (warning)', { description: res.warning })
+      } else {
+        toast('OpenAI account connected')
+      }
+      await restartDaemonForProviderAuth()
+      await refreshOpenAiStatus()
+    } catch (e) {
+      toast('OpenAI login failed', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setOpenAiBusy(false)
+    }
+  }
+
+  const logoutOpenAi = async () => {
+    setOpenAiBusy(true)
+    try {
+      const status = await invoke<OpenAiLoginStatus>('openai_login_logout')
+      setOpenAiStatus(status)
+      toast('OpenAI account disconnected')
+      await restartDaemonForProviderAuth()
+      await refreshOpenAiStatus()
+    } catch (e) {
+      toast('Failed to disconnect OpenAI', { description: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setOpenAiBusy(false)
+    }
+  }
 
   const refreshAccount = async () => {
     if (!daemon) return
@@ -404,6 +549,7 @@ export function SettingsView() {
       await refreshAccount()
       await refreshEnvFileConfig()
       await refreshEnv()
+      await refreshOpenAiStatus()
       await refreshBudget()
       await refreshCliStatus()
     })()
@@ -414,6 +560,12 @@ export function SettingsView() {
     void refreshSelectedKeyTail()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProviderId, envStatus.exists, envStatus.path])
+
+  useEffect(() => {
+    if (selectedProviderId !== 'openai') return
+    void refreshOpenAiStatus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProviderId])
 
   const handleLogout = async () => {
     try {
@@ -760,6 +912,72 @@ export function SettingsView() {
                 </div>
               </div>
 
+              <div
+                data-testid="openai-login-panel"
+                className={[
+                  'mt-3 rounded-xl border bg-white/80 p-3 transition-all duration-200 ease-out',
+                  openAiStatus?.connected ? 'border-emerald-200 shadow-[0_8px_24px_rgba(16,185,129,0.08)]' : 'border-black/5',
+                ].join(' ')}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-black/80">/openai-login</div>
+                    <div className="mt-1 text-[11px] text-black/45">
+                      Connect OpenAI account in Settings. GPT calls prefer this connected account token before shared{' '}
+                      <span className="font-mono">OPENAI_API_KEY</span>.
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button variant="ghost" size="sm" disabled={openAiBusy} onClick={() => void refreshOpenAiStatus()}>
+                      {openAiBusy ? 'Working…' : 'Refresh'}
+                    </Button>
+                    {openAiStatus?.connected ? (
+                      <Button variant="destructive" size="sm" disabled={openAiBusy} onClick={() => void logoutOpenAi()}>
+                        Disconnect
+                      </Button>
+                    ) : (
+                      <>
+                        <Button size="sm" disabled={openAiBusy} onClick={() => void startOpenAiLogin()}>
+                          Connect OpenAI
+                        </Button>
+                        <Button variant="default" size="sm" disabled={openAiBusy} onClick={() => void startOpenAiLoginNoBrowser()}>
+                          No-browser
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Connection</div>
+                    <div className={openAiStatus?.connected ? 'text-sm font-medium text-emerald-700' : 'text-sm text-black/55'}>
+                      {openAiStatus?.connected ? 'connected' : 'not connected'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Source</div>
+                    <div className="text-sm text-black/75">{openAiStatus?.source || '—'}</div>
+                  </div>
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Identity</div>
+                    <div className="truncate text-sm text-black/75">{openAiStatus?.identity || openAiStatus?.accountId || '—'}</div>
+                  </div>
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Expires</div>
+                    <div className="text-sm text-black/75">{formatUnixSeconds(openAiStatus?.expiresAt ?? null)}</div>
+                  </div>
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Scope</div>
+                    <div className="truncate text-sm text-black/75">{openAiStatus?.scope || '—'}</div>
+                  </div>
+                  <div className="rounded-lg border border-black/5 bg-white px-3 py-2">
+                    <div className="text-[11px] text-black/45">Refresh token</div>
+                    <div className="text-sm text-black/75">{openAiStatus?.hasRefreshToken ? 'yes' : 'no'}</div>
+                  </div>
+                </div>
+              </div>
+
               <div className="mt-3 text-xs text-black/45">
                 {envStatus.exists ? (
                   <>
@@ -926,7 +1144,7 @@ export function SettingsView() {
               </div>
             </div>
 
-            <ContextGrid used={contextBudget.windowUsedTokens} max={contextBudget.windowMaxTokens} />
+            <ContextGrid used={resolvedContextUsage.used} max={resolvedContextUsage.max} />
 
             {/* Orchestrator defaults */}
             <div className="rounded-2xl border border-black/5 bg-white/60 p-4">

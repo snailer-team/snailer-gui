@@ -1,5 +1,5 @@
 [package]
-name = "app"
+name = "Snailer"
 version = "0.3.5"
 description = "A Tauri App"
 authors = ["you"]
@@ -11,7 +11,7 @@ rust-version = "1.77.2"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "app_lib"
+name = "snailer_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -35,3 +35,5 @@ tokio = { version = "1", features = ["rt", "time", "net", "io-util"] }
 rfd = "0.15"
 tonic = { version = "0.11", features = ["transport", "tls"] }
 chrono = "0.4"
+sha2 = "0.10"
+url = "2"

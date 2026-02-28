@@ -6,13 +6,18 @@ import type { PromptStage, UiEventEnvelope } from './daemon'
 import { DaemonClient } from './daemon'
 import { authService } from './authService'
 import {
-  applyElonPromptPrefixWithFrame,
-  ensureElonModeItem,
   isUiModeToken,
   uiModeToDaemonMode,
   type ElonFrame,
   type UiModeToken,
 } from './modes'
+import {
+  OPENAI_LOGIN_SLASH_HELP,
+  formatOpenAiLoginStatus,
+  parseOpenAiLoginSlashCommand,
+  type OpenAiLoginStartResult,
+  type OpenAiLoginStatusSnapshot,
+} from './openaiLoginSlash'
 import type { PlanTree, PlanNode } from './elonPlan'
 import type { Evidence } from './elonEvidence'
 import {
@@ -314,6 +319,7 @@ export interface LlmCompletionResponse {
   model: string
   input_tokens: number
   output_tokens: number
+  cached_input_tokens?: number
 }
 
 // Per-agent token usage tracking
@@ -328,13 +334,14 @@ export interface AgentTokenUsage {
 }
 
 // Model pricing (USD per 1M tokens)
-export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
+export const MODEL_PRICING: Record<string, { input: number; output: number; cachedInput?: number }> = {
   // xAI
   'grok-4': { input: 3.0, output: 15.0 },
   'grok-4-1-fast': { input: 1.0, output: 5.0 },
   // OpenAI
   'gpt-4o': { input: 2.5, output: 10.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
+  'gpt-5.3-codex': { input: 1.75, output: 14.0, cachedInput: 0.175 },
   // Anthropic
   'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
   'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
@@ -359,22 +366,36 @@ function toCanonicalModelToken(value: string): string {
   const t = normalizeModelToken(value)
   if (t === 'auto' || t === 'auto-select' || t === 'autoselect') return 'auto'
 
-  const withoutProvider = t.startsWith('anthropic-') ? t.slice('anthropic-'.length) : t
+  const withoutProvider = t
+    .replace(/^anthropic-/, '')
+    .replace(/^openai-/, '')
+    .replace(/^xai-/, '')
 
   if (withoutProvider.startsWith('claude-sonnet-4-6')) return 'claude-sonnet-4-6'
   if (withoutProvider === 'claude-sonnet-4-20250514') return 'claude-sonnet-4-20250514'
   if (withoutProvider.startsWith('claude-opus-4-6')) return 'claude-opus-4-6'
   if (withoutProvider === 'claude-opus-4-20250514') return 'claude-opus-4-20250514'
   if (withoutProvider === 'kimi-k2-5') return 'kimi-k2.5'
+  if (withoutProvider.startsWith('gpt-5-3-codex')) return 'gpt-5.3-codex'
 
   return withoutProvider
 }
 
 // Calculate cost from token usage
-export function calculateTokenCost(model: string, inputTokens: number, outputTokens: number): number {
+export function calculateTokenCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cachedInputTokens = 0,
+): number {
   const canonical = toCanonicalModelToken(model)
   const pricing = MODEL_PRICING[canonical] || MODEL_PRICING[model] || { input: 1.0, output: 3.0 } // fallback pricing
-  const inputCost = (inputTokens / 1_000_000) * pricing.input
+  const safeInputTokens = Math.max(0, Number(inputTokens) || 0)
+  const safeCachedInputTokens = Math.max(0, Math.min(safeInputTokens, Number(cachedInputTokens) || 0))
+  const uncachedInputTokens = safeInputTokens - safeCachedInputTokens
+  const inputCost =
+    (uncachedInputTokens / 1_000_000) * pricing.input +
+    (safeCachedInputTokens / 1_000_000) * (pricing.cachedInput ?? pricing.input)
   const outputCost = (outputTokens / 1_000_000) * pricing.output
   return inputCost + outputCost
 }
@@ -453,6 +474,16 @@ function ensureModelItems(
     const kimiIdx = items.findIndex((m) => normalizeModelToken(m.token).startsWith('kimi-'))
     const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
     items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
+  }
+
+  if (!items.some((m) => toCanonicalModelToken(m.token) === 'gpt-5.3-codex')) {
+    const gptIdx = items.findIndex((m) => toCanonicalModelToken(m.token).startsWith('gpt-'))
+    const insertAt = gptIdx >= 0 ? gptIdx : items.length
+    items.splice(insertAt, 0, {
+      label: 'GPT-5.3-Codex',
+      token: 'gpt-5.3-codex',
+      desc: 'Input $1.75 · Cached $0.175 · Output $14.00 (per 1M)',
+    })
   }
 
   return items
@@ -744,6 +775,11 @@ interface AppState {
   pendingApprovals: PendingApproval[]
   clarifyingQuestions: ClarifyingQuestion[]
   promptStageWizard: { originalPrompt: string; stages: PromptStage[] } | null
+  localQueueItems: string[]
+  stagedPairFeedbacks: string[]
+  queuePreviewFromDaemon: boolean
+  queuePreviewCount: number
+  queuePreviewItems: string[]
 
   // Orchestrator state
   orchestrator: OrchestratorState
@@ -913,6 +949,26 @@ function appendAgentEvent(existing: SessionView[], sessionId: string, event: Age
   )
 }
 
+function isPristineNewSession(session: SessionView): boolean {
+  return (
+    session.name.trim().toLowerCase() === 'new session' &&
+    (session.activityCount ?? 0) <= 0 &&
+    (session.diffCount ?? 0) <= 0 &&
+    session.messages.length === 0 &&
+    session.agentEvents.length === 0
+  )
+}
+
+export function collapseDuplicateNewSessions(sessions: SessionView[]): SessionView[] {
+  let seenPristineNew = false
+  return sessions.filter((session) => {
+    if (!isPristineNewSession(session)) return true
+    if (seenPristineNew) return false
+    seenPristineNew = true
+    return true
+  })
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -950,6 +1006,11 @@ export const useAppStore = create<AppState>()(
       pendingApprovals: [],
       clarifyingQuestions: [],
       promptStageWizard: null,
+      localQueueItems: [],
+      stagedPairFeedbacks: [],
+      queuePreviewFromDaemon: false,
+      queuePreviewCount: 0,
+      queuePreviewItems: [],
 
       orchestrator: {
         active: false,
@@ -1051,7 +1112,8 @@ export const useAppStore = create<AppState>()(
       attachedImages: [],
 
       connect: async () => {
-        if (get().connectionStatus === 'connected') return
+        const status = get().connectionStatus
+        if (status === 'connected' || status === 'starting' || status === 'connecting') return
         set({ connectionStatus: 'starting', error: null })
         let started: { url: string; token: string; default_project_path: string }
         try {
@@ -1137,6 +1199,40 @@ export const useAppStore = create<AppState>()(
                       sessions: updateStreamingMessage(state.sessions, sid, last.id, { isStreaming: false }),
                     })
                   }
+                }
+
+                const latestState = get()
+                const queuedLocal = latestState.localQueueItems
+                  .map((v) => String(v ?? '').trim())
+                  .filter(Boolean)
+                if (queuedLocal.length > 0) {
+                  const [nextItem, ...rest] = queuedLocal
+                  set({
+                    localQueueItems: rest,
+                    queuePreviewItems: latestState.queuePreviewFromDaemon
+                      ? latestState.queuePreviewItems
+                      : rest,
+                    queuePreviewCount: latestState.queuePreviewFromDaemon
+                      ? latestState.queuePreviewCount
+                      : rest.length,
+                  })
+                  window.setTimeout(() => {
+                    const next = String(nextItem ?? '').trim()
+                    if (!next) return
+                    if (next.startsWith('/pair ')) {
+                      const feedback = next.slice('/pair '.length).trim()
+                      if (!feedback) return
+                      set((st) => ({
+                        stagedPairFeedbacks: [...st.stagedPairFeedbacks, feedback],
+                        lastToast: {
+                          title: 'Queued /pair',
+                          message: 'Feedback will be injected into the next task.',
+                        },
+                      }))
+                      return
+                    }
+                    void get().sendPrompt(next)
+                  }, 0)
                 }
               }
               set({
@@ -1420,6 +1516,19 @@ export const useAppStore = create<AppState>()(
             set((st) => ({
               sessions: st.sessions.map((s) => (s.id === activeSessionId ? { ...s, name: title } : s)),
             }))
+            return
+          }
+
+          if (event.type === 'QueueUpdated') {
+            const count = Number(event.data.count ?? 0)
+            const items = Array.isArray(event.data.items)
+              ? (event.data.items as unknown[]).map((v) => String(v ?? '').trim()).filter(Boolean)
+              : []
+            set({
+              queuePreviewFromDaemon: true,
+              queuePreviewCount: Number.isFinite(count) ? Math.max(0, count) : items.length,
+              queuePreviewItems: items,
+            })
             return
           }
 
@@ -1745,11 +1854,7 @@ export const useAppStore = create<AppState>()(
             const nextMode =
               target.includes('classic') ? 'classic' : target.includes('orchestrator') ? 'team-orchestrator' : null
             if (!nextMode) return
-            if (get().mode === 'elon') {
-              set({ lastStandardMode: nextMode })
-            } else {
-              set({ mode: nextMode, lastStandardMode: nextMode })
-            }
+            set({ mode: nextMode, lastStandardMode: nextMode })
             return
           }
 
@@ -1859,15 +1964,15 @@ export const useAppStore = create<AppState>()(
             const modelItems = ensureModelItems(slash.modelItems)
 	            set({
 	              slashItems: slash.slashItems,
-	              modeItems: ensureElonModeItem(
-                  slash.modeItems.filter((m) => {
+	              modeItems: slash.modeItems.filter((m) => {
 	                  const label = String(m.label ?? '').toLowerCase()
 	                  const token = String(m.token ?? '').toLowerCase()
+	                  if (token === 'elon') return false
 	                  if (token === 'snailer-doctor' || token === 'snailer-plato' || token === 'plato') return false
 	                  if (label.startsWith('snailer plato')) return false
+	                  if (label.includes('elonx hard')) return false
 	                  return true
                   }),
-                ),
 	              modelItems,
 	            })
 	          } catch (e) {
@@ -1876,30 +1981,51 @@ export const useAppStore = create<AppState>()(
             if (msg.toLowerCase().includes('method not found')) {
               set({
 	                slashItems: [],
-	                modeItems: ensureElonModeItem([
+	                modeItems: [
 	                  { label: 'Classic', token: 'classic' },
 	                  { label: 'Team Orchestrator', token: 'team-orchestrator' },
-	                ]),
+	                ],
 	                modelItems: ensureModelItems([
                     { label: 'Auto Select', token: 'auto', desc: 'Route model automatically (CLI parity)' },
 	                  { label: 'Claude Sonnet 4.6', token: 'claude-sonnet-4-6', desc: 'Best speed/intelligence - 200K context' },
 	                  { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' },
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
+                    { label: 'GPT-5.3-Codex', token: 'gpt-5.3-codex', desc: 'Input $1.75 · Cached $0.175 · Output $14.00 (per 1M)' },
                     { label: 'gpt-5', token: 'gpt-5', desc: '' },
                   ]),
               })
-            } else {
-              throw e
+	            } else {
+	              throw e
+	            }
+	          }
+
+          try {
+            const queue = await client.queueList()
+            set({
+              queuePreviewFromDaemon: true,
+              queuePreviewItems: Array.isArray(queue.items) ? queue.items : [],
+              queuePreviewCount: Number.isFinite(queue.count)
+                ? Number(queue.count)
+                : (Array.isArray(queue.items) ? queue.items.length : 0),
+            })
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (!msg.toLowerCase().includes('method not found')) {
+              console.warn('[store] queue.list failed:', e)
             }
+            set({
+              queuePreviewFromDaemon: false,
+              queuePreviewItems: get().localQueueItems,
+              queuePreviewCount: get().localQueueItems.length,
+            })
           }
 
           const settings = await client.settingsGet()
           const daemonMode = settings.mode === 'team-orchestrator' ? 'team-orchestrator' : 'classic'
-          const prevUiMode = get().mode
           set({
             model: settings.model,
-            mode: prevUiMode === 'elon' ? 'elon' : daemonMode,
+            mode: daemonMode,
             lastStandardMode: daemonMode,
             workMode: settings.workMode as 'plan' | 'build' | 'review',
             prMode: settings.prMode,
@@ -1910,8 +2036,12 @@ export const useAppStore = create<AppState>()(
           authService.setDaemonClient(client)
           await get().refreshSessions()
 
-          // Create a local session if none selected.
-          if (!get().activeSessionId) {
+          // If no active session is selected, prefer selecting the latest existing session.
+          // Only create a new one when there are truly no sessions.
+          const afterRefresh = get()
+          if (!afterRefresh.activeSessionId && afterRefresh.sessions.length > 0) {
+            get().selectSession(afterRefresh.sessions[0].id)
+          } else if (!afterRefresh.activeSessionId) {
             const id = await get().createSession('New Session')
             get().selectSession(id)
           }
@@ -1932,7 +2062,13 @@ export const useAppStore = create<AppState>()(
         const token = get().daemonToken
         if (!daemon || !token) return
         try {
-          await daemon.initialize({ token, projectPath: cleaned, model: get().model, mode: get().mode })
+          const initMode = isUiModeToken(get().mode) ? (get().mode as UiModeToken) : 'classic'
+          await daemon.initialize({
+            token,
+            projectPath: cleaned,
+            model: get().model,
+            mode: uiModeToDaemonMode(initMode),
+          })
           await get().refreshSessions()
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'failed to set project path' })
@@ -1948,18 +2084,30 @@ export const useAppStore = create<AppState>()(
         const res = await daemon.sessionList(projectPath)
 
         set((st) => {
-          let next = st.sessions
-          for (const s of res.sessions) {
-            next = upsertSession(next, {
+          // Replace local session list with daemon truth for the current project.
+          // Preserve in-memory messages/events for sessions that still exist.
+          const byId = new Map(st.sessions.map((s) => [s.id, s]))
+          const mapped = res.sessions.map((s) => {
+            const prev = byId.get(s.id)
+            return {
               id: s.id,
               name: s.name || 'Session',
               updatedAt: new Date(s.updatedAt).getTime(),
               projectPath: s.projectPath,
               activityCount: s.activityCount,
               diffCount: s.diffCount,
-            })
+              messages: prev?.messages ?? [],
+              agentEvents: prev?.agentEvents ?? [],
+            }
+          })
+          const next = collapseDuplicateNewSessions(mapped)
+
+          let nextActive = st.activeSessionId
+          if (!nextActive || !next.some((s) => s.id === nextActive)) {
+            nextActive = next[0]?.id ?? null
           }
-          return { sessions: next }
+
+          return { sessions: next, activeSessionId: nextActive }
         })
       },
 
@@ -2041,15 +2189,15 @@ export const useAppStore = create<AppState>()(
       setUiMode: async (next) => {
         const token = String(next ?? '').trim().toLowerCase()
         if (!isUiModeToken(token)) return
-
-        const uiMode = token as UiModeToken
         const daemon = get().daemon
+        const uiMode: 'classic' | 'team-orchestrator' =
+          token === 'team-orchestrator'
+            ? 'team-orchestrator'
+            : token === 'elon'
+              ? get().lastStandardMode
+              : 'classic'
 
-        if (uiMode === 'elon') {
-          set({ mode: 'elon' })
-        } else {
-          set({ mode: uiMode, lastStandardMode: uiMode })
-        }
+        set({ mode: uiMode, lastStandardMode: uiMode })
 
         try {
           await daemon?.settingsSet({ mode: uiModeToDaemonMode(uiMode) })
@@ -2070,6 +2218,90 @@ export const useAppStore = create<AppState>()(
 
         // Clear composer immediately (CLI parity).
         set({ draftPrompt: '' })
+
+        const appendAssistantMessage = (content: string) => {
+          const assistantMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content,
+            createdAt: now(),
+          }
+          set((st) => ({ sessions: appendMessage(st.sessions, sessionId, assistantMsg) }))
+        }
+
+        const openAiSlashAction = parseOpenAiLoginSlashCommand(trimmed)
+        if (openAiSlashAction) {
+          const userMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: trimmed,
+            createdAt: now(),
+          }
+          set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
+
+          const restartDaemonForOpenAiAuth = async () => {
+            try {
+              await invoke('engine_kill')
+            } catch {
+              // ignore and try reconnect anyway
+            }
+            try {
+              get().daemon?.disconnect()
+            } catch {
+              // best effort
+            }
+            set({
+              daemon: null,
+              daemonUrl: null,
+              daemonToken: null,
+              connectionStatus: 'disconnected',
+              currentRunId: null,
+              currentRunStatus: 'idle',
+            })
+            await new Promise((resolve) => setTimeout(resolve, 350))
+            await get().connect()
+          }
+
+          try {
+            if (openAiSlashAction === 'help') {
+              appendAssistantMessage(`OpenAI login commands:\n${OPENAI_LOGIN_SLASH_HELP}`)
+              return
+            }
+            if (openAiSlashAction === 'status') {
+              const status = await invoke<OpenAiLoginStatusSnapshot>('openai_login_status')
+              appendAssistantMessage(formatOpenAiLoginStatus(status))
+              return
+            }
+            if (openAiSlashAction === 'logout') {
+              const status = await invoke<OpenAiLoginStatusSnapshot>('openai_login_logout')
+              await restartDaemonForOpenAiAuth()
+              appendAssistantMessage(`${formatOpenAiLoginStatus(status)}\n\nDaemon restarted to apply auth changes.`)
+              return
+            }
+
+            const noBrowser = openAiSlashAction === 'no-browser'
+            const startRes = await invoke<OpenAiLoginStartResult>(
+              'openai_login_start',
+              { noBrowser } as unknown as Record<string, unknown>,
+            )
+            if (!startRes.browserOpened && startRes.authorizeUrl) {
+              if (!noBrowser) {
+                await invoke<boolean>('open_external_url', { url: startRes.authorizeUrl } as unknown as Record<string, unknown>)
+              }
+            }
+            await restartDaemonForOpenAiAuth()
+            const extra = startRes.warning ? `\nwarning: ${startRes.warning}` : ''
+            appendAssistantMessage(
+              `${formatOpenAiLoginStatus(startRes.status)}\n\nbrowser_opened: ${startRes.browserOpened ? 'yes' : 'no'}\nauthorize_url: ${startRes.authorizeUrl || '—'}${extra}\n\nDaemon restarted to apply auth changes.`,
+            )
+            return
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            appendAssistantMessage(`OpenAI login command failed:\n${msg}`)
+            set({ error: msg })
+            return
+          }
+        }
 
         // Resolve prompt stages first (CLI parity). If unavailable, fall back to running.
         try {
@@ -2097,11 +2329,15 @@ export const useAppStore = create<AppState>()(
         if (!daemon) throw new Error('daemon not connected')
         if (!sessionId) throw new Error('no active session')
 
-        const uiMode = (isUiModeToken(get().mode) ? (get().mode as UiModeToken) : 'classic') as UiModeToken
+        const rawUiMode = (isUiModeToken(get().mode) ? (get().mode as UiModeToken) : 'classic') as UiModeToken
+        const uiMode = rawUiMode === 'elon' ? get().lastStandardMode : rawUiMode
 
         const wiz = get().promptStageWizard
         const trimmed = wiz?.originalPrompt ?? ''
         if (!trimmed) return
+        const stagedPairFeedbacks = get().stagedPairFeedbacks
+          .map((v) => String(v ?? '').trim())
+          .filter(Boolean)
 
         let promptForAgent = trimmed
         if (wiz && wiz.stages.length > 0) {
@@ -2111,11 +2347,11 @@ export const useAppStore = create<AppState>()(
           })
           promptForAgent = `LLM detail:\n${lines.join('\n')}\n\n${trimmed}`
         }
-        if (uiMode === 'elon') {
-          const frame = get().elonFrame
-          promptForAgent = applyElonPromptPrefixWithFrame(promptForAgent, frame)
+        if (stagedPairFeedbacks.length > 0) {
+          const feedbackBlock = stagedPairFeedbacks.map((fb) => `- ${fb}`).join('\n')
+          promptForAgent =
+            `Cumulative human feedback from /pair (apply cumulatively unless superseded):\n${feedbackBlock}\n\n${promptForAgent}`
         }
-
         const attachments = get().attachedImages.map((i) => ({ path: i.path, name: i.name }))
         const userMsg: ChatMessage = {
           id: crypto.randomUUID(),
@@ -2188,7 +2424,11 @@ export const useAppStore = create<AppState>()(
             mdapK: get().mdapK,
             imagePaths: imagePaths.length > 0 ? imagePaths : undefined,
           })
-          set({ currentRunId: res.runId, currentRunStatus: 'running' })
+          set({
+            currentRunId: res.runId,
+            currentRunStatus: 'running',
+            stagedPairFeedbacks: [],
+          })
           set((st) => ({ sessions: updateMessage(st.sessions, sessionId, userMsg.id, { runId: res.runId }) }))
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'run.start failed'
@@ -2295,8 +2535,32 @@ export const useAppStore = create<AppState>()(
       },
 
       answerClarifyingQuestion: async (questionId, selectedIds, customText) => {
-        // For now, append answer to draft prompt as user input
-        // Future: send to daemon via clarifying.answer RPC
+        const daemon = get().daemon
+        let sentToDaemon = false
+        if (daemon) {
+          try {
+            await daemon.clarifyingAnswer({
+              questionId,
+              selectedIds: selectedIds.length > 0 ? selectedIds : undefined,
+              customText: customText?.trim() ? customText.trim() : undefined,
+            })
+            sentToDaemon = true
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (!msg.toLowerCase().includes('method not found')) {
+              console.warn('[store] clarifying.answer failed:', e)
+            }
+          }
+        }
+
+        if (sentToDaemon) {
+          set((st) => ({
+            clarifyingQuestions: st.clarifyingQuestions.filter((q) => q.id !== questionId),
+          }))
+          return
+        }
+
+        // Backward-compat fallback: append answer to draft prompt as user input.
         const question = get().clarifyingQuestions.find((q) => q.id === questionId)
         if (question) {
           const selectedLabels = question.options
@@ -2998,7 +3262,12 @@ export const useAppStore = create<AppState>()(
               }
 
               // Record token usage for meeting participant
-              const meetingCost = calculateTokenCost(llmResp.model, llmResp.input_tokens, llmResp.output_tokens)
+              const meetingCost = calculateTokenCost(
+                llmResp.model,
+                llmResp.input_tokens,
+                llmResp.output_tokens,
+                llmResp.cached_input_tokens ?? 0,
+              )
               get().elonRecordTokenUsage({
                 agentId,
                 model: llmResp.model,
@@ -3027,7 +3296,12 @@ export const useAppStore = create<AppState>()(
           const synthesisResp = await invoke<LlmCompletionResponse>('xai_chat_completion', { systemPrompt: synSys, userPrompt: synUsr })
 
           // Record synthesis token usage
-          const synthesisCost = calculateTokenCost(synthesisResp.model, synthesisResp.input_tokens, synthesisResp.output_tokens)
+          const synthesisCost = calculateTokenCost(
+            synthesisResp.model,
+            synthesisResp.input_tokens,
+            synthesisResp.output_tokens,
+            synthesisResp.cached_input_tokens ?? 0,
+          )
           get().elonRecordTokenUsage({
             agentId: 'ceo-synthesis',
             model: synthesisResp.model,
@@ -3267,7 +3541,12 @@ export const useAppStore = create<AppState>()(
           const rawResponse = ceoResponse.content
 
           // Record CEO token usage
-          const ceoCost = calculateTokenCost(ceoResponse.model, ceoResponse.input_tokens, ceoResponse.output_tokens)
+          const ceoCost = calculateTokenCost(
+            ceoResponse.model,
+            ceoResponse.input_tokens,
+            ceoResponse.output_tokens,
+            ceoResponse.cached_input_tokens ?? 0,
+          )
           get().elonRecordTokenUsage({
             agentId: 'ceo',
             model: ceoResponse.model,
@@ -3618,7 +3897,12 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                   const rawAgentResponse = llmResponse.content
 
                   // Record token usage
-                  const tokenCost = calculateTokenCost(llmResponse.model, llmResponse.input_tokens, llmResponse.output_tokens)
+                  const tokenCost = calculateTokenCost(
+                    llmResponse.model,
+                    llmResponse.input_tokens,
+                    llmResponse.output_tokens,
+                    llmResponse.cached_input_tokens ?? 0,
+                  )
                   get().elonRecordTokenUsage({
                     agentId,
                     model: llmResponse.model,
@@ -4226,7 +4510,12 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
                       })
 
                       // Record reflection token usage
-                      const reflectionCost = calculateTokenCost(reflectionResp.model, reflectionResp.input_tokens, reflectionResp.output_tokens)
+                      const reflectionCost = calculateTokenCost(
+                        reflectionResp.model,
+                        reflectionResp.input_tokens,
+                        reflectionResp.output_tokens,
+                        reflectionResp.cached_input_tokens ?? 0,
+                      )
                       get().elonRecordTokenUsage({
                         agentId: `${agentId}-reflection`,
                         model: reflectionResp.model,
@@ -4431,7 +4720,7 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
           agentAssignmentDecisions: state.elonRegistry.agentAssignmentDecisions,
         },
       }),
-      version: 5,
+      version: 7,
       migrate: (persistedState: unknown, version: number) => {
         const state = persistedState as Record<string, unknown>
         // Migration from version 2 to 3: add agentEvents to sessions
@@ -4481,6 +4770,26 @@ If your current broadcast is PR/Issue-related, handle actionable items first. Ot
             agentAssignmentDecisions: Array.isArray(rawRegistry.agentAssignmentDecisions)
               ? rawRegistry.agentAssignmentDecisions
               : [],
+          }
+        }
+        if (version < 6) {
+          const persistedMode = String(state.mode ?? '').toLowerCase()
+          if (persistedMode === 'elon') {
+            state.mode = 'classic'
+          }
+          const persistedLastStandardMode = String(state.lastStandardMode ?? '').toLowerCase()
+          if (persistedLastStandardMode !== 'classic' && persistedLastStandardMode !== 'team-orchestrator') {
+            state.lastStandardMode = 'classic'
+          }
+        }
+        if (version < 7) {
+          const persistedMode = String(state.mode ?? '').toLowerCase()
+          if (persistedMode === 'elon') {
+            state.mode = 'classic'
+          }
+          const persistedLastStandardMode = String(state.lastStandardMode ?? '').toLowerCase()
+          if (persistedLastStandardMode !== 'classic' && persistedLastStandardMode !== 'team-orchestrator') {
+            state.lastStandardMode = 'classic'
           }
         }
         return state

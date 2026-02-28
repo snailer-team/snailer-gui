@@ -35,6 +35,8 @@ export interface TokenResponse {
   expiresIn: number
 }
 
+const DEVICE_LOGIN_CLIENT_ID = 'snailer-cli'
+
 class AuthService {
   private static readonly CACHE_KEY = 'snailer.gui.auth.cache.v1'
   private pollAbortController: AbortController | null = null
@@ -68,7 +70,32 @@ class AuthService {
     // If daemon transport is flaky, desktop commands can still proceed.
     if (msg.includes('daemon not connected')) return true
     if (msg.includes('request timeout')) return true
+    if (msg.includes('upstream connect error')) return true
+    if (msg.includes('disconnect/reset before headers')) return true
+    if (msg.includes('protocol error')) return true
+    if (msg.includes('connection reset')) return true
+    if (msg.includes('connection refused')) return true
+    if (msg.includes('transport')) return true
+    if (msg.includes('invalid or missing client_id')) return true
+    if (msg.includes('invalid_request') && msg.includes('client_id')) return true
     return false
+  }
+
+  private normalizeDeviceLoginError(raw: string): string {
+    const msg = raw.toLowerCase()
+    if (msg.includes('column "expire_at"') && msg.includes('device_auth')) {
+      return 'Auth server schema mismatch (device_auth.expire_at). Backend migration/deploy update is required.'
+    }
+    if (msg.includes('column "expire_at"') && msg.includes('refresh_tokens')) {
+      return 'Auth server schema mismatch (refresh_tokens.expire_at). Backend migration/deploy update is required.'
+    }
+    if (msg.includes('failed to create device code after endpoint retries')) {
+      return `Auth server request failed after endpoint retries: ${raw}`
+    }
+    if (msg.includes('error polling token after endpoint retries')) {
+      return `Auth token polling failed after endpoint retries: ${raw}`
+    }
+    return raw
   }
 
   private isPendingError(errorMessage: string): boolean {
@@ -189,7 +216,7 @@ class AuthService {
     if (this.hasDaemon()) {
       try {
         const result = await this.daemonClient!.request<DeviceCodeResponse>('auth.createDeviceCode', {
-          clientId: 'snailer-gui',
+          clientId: DEVICE_LOGIN_CLIENT_ID,
           scope: 'read write',
         })
         return result
@@ -205,11 +232,12 @@ class AuthService {
     try {
       return await invoke<DeviceCodeResponse>('auth_start_device_login')
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      const rawMsg = e instanceof Error ? e.message : String(e)
+      const msg = this.normalizeDeviceLoginError(rawMsg)
       if (daemonError) {
         throw new Error(`Failed to start device login (daemon: ${daemonError}; desktop fallback: ${msg})`)
       }
-      throw new Error(`Failed to start device login (desktop app required): ${msg}`)
+      throw new Error(`Failed to start device login: ${msg}`)
     }
   }
 
@@ -245,7 +273,7 @@ class AuthService {
             // Use daemon RPC
             result = await this.daemonClient!.request<TokenResponse>('auth.pollDeviceToken', {
               deviceCode,
-              clientId: 'snailer-gui',
+              clientId: DEVICE_LOGIN_CLIENT_ID,
             })
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e)
@@ -292,7 +320,7 @@ class AuthService {
           throw new Error('Login was denied in the browser. Please try again.')
         }
         onStatus?.('error')
-        throw new Error(`Failed to complete device login: ${rawMsg}`)
+        throw new Error(`Failed to complete device login: ${this.normalizeDeviceLoginError(rawMsg)}`)
       }
     }
 
@@ -362,15 +390,23 @@ class AuthService {
   /**
    * Open browser for account creation
    */
-  openCreateAccount(): void {
+  async openCreateAccount(): Promise<void> {
     const signupUrl = 'https://console.anthropic.com/signup'
-    window.open(signupUrl, '_blank', 'noopener,noreferrer')
+    await this.openLoginUrl(signupUrl)
   }
 
   /**
    * Open browser for login
    */
   async openLoginUrl(url: string): Promise<void> {
+    if (this.hasTauri()) {
+      try {
+        const opened = await invoke<boolean>('open_external_url', { url })
+        if (opened) return
+      } catch {
+        // Fallback to window.open
+      }
+    }
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 

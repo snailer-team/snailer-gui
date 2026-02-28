@@ -374,4 +374,28 @@ export class DaemonClient {
   }): Promise<{ stages: PromptStage[] }> {
     return this.request('prompt_stages.resolve', params)
   }
+
+  async clarifyingAnswer(params: {
+    questionId: string
+    selectedIds?: string[]
+    customText?: string
+  }): Promise<{ status: string }> {
+    return this.request('clarifying.answer', params)
+  }
+
+  async pairEnqueue(params: { feedback: string }): Promise<{ status: string; queued?: boolean; count?: number; items?: string[] }> {
+    return this.request('pair.enqueue', params)
+  }
+
+  async queueEnqueue(params: { prompt: string }): Promise<{ status: string; queued?: boolean; count?: number; items?: string[] }> {
+    return this.request('queue.enqueue', params)
+  }
+
+  async queueList(): Promise<{ count: number; items: string[] }> {
+    return this.request('queue.list')
+  }
+
+  async queueClear(): Promise<{ status: 'ok' }> {
+    return this.request('queue.clear')
+  }
 }
