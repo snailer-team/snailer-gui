@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 
@@ -412,7 +412,7 @@ export function SettingsView() {
     }
   }
 
-  const refreshSelectedKeyTail = async () => {
+  const refreshSelectedKeyTail = useCallback(async () => {
     if (!selectedProvider?.envVar) {
       setSavedKeyTail(null)
       return
@@ -440,7 +440,7 @@ export function SettingsView() {
     } catch {
       setSavedKeyTail(null)
     }
-  }
+  }, [envStatus.exists, envStatus.keysPresent, envStatus.path, selectedProvider])
 
   const checkEnv = async () => {
     setEnvLoading(true)
@@ -558,13 +558,11 @@ export function SettingsView() {
 
   useEffect(() => {
     void refreshSelectedKeyTail()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProviderId, envStatus.exists, envStatus.path])
+  }, [refreshSelectedKeyTail])
 
   useEffect(() => {
     if (selectedProviderId !== 'openai') return
     void refreshOpenAiStatus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProviderId])
 
   const handleLogout = async () => {
