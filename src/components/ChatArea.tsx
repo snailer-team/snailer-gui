@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Badge } from './ui/badge'
 import { ScrollArea, ScrollAreaViewport, ScrollBar } from './ui/scroll-area'
 import { AgentLogView } from './AgentLogView'
+import { AgentTodoList } from './AgentTodoList'
 import { TypewriterTitle } from './TypewriterTitle'
 import { useAppStore } from '../lib/store'
 import { isTauriRuntime } from '../lib/tauri'
@@ -94,6 +95,7 @@ export function ChatArea() {
     setUiMode,
     lastStandardMode,
     projectPath,
+    promptComplexity,
   } = useAppStore()
 
   const session = useMemo(
@@ -396,6 +398,7 @@ export function ChatArea() {
                     const hasLog = Boolean(runId && runIdsWithEvents.has(runId))
                     const isActiveRun = Boolean(runId && currentRunId && runId === currentRunId)
                     const showPending = isActiveRun && (currentRunStatus === 'running' || currentRunStatus === 'queued')
+                    const showComplexity = isActiveRun && promptComplexity
                     return (
                       <div key={m.id} className="space-y-2">
                         <div className="flex justify-end">
@@ -427,15 +430,30 @@ export function ChatArea() {
                                 </div>
                               ) : null}
                             </div>
-                            <div className="mt-1 text-xs text-slate-400">
-                              {new Date(m.createdAt).toLocaleTimeString()}
+                            <div className="mt-1 flex items-center justify-end gap-2 text-xs text-slate-400">
+                              <span>{new Date(m.createdAt).toLocaleTimeString()}</span>
+                              {showComplexity && (
+                                <span
+                                  className={[
+                                    'rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide',
+                                    promptComplexity === 'complex'
+                                      ? 'bg-rose-100 text-rose-600'
+                                      : promptComplexity === 'moderate'
+                                      ? 'bg-amber-100 text-amber-600'
+                                      : 'bg-slate-100 text-slate-500',
+                                  ].join(' ')}
+                                >
+                                  {promptComplexity}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
 
                         {runId ? (
-                          <div className="ml-0 sm:ml-10">
+                          <div className="ml-0 sm:ml-10 space-y-2">
                             <AgentLogView runId={runId} />
+                            <AgentTodoList />
                             {showPending && !hasLog ? (
                               <div className="flex items-center gap-3 py-2">
                                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />

@@ -18,6 +18,7 @@ import {
   type OpenAiLoginStartResult,
   type OpenAiLoginStatusSnapshot,
 } from './openaiLoginSlash'
+import { classifyPromptComplexity } from './promptComplexity'
 import type { PlanTree, PlanNode } from './elonPlan'
 import type { Evidence } from './elonEvidence'
 import {
@@ -790,6 +791,7 @@ interface AppState {
 
   lastToast: { title: string; message: string } | null
   draftPrompt: string
+  promptComplexity: 'simple' | 'moderate' | 'complex' | null
   attachedImages: AttachedImage[]
 
   // Actions
@@ -1109,6 +1111,7 @@ export const useAppStore = create<AppState>()(
 
       lastToast: null,
       draftPrompt: '',
+      promptComplexity: null,
       attachedImages: [],
 
       connect: async () => {
@@ -1177,16 +1180,59 @@ export const useAppStore = create<AppState>()(
             if (runMatchesCurrent || adoptAsCurrent) {
               const sidForStatusEvent = state.activeSessionId
               if (sidForStatusEvent) {
-                const agentEvent: AgentEvent = {
-                  id: crypto.randomUUID(),
-                  type: 'RunStatusChanged',
-                  timestamp: Date.now(),
-                  runId: p.runId,
-                  message: p.message?.trim()
-                    ? p.message
-                    : `Run status: ${String(p.status ?? 'unknown')}`,
+                // Only emit RunStatusChanged for meaningful terminal/error statuses.
+                // Skip boilerplate "running/queued" status changes — real agent.event notifications
+                // already provide richer feedback. This prevents duplicate log entries.
+                const isTerminal = p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled'
+                const hasCustomMsg = Boolean(p.message?.trim())
+                if (isTerminal || hasCustomMsg) {
+                  // Deduplicate: don't add if the last RunStatusChanged has the same message.
+                  const sessionForDedup = get().sessions.find((s) => s.id === sidForStatusEvent)
+                  const lastEvt = sessionForDedup?.agentEvents.filter((e) => e.runId === p.runId).at(-1)
+                  const newMsg = p.message?.trim() || `Run status: ${String(p.status ?? 'unknown')}`
+                  const isDuplicate = lastEvt?.type === 'RunStatusChanged' && lastEvt.message === newMsg
+                  if (!isDuplicate) {
+                    const agentEvent: AgentEvent = {
+                      id: crypto.randomUUID(),
+                      type: 'RunStatusChanged',
+                      timestamp: Date.now(),
+                      runId: p.runId,
+                      message: newMsg,
+                    }
+                    set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, agentEvent) }))
+                  }
                 }
-                set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, agentEvent) }))
+
+                // Claude model parity: synthesize Done/Fail events at terminal status
+                // ONLY when no real agent.event (Start/FileOp/Done/Fail) was received for this run.
+                // Never synthesize Start — RunStatusChanged already shows "running" state.
+                if (isTerminal) {
+                  const sessionForCheck = get().sessions.find((s) => s.id === sidForStatusEvent)
+                  const hasRealAgentEvents = sessionForCheck?.agentEvents.some(
+                    (e) => e.runId === p.runId && (e.type === 'Start' || e.type === 'FileOp' || e.type === 'Done' || e.type === 'Fail'),
+                  )
+                  if (!hasRealAgentEvents) {
+                    if (p.status === 'completed') {
+                      const syntheticDone: AgentEvent = {
+                        id: crypto.randomUUID(),
+                        type: 'Done',
+                        timestamp: Date.now(),
+                        runId: p.runId,
+                        message: p.message?.trim() || 'Completed',
+                      }
+                      set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, syntheticDone) }))
+                    } else {
+                      const syntheticFail: AgentEvent = {
+                        id: crypto.randomUUID(),
+                        type: 'Fail',
+                        timestamp: Date.now(),
+                        runId: p.runId,
+                        message: p.message?.trim() || p.status,
+                      }
+                      set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, syntheticFail) }))
+                    }
+                  }
+                }
               }
 
               if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
@@ -2070,6 +2116,14 @@ export const useAppStore = create<AppState>()(
             mode: uiModeToDaemonMode(initMode),
           })
           await get().refreshSessions()
+
+          const afterRefresh = get()
+          if (!afterRefresh.activeSessionId && afterRefresh.sessions.length > 0) {
+            get().selectSession(afterRefresh.sessions[0].id)
+          } else if (!afterRefresh.activeSessionId) {
+            const id = await get().createSession('New Session')
+            get().selectSession(id)
+          }
         } catch (e) {
           set({ error: e instanceof Error ? e.message : 'failed to set project path' })
         }
@@ -2303,7 +2357,18 @@ export const useAppStore = create<AppState>()(
           }
         }
 
-        // Resolve prompt stages first (CLI parity). If unavailable, fall back to running.
+        // Resolve prompt stages with complexity-based logic (CLI parity).
+        // simple → skip stages, moderate → try stages, complex → always stages.
+        const complexity = classifyPromptComplexity(trimmed)
+        set({ promptComplexity: complexity })
+
+        if (complexity === 'simple') {
+          // Skip wizard entirely for simple prompts
+          set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+          await get().completePromptStageWizard([])
+          return
+        }
+
         try {
           const resp = await daemon.promptStagesResolve({ prompt: trimmed, model: get().model })
           const stages = Array.isArray(resp?.stages) ? resp.stages : []
@@ -2366,6 +2431,7 @@ export const useAppStore = create<AppState>()(
         set({
           promptStageWizard: null,
           draftPrompt: '',
+          promptComplexity: null,
           currentRunStatus: 'queued',
           modifiedFilesByPath: {},
           pendingApprovals: [],
