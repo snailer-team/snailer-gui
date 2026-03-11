@@ -393,6 +393,59 @@ fn run_quick_cmd(program: &Path, args: &[&str], extra_path: Option<&Path>) -> Re
     }
 }
 
+const MIN_GUI_SNAILER_VERSION: (u64, u64, u64) = (1, 3, 0);
+
+fn parse_semver_triplet(text: &str) -> Option<(u64, u64, u64)> {
+    for token in text.split_whitespace() {
+        let cleaned = token.trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
+        if cleaned.is_empty() || !cleaned.chars().any(|c| c == '.') {
+            continue;
+        }
+        let mut parts = cleaned.split('.').filter(|part| !part.is_empty());
+        let major = parts.next()?.parse::<u64>().ok()?;
+        let minor = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+        let patch = parts.next().unwrap_or("0").parse::<u64>().ok()?;
+        return Some((major, minor, patch));
+    }
+    None
+}
+
+fn read_snailer_cli_version(program: &Path, extra_path: Option<&Path>) -> Result<Option<String>, String> {
+    let mut cmd = std::process::Command::new(program);
+    cmd.arg("--version");
+    if let Some(bin) = extra_path {
+        cmd.env("PATH", prepend_path(bin));
+    }
+    let out = cmd
+        .output()
+        .map_err(|e| format!("Failed to read {:?} version: {}", program, e))?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    if !out.stdout.is_empty() {
+        text.push_str(&String::from_utf8_lossy(&out.stdout));
+    }
+    if !out.stderr.is_empty() {
+        text.push_str(&String::from_utf8_lossy(&out.stderr));
+    }
+    let line = text.lines().next().unwrap_or("").trim();
+    if line.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(line.to_string()))
+    }
+}
+
+fn snailer_cli_version_ok(program: &Path, extra_path: Option<&Path>) -> Result<bool, String> {
+    let version = read_snailer_cli_version(program, extra_path)?;
+    let parsed = version
+        .as_deref()
+        .and_then(parse_semver_triplet)
+        .unwrap_or((0, 0, 0));
+    Ok(parsed >= MIN_GUI_SNAILER_VERSION)
+}
+
 fn snailer_cli_health_ok(bin_path: &Path, extra_path: Option<&Path>) -> Result<bool, String> {
     if !run_quick_cmd(bin_path, &["--version"], extra_path)? {
         return Ok(false);
@@ -401,6 +454,76 @@ fn snailer_cli_health_ok(bin_path: &Path, extra_path: Option<&Path>) -> Result<b
         return Ok(false);
     }
     Ok(true)
+}
+
+fn dev_snailer_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = std::env::var("SNAILER_GUI_CLI_PATH") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
+        }
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent().and_then(|p| p.parent()) {
+        candidates.push(
+            workspace_root
+                .join("snailer")
+                .join("target")
+                .join("release")
+                .join("snailer"),
+        );
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Some(parent) = cwd.parent() {
+            candidates.push(parent.join("snailer").join("target").join("release").join("snailer"));
+        }
+        candidates.push(cwd.join("target").join("release").join("snailer"));
+    }
+
+    let mut deduped = Vec::new();
+    for candidate in candidates {
+        if !candidate.exists() {
+            continue;
+        }
+        if deduped.iter().any(|seen: &PathBuf| seen == &candidate) {
+            continue;
+        }
+        deduped.push(candidate);
+    }
+    deduped
+}
+
+fn resolve_existing_snailer_cli(maybe_node_bin: Option<&Path>, require_modern: bool) -> Option<String> {
+    for candidate in dev_snailer_cli_candidates() {
+        let healthy = snailer_cli_health_ok(&candidate, None).unwrap_or(false);
+        let version_ok = snailer_cli_version_ok(&candidate, None).unwrap_or(false);
+        if healthy && (!require_modern || version_ok) {
+            return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    let global = Path::new("snailer");
+    let global_healthy = snailer_cli_health_ok(global, None).unwrap_or(false);
+    let global_version_ok = snailer_cli_version_ok(global, None).unwrap_or(false);
+    if global_healthy && (!require_modern || global_version_ok) {
+        return Some("snailer".to_string());
+    }
+
+    let prefix = snailer_cli_prefix_dir();
+    if snailer_cli_is_installed(&prefix) {
+        let local_bin = snailer_cli_bin_path(&prefix);
+        let local_healthy = snailer_cli_health_ok(&local_bin, maybe_node_bin).unwrap_or(false);
+        let local_version_ok = snailer_cli_version_ok(&local_bin, maybe_node_bin).unwrap_or(false);
+        if local_healthy && (!require_modern || local_version_ok) {
+            return Some(local_bin.to_string_lossy().to_string());
+        }
+    }
+
+    None
 }
 
 fn gui_settings_path() -> PathBuf {
@@ -1584,18 +1707,11 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let (npm_cmd, maybe_node_bin) = resolve_npm_command()?;
 
-        if snailer_cli_health_ok(Path::new("snailer"), None).unwrap_or(false) {
-            return Ok("snailer".to_string());
+        if let Some(cli) = resolve_existing_snailer_cli(maybe_node_bin.as_deref(), true) {
+            return Ok(cli);
         }
 
         let prefix = snailer_cli_prefix_dir();
-        if snailer_cli_is_installed(&prefix) {
-            let local_bin = snailer_cli_bin_path(&prefix);
-            if snailer_cli_health_ok(&local_bin, maybe_node_bin.as_deref()).unwrap_or(false) {
-                return Ok(local_bin.to_string_lossy().to_string());
-            }
-        }
-
         std::fs::create_dir_all(&prefix).map_err(|e| format!("Failed to create install dir: {}", e))?;
 
         // Ensure package.json exists so npm installs into this directory
@@ -1681,15 +1797,22 @@ pub async fn snailer_cli_ensure_installed() -> Result<String, String> {
             return Err(diag);
         }
 
-        let final_bin = snailer_cli_bin_path(&prefix);
-        if !snailer_cli_health_ok(&final_bin, maybe_node_bin.as_deref()).unwrap_or(false) {
-            return Err(format!(
-                "Snailer CLI installed but failed health check (version/help). bin={}",
-                final_bin.display()
-            ));
+        if let Some(cli) = resolve_existing_snailer_cli(maybe_node_bin.as_deref(), true) {
+            return Ok(cli);
         }
 
-        Ok(final_bin.to_string_lossy().to_string())
+        if let Some(cli) = resolve_existing_snailer_cli(maybe_node_bin.as_deref(), false) {
+            return Ok(cli);
+        }
+
+        let final_bin = snailer_cli_bin_path(&prefix);
+        Err(format!(
+            "No compatible Snailer CLI found. Tried developer/local/global installs, but none met the GUI minimum version {}.{}.{} for daemon mode. Last installed candidate: {}",
+            MIN_GUI_SNAILER_VERSION.0,
+            MIN_GUI_SNAILER_VERSION.1,
+            MIN_GUI_SNAILER_VERSION.2,
+            final_bin.display()
+        ))
     })
     .await
     .map_err(|e| format!("Install task failed: {}", e))?
@@ -1739,11 +1862,11 @@ pub async fn snailer_cli_status() -> Result<SnailerCliStatus, String> {
         let prefix = snailer_cli_prefix_dir();
         let prefix_dir = prefix.to_string_lossy().to_string();
 
-        // Installed CLI resolution order: global `snailer` then local prefix.
-        if snailer_cli_health_ok(Path::new("snailer"), None).unwrap_or(false) {
+        // Prefer a modern CLI build that supports the GUI's model set (e.g. gpt-5.4).
+        if let Some(cli) = resolve_existing_snailer_cli(Some(&bundled_bin), true) {
             return Ok(SnailerCliStatus {
                 installed: true,
-                cli_path: Some("snailer".to_string()),
+                cli_path: Some(cli),
                 npm_available,
                 using_bundled_node,
                 bundled_node_path: if bundled_ok {
@@ -1755,22 +1878,19 @@ pub async fn snailer_cli_status() -> Result<SnailerCliStatus, String> {
             });
         }
 
-        if snailer_cli_is_installed(&prefix) {
-            let local_bin = snailer_cli_bin_path(&prefix);
-            if snailer_cli_health_ok(&local_bin, Some(&bundled_bin)).unwrap_or(false) {
-                return Ok(SnailerCliStatus {
-                    installed: true,
-                    cli_path: Some(local_bin.to_string_lossy().to_string()),
-                    npm_available,
-                    using_bundled_node,
-                    bundled_node_path: if bundled_ok {
-                        Some(bundled_bin.to_string_lossy().to_string())
-                    } else {
-                        None
-                    },
-                    prefix_dir,
-                });
-            }
+        if let Some(cli) = resolve_existing_snailer_cli(Some(&bundled_bin), false) {
+            return Ok(SnailerCliStatus {
+                installed: true,
+                cli_path: Some(cli),
+                npm_available,
+                using_bundled_node,
+                bundled_node_path: if bundled_ok {
+                    Some(bundled_bin.to_string_lossy().to_string())
+                } else {
+                    None
+                },
+                prefix_dir,
+            });
         }
 
         Ok(SnailerCliStatus {
@@ -3563,6 +3683,12 @@ pub struct GitCommitPushResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GitRollbackFilesResponse {
+    pub rolled_back: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GhPrResponse {
     pub number: i64,
     pub url: String,
@@ -3916,6 +4042,78 @@ pub async fn git_commit_and_push(
         sha,
         message: None,
     })
+}
+
+/// Roll back modified or newly created files back to HEAD.
+#[tauri::command]
+pub async fn git_rollback_files(
+    cwd: String,
+    paths: Vec<String>,
+) -> Result<GitRollbackFilesResponse, String> {
+    if paths.is_empty() {
+        return Ok(GitRollbackFilesResponse { rolled_back: 0 });
+    }
+
+    let cwd_path = PathBuf::from(&cwd);
+    let mut rolled_back = 0usize;
+
+    for raw_path in paths {
+        let trimmed = raw_path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let path_buf = PathBuf::from(trimmed);
+        let actual_path = if path_buf.is_absolute() {
+            if !path_buf.starts_with(&cwd_path) {
+                return Err(format!("Path outside workspace: {}", trimmed));
+            }
+            path_buf.clone()
+        } else {
+            cwd_path.join(&path_buf)
+        };
+
+        let (status_code, status_text) =
+            run_cmd_capture("git", &["status", "--porcelain", "--", trimmed], Some(&cwd))?;
+        if status_code != 0 {
+            return Err(format!(
+                "git status failed for '{}': {}",
+                trimmed, status_text
+            ));
+        }
+
+        let status_line = status_text
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("");
+
+        if status_line.starts_with("??") {
+            if actual_path.is_dir() {
+                std::fs::remove_dir_all(&actual_path)
+                    .map_err(|e| format!("remove_dir_all failed for '{}': {}", trimmed, e))?;
+            } else if actual_path.exists() {
+                std::fs::remove_file(&actual_path)
+                    .map_err(|e| format!("remove_file failed for '{}': {}", trimmed, e))?;
+            }
+            rolled_back = rolled_back.saturating_add(1);
+            continue;
+        }
+
+        let (restore_code, restore_text) = run_cmd_capture(
+            "git",
+            &["restore", "--source=HEAD", "--staged", "--worktree", "--", trimmed],
+            Some(&cwd),
+        )?;
+        if restore_code != 0 {
+            return Err(format!(
+                "git restore failed for '{}': {}",
+                trimmed, restore_text
+            ));
+        }
+        rolled_back = rolled_back.saturating_add(1);
+    }
+
+    Ok(GitRollbackFilesResponse { rolled_back })
 }
 
 /// Create a pull request via `gh pr create`.

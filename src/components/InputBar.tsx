@@ -409,6 +409,11 @@ export function InputBar() {
   const activeTerminalCount = busy ? Math.max(1, queuePreviewCount + 1) : queuePreviewCount
   const queueHeaderTitle = busy ? `터미널 ${activeTerminalCount}개 실행 중` : `대기열 ${queuePreviewCount}개`
   const queueHeaderSubtext = queueLead || (busy ? '현재 작업이 끝나면 다음 작업이 자동으로 실행됩니다.' : '대기 중인 작업이 없습니다.')
+  const trimmedDraft = draftPrompt.trim()
+  const queueingPair = trimmedDraft.startsWith('/pair ')
+  const composerPlaceholder = busy
+    ? '작업 중입니다. 일반 프롬프트는 대기열로, /pair 는 중간 피드백으로 보낼 수 있습니다.'
+    : 'Snailer Coder'
 
   useEffect(() => {
     if (!queueVisible) return
@@ -423,7 +428,7 @@ export function InputBar() {
 
   const handleSend = () => {
     const prompt = draftPrompt.trim()
-    if (!prompt || busy) return
+    if (!prompt) return
     void sendPrompt(prompt)
   }
 
@@ -936,7 +941,6 @@ export function InputBar() {
             <textarea
               ref={textareaRef}
               value={draftPrompt}
-              disabled={busy}
               onChange={(e) => setDraftPrompt(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -963,7 +967,7 @@ export function InputBar() {
                 requestAnimationFrame(() => textareaRef.current?.focus())
               }}
               onDragOver={(e) => e.preventDefault()}
-              placeholder={busy ? 'Running...' : 'Snailer Coder'}
+              placeholder={composerPlaceholder}
               rows={1}
               className={[
                 'min-h-[40px] max-h-[140px] w-full resize-none border-0 bg-transparent text-[14px] leading-[1.4] text-slate-800 placeholder:text-slate-400 outline-none ring-0 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
@@ -1071,6 +1075,7 @@ export function InputBar() {
             <div className="flex items-center gap-2">
               {/* Image attachment button */}
               <button
+                type="button"
                 onClick={() => void handleAttachImage()}
                 disabled={busy || attachedImages.length >= 10}
                 className={[
@@ -1088,6 +1093,26 @@ export function InputBar() {
               {/* Send/Stop button */}
               {busy ? (
                 <button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!trimmedDraft}
+                  className={[
+                    'flex h-9 min-w-9 items-center justify-center rounded-full px-3 text-xs font-semibold transition',
+                    trimmedDraft
+                      ? queueingPair
+                        ? 'bg-amber-500 text-[#211302] hover:bg-amber-400'
+                        : 'bg-blue-600 text-white hover:bg-blue-500'
+                      : 'bg-slate-200 text-slate-400 cursor-not-allowed',
+                  ].join(' ')}
+                  title={queueingPair ? 'Queue /pair feedback' : 'Queue prompt'}
+                >
+                  {queueingPair ? 'PAIR' : 'QUEUE'}
+                </button>
+              ) : null}
+
+              {busy ? (
+                <button
+                  type="button"
                   onClick={() => void cancelRun()}
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-white transition hover:bg-slate-700"
                   title="Stop"
@@ -1096,11 +1121,12 @@ export function InputBar() {
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={handleSend}
-                  disabled={!draftPrompt.trim()}
+                  disabled={!trimmedDraft}
                   className={[
                     'flex h-9 w-9 items-center justify-center rounded-full transition',
-                    draftPrompt.trim()
+                    trimmedDraft
                       ? 'bg-slate-900 text-white hover:bg-slate-700'
                       : 'bg-slate-200 text-slate-400 cursor-not-allowed',
                   ].join(' ')}

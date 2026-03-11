@@ -453,7 +453,7 @@ export function ChatArea() {
                         {runId ? (
                           <div className="ml-0 sm:ml-10 space-y-2">
                             <AgentLogView runId={runId} />
-                            <AgentTodoList />
+                            <AgentTodoList runId={runId} />
                             {showPending && !hasLog ? (
                               <div className="flex items-center gap-3 py-2">
                                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />

@@ -18,7 +18,7 @@ import {
   type OpenAiLoginStartResult,
   type OpenAiLoginStatusSnapshot,
 } from './openaiLoginSlash'
-import { classifyPromptComplexity } from './promptComplexity'
+import { detectPromptLocale, evaluatePromptComplexity } from './promptComplexity'
 import type { PlanTree, PlanNode } from './elonPlan'
 import type { Evidence } from './elonEvidence'
 import {
@@ -342,6 +342,7 @@ export const MODEL_PRICING: Record<string, { input: number; output: number; cach
   // OpenAI
   'gpt-4o': { input: 2.5, output: 10.0 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
+  'gpt-5.4': { input: 2.5, output: 15.0, cachedInput: 0.25 },
   'gpt-5.3-codex': { input: 1.75, output: 14.0, cachedInput: 0.175 },
   // Anthropic
   'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
@@ -377,6 +378,7 @@ function toCanonicalModelToken(value: string): string {
   if (withoutProvider.startsWith('claude-opus-4-6')) return 'claude-opus-4-6'
   if (withoutProvider === 'claude-opus-4-20250514') return 'claude-opus-4-20250514'
   if (withoutProvider === 'kimi-k2-5') return 'kimi-k2.5'
+  if (withoutProvider.startsWith('gpt-5-4')) return 'gpt-5.4'
   if (withoutProvider.startsWith('gpt-5-3-codex')) return 'gpt-5.3-codex'
 
   return withoutProvider
@@ -475,6 +477,16 @@ function ensureModelItems(
     const kimiIdx = items.findIndex((m) => normalizeModelToken(m.token).startsWith('kimi-'))
     const insertAt = kimiIdx >= 0 ? kimiIdx : items.length
     items.splice(insertAt, 0, { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' })
+  }
+
+  if (!items.some((m) => toCanonicalModelToken(m.token) === 'gpt-5.4')) {
+    const gptIdx = items.findIndex((m) => toCanonicalModelToken(m.token).startsWith('gpt-'))
+    const insertAt = gptIdx >= 0 ? gptIdx : items.length
+    items.splice(insertAt, 0, {
+      label: 'GPT-5.4',
+      token: 'gpt-5.4',
+      desc: 'Input $2.50 · Cached $0.25 · Output $15.00 · 1.05M context',
+    })
   }
 
   if (!items.some((m) => toCanonicalModelToken(m.token) === 'gpt-5.3-codex')) {
@@ -733,6 +745,33 @@ export type RunStatus =
   | 'failed'
   | 'cancelled'
 
+type DaemonRunStatus = RunStatus | 'error'
+
+function normalizeRunStatus(status: string | null | undefined): RunStatus {
+  switch (String(status ?? '').trim()) {
+    case 'queued':
+    case 'running':
+    case 'awaiting_approval':
+    case 'completed':
+    case 'cancelled':
+    case 'failed':
+      return status as RunStatus
+    case 'error':
+      return 'failed'
+    default:
+      return 'failed'
+  }
+}
+
+function normalizeRunStatusMessage(status: string | null | undefined, message?: string | null): string {
+  const trimmed = String(message ?? '').trim()
+  if (trimmed.toLowerCase().includes('completion cancelled by user')) {
+    return 'No code changes were made, and the backend requested an interactive confirmation the GUI cannot answer.'
+  }
+  if (trimmed) return trimmed
+  return `Run status: ${normalizeRunStatus(status)}`
+}
+
 type ConnectionStatus = 'disconnected' | 'starting' | 'connecting' | 'connected' | 'error'
 
 interface AppState {
@@ -770,12 +809,13 @@ interface AppState {
 
   currentRunId: string | null
   currentRunStatus: RunStatus
+  runPlansById: Record<string, string>
 
   modifiedFilesByPath: Record<string, ModifiedFile>
   bashCommands: BashCommand[]
   pendingApprovals: PendingApproval[]
   clarifyingQuestions: ClarifyingQuestion[]
-  promptStageWizard: { originalPrompt: string; stages: PromptStage[] } | null
+  promptStageWizard: { originalPrompt: string; stages: PromptStage[]; locale: 'ko' | 'en' | 'ja' | 'zh' | 'other' } | null
   localQueueItems: string[]
   stagedPairFeedbacks: string[]
   queuePreviewFromDaemon: boolean
@@ -1002,6 +1042,7 @@ export const useAppStore = create<AppState>()(
 
       currentRunId: null,
       currentRunStatus: 'idle',
+      runPlansById: {},
 
       modifiedFilesByPath: {},
       bashCommands: [],
@@ -1166,7 +1207,9 @@ export const useAppStore = create<AppState>()(
         client.onNotification((method, params) => {
           const state = get()
           if (method === 'run.status') {
-            const p = params as { runId: string; status: string; message?: string | null }
+            const p = params as { runId: string; status: DaemonRunStatus; message?: string | null }
+            const normalizedStatus = normalizeRunStatus(p.status)
+            const normalizedMessage = normalizeRunStatusMessage(p.status, p.message)
             const runMatchesCurrent = Boolean(p.runId && state.currentRunId && p.runId === state.currentRunId)
             const adoptAsCurrent = Boolean(
               p.runId &&
@@ -1174,8 +1217,8 @@ export const useAppStore = create<AppState>()(
                 (state.currentRunStatus === 'running' ||
                   state.currentRunStatus === 'queued' ||
                   state.currentRunStatus === 'awaiting_approval' ||
-                  p.status === 'running' ||
-                  p.status === 'awaiting_approval'),
+                  normalizedStatus === 'running' ||
+                  normalizedStatus === 'awaiting_approval'),
             )
             if (runMatchesCurrent || adoptAsCurrent) {
               const sidForStatusEvent = state.activeSessionId
@@ -1183,13 +1226,14 @@ export const useAppStore = create<AppState>()(
                 // Only emit RunStatusChanged for meaningful terminal/error statuses.
                 // Skip boilerplate "running/queued" status changes — real agent.event notifications
                 // already provide richer feedback. This prevents duplicate log entries.
-                const isTerminal = p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled'
-                const hasCustomMsg = Boolean(p.message?.trim())
+                const isTerminal =
+                  normalizedStatus === 'completed' || normalizedStatus === 'failed' || normalizedStatus === 'cancelled'
+                const hasCustomMsg = Boolean(normalizedMessage.trim())
                 if (isTerminal || hasCustomMsg) {
                   // Deduplicate: don't add if the last RunStatusChanged has the same message.
                   const sessionForDedup = get().sessions.find((s) => s.id === sidForStatusEvent)
                   const lastEvt = sessionForDedup?.agentEvents.filter((e) => e.runId === p.runId).at(-1)
-                  const newMsg = p.message?.trim() || `Run status: ${String(p.status ?? 'unknown')}`
+                  const newMsg = normalizedMessage
                   const isDuplicate = lastEvt?.type === 'RunStatusChanged' && lastEvt.message === newMsg
                   if (!isDuplicate) {
                     const agentEvent: AgentEvent = {
@@ -1212,13 +1256,13 @@ export const useAppStore = create<AppState>()(
                     (e) => e.runId === p.runId && (e.type === 'Start' || e.type === 'FileOp' || e.type === 'Done' || e.type === 'Fail'),
                   )
                   if (!hasRealAgentEvents) {
-                    if (p.status === 'completed') {
+                    if (normalizedStatus === 'completed') {
                       const syntheticDone: AgentEvent = {
                         id: crypto.randomUUID(),
                         type: 'Done',
                         timestamp: Date.now(),
                         runId: p.runId,
-                        message: p.message?.trim() || 'Completed',
+                        message: normalizedMessage || 'Completed',
                       }
                       set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, syntheticDone) }))
                     } else {
@@ -1227,7 +1271,7 @@ export const useAppStore = create<AppState>()(
                         type: 'Fail',
                         timestamp: Date.now(),
                         runId: p.runId,
-                        message: p.message?.trim() || p.status,
+                        message: normalizedMessage || normalizedStatus,
                       }
                       set((st) => ({ sessions: appendAgentEvent(st.sessions, sidForStatusEvent, syntheticFail) }))
                     }
@@ -1235,7 +1279,11 @@ export const useAppStore = create<AppState>()(
                 }
               }
 
-              if (p.status === 'completed' || p.status === 'failed' || p.status === 'cancelled') {
+              if (
+                normalizedStatus === 'completed' ||
+                normalizedStatus === 'failed' ||
+                normalizedStatus === 'cancelled'
+              ) {
                 const sid = state.activeSessionId
                 if (sid) {
                   const session = state.sessions.find((s) => s.id === sid)
@@ -1283,8 +1331,8 @@ export const useAppStore = create<AppState>()(
               }
               set({
                 currentRunId: adoptAsCurrent ? p.runId : state.currentRunId,
-                currentRunStatus: p.status as RunStatus,
-                error: p.status === 'failed' ? p.message ?? 'run failed' : state.error,
+                currentRunStatus: normalizedStatus,
+                error: normalizedStatus === 'failed' ? normalizedMessage : state.error,
               })
             }
             return
@@ -1574,6 +1622,21 @@ export const useAppStore = create<AppState>()(
               queuePreviewFromDaemon: true,
               queuePreviewCount: Number.isFinite(count) ? Math.max(0, count) : items.length,
               queuePreviewItems: items,
+            })
+            return
+          }
+
+          if (event.type === 'PlanUpdated') {
+            const plan = String(event.data.plan ?? '').trim()
+            if (!effectiveRunId) return
+            set((st) => {
+              const nextPlans = { ...st.runPlansById }
+              if (plan) {
+                nextPlans[effectiveRunId] = plan
+              } else {
+                delete nextPlans[effectiveRunId]
+              }
+              return { runPlansById: nextPlans }
             })
             return
           }
@@ -2037,6 +2100,7 @@ export const useAppStore = create<AppState>()(
 	                  { label: 'Claude Opus 4.6', token: 'claude-opus-4-6', desc: 'Most intelligent' },
 	                  { label: 'MiniMax M2', token: 'minimax-m2', desc: 'default' },
 	                  { label: 'Kimi K2.5', token: 'kimi-k2.5', desc: '' },
+                    { label: 'GPT-5.4', token: 'gpt-5.4', desc: 'Input $2.50 · Cached $0.25 · Output $15.00 · 1.05M context' },
                     { label: 'GPT-5.3-Codex', token: 'gpt-5.3-codex', desc: 'Input $1.75 · Cached $0.175 · Output $14.00 (per 1M)' },
                     { label: 'gpt-5', token: 'gpt-5', desc: '' },
                   ]),
@@ -2269,6 +2333,12 @@ export const useAppStore = create<AppState>()(
 
         const trimmed = prompt.trim()
         if (!trimmed) return
+        const locale = detectPromptLocale(trimmed)
+        const isPairFeedback = trimmed.startsWith('/pair ')
+        const activeRun =
+          get().currentRunStatus === 'running' ||
+          get().currentRunStatus === 'queued' ||
+          get().currentRunStatus === 'awaiting_approval'
 
         // Clear composer immediately (CLI parity).
         set({ draftPrompt: '' })
@@ -2357,14 +2427,103 @@ export const useAppStore = create<AppState>()(
           }
         }
 
-        // Resolve prompt stages with complexity-based logic (CLI parity).
-        // simple → skip stages, moderate → try stages, complex → always stages.
-        const complexity = classifyPromptComplexity(trimmed)
-        set({ promptComplexity: complexity })
+        const queueLocalItem = (value: string, prepend = false) => {
+          const item = value.trim()
+          if (!item) return
+          set((st) => {
+            const nextItems = prepend ? [item, ...st.localQueueItems] : [...st.localQueueItems, item]
+            return {
+              queuePreviewFromDaemon: false,
+              localQueueItems: nextItems,
+              queuePreviewItems: nextItems,
+              queuePreviewCount: nextItems.length,
+              lastToast: {
+                title: prepend ? 'Queued /pair' : 'Queued task',
+                message: prepend ? 'Feedback will be applied before the next queued task.' : 'This prompt will run after the current task finishes.',
+              },
+            }
+          })
+        }
 
-        if (complexity === 'simple') {
-          // Skip wizard entirely for simple prompts
-          set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+        const stagePairFeedback = (feedback: string) => {
+          const clean = feedback.trim()
+          if (!clean) return
+          set((st) => ({
+            stagedPairFeedbacks: [...st.stagedPairFeedbacks, clean],
+            lastToast: {
+              title: 'Pair feedback added',
+              message: 'It will be applied cumulatively to the next agent task.',
+            },
+          }))
+        }
+
+        if (isPairFeedback) {
+          const feedback = trimmed.slice('/pair '.length).trim()
+          if (!feedback) return
+
+          if (!activeRun) {
+            stagePairFeedback(feedback)
+            return
+          }
+
+          try {
+            const res = await daemon.pairEnqueue({ feedback })
+            const items = Array.isArray(res.items) ? res.items.map((v) => String(v ?? '').trim()).filter(Boolean) : null
+            set((st) => ({
+              queuePreviewFromDaemon: items !== null ? true : st.queuePreviewFromDaemon,
+              queuePreviewItems: items ?? st.queuePreviewItems,
+              queuePreviewCount:
+                typeof res.count === 'number'
+                  ? Math.max(0, res.count)
+                  : items?.length ?? st.queuePreviewCount,
+              lastToast: {
+                title: 'Queued /pair',
+                message: 'Pair feedback will be applied during or before the next task step.',
+              },
+            }))
+            return
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (!msg.toLowerCase().includes('method not found')) {
+              console.warn('[store] pair.enqueue failed, falling back to local queue:', e)
+            }
+            queueLocalItem(`/pair ${feedback}`, true)
+            return
+          }
+        }
+
+        if (activeRun) {
+          try {
+            const res = await daemon.queueEnqueue({ prompt: trimmed })
+            const items = Array.isArray(res.items) ? res.items.map((v) => String(v ?? '').trim()).filter(Boolean) : null
+            set((st) => ({
+              queuePreviewFromDaemon: items !== null ? true : st.queuePreviewFromDaemon,
+              queuePreviewItems: items ?? st.queuePreviewItems,
+              queuePreviewCount:
+                typeof res.count === 'number'
+                  ? Math.max(0, res.count)
+                  : items?.length ?? st.queuePreviewCount,
+              lastToast: {
+                title: 'Queued task',
+                message: 'This prompt will run after the current task finishes.',
+              },
+            }))
+            return
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            if (!msg.toLowerCase().includes('method not found')) {
+              console.warn('[store] queue.enqueue failed, falling back to local queue:', e)
+            }
+            queueLocalItem(trimmed)
+            return
+          }
+        }
+
+        const complexity = evaluatePromptComplexity(trimmed)
+        set({ promptComplexity: complexity.level })
+
+        if (!complexity.shouldClarify) {
+          set({ promptStageWizard: { originalPrompt: trimmed, stages: [], locale } })
           await get().completePromptStageWizard([])
           return
         }
@@ -2373,15 +2532,15 @@ export const useAppStore = create<AppState>()(
           const resp = await daemon.promptStagesResolve({ prompt: trimmed, model: get().model })
           const stages = Array.isArray(resp?.stages) ? resp.stages : []
           if (stages.length === 0) {
-            set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+            set({ promptStageWizard: { originalPrompt: trimmed, stages: [], locale } })
             await get().completePromptStageWizard([])
             return
           }
-          set({ promptStageWizard: { originalPrompt: trimmed, stages } })
+          set({ promptStageWizard: { originalPrompt: trimmed, stages, locale } })
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           console.warn('[store] prompt_stages.resolve failed; falling back to direct run:', msg)
-          set({ promptStageWizard: { originalPrompt: trimmed, stages: [] } })
+          set({ promptStageWizard: { originalPrompt: trimmed, stages: [], locale } })
           await get().completePromptStageWizard([])
         }
       },

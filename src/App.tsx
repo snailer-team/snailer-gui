@@ -10,6 +10,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { HomeScreen } from './components/HomeScreen'
 import { PromptStageWizard } from './components/PromptStageWizard'
 import { ClarifyingPromptPanel } from './components/ClarifyingPromptPanel'
+import { RunReviewBar } from './components/RunReviewBar'
 import { SettingsView } from './components/SettingsView'
 import { ElonLayout } from './components/elon'
 import { useAppStore } from './lib/store'
@@ -114,6 +115,9 @@ export default function App() {
                     </div>
                     <div className="flex-shrink-0 bg-[color:var(--color-panel)]">
                       <ApprovalBar />
+                      <div className="px-4 pt-4">
+                        <RunReviewBar />
+                      </div>
                       <div className="px-4 pt-4">
                         <PromptStageWizard />
                       </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Button } from './ui/button'
+import { detectPromptLocale, getPromptLocaleStrings } from '../lib/promptComplexity'
 
 // Question mark icon
 function IconQuestion({ className }: { className?: string }) {
@@ -85,6 +86,8 @@ export function ClarifyingQuestion({
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [customText, setCustomText] = useState('')
   const [showCustomInput, setShowCustomInput] = useState(false)
+  const locale = detectPromptLocale(question.question)
+  const strings = getPromptLocaleStrings(locale)
 
   const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
 
@@ -126,7 +129,7 @@ export function ClarifyingQuestion({
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
         <div className="flex items-center gap-2">
           <IconQuestion className="h-4 w-4 text-gray-400" />
-          <span className="text-sm font-medium text-gray-700">Questions</span>
+          <span className="text-sm font-medium text-gray-700">{strings.questions}</span>
         </div>
         <div className="flex items-center gap-1 text-sm text-gray-400">
           <button
@@ -136,7 +139,7 @@ export function ClarifyingQuestion({
           >
             <IconChevronUp className="h-4 w-4" />
           </button>
-          <span>{questionNumber} of {totalQuestions}</span>
+          <span>{strings.questionOf(questionNumber, totalQuestions)}</span>
           <button
             onClick={onNext}
             disabled={questionNumber >= totalQuestions}
@@ -198,7 +201,7 @@ export function ClarifyingQuestion({
                 'text-sm',
                 showCustomInput ? 'font-medium text-gray-900' : 'text-gray-400',
               ].join(' ')}>
-                Other...
+                {strings.other}...
               </span>
             </button>
           )}
@@ -211,7 +214,7 @@ export function ClarifyingQuestion({
               type="text"
               value={customText}
               onChange={(e) => setCustomText(e.target.value)}
-              placeholder="Type your answer..."
+              placeholder={strings.answerPlaceholder}
               className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
               autoFocus
             />
@@ -226,7 +229,7 @@ export function ClarifyingQuestion({
             onClick={() => onSkip(question.id)}
             className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
           >
-            Skip
+            {strings.skip}
           </button>
         )}
         <Button
@@ -236,7 +239,7 @@ export function ClarifyingQuestion({
           disabled={!canSubmit}
           className="bg-amber-500 hover:bg-amber-600 text-white"
         >
-          Continue →
+          {strings.continueLabel} →
         </Button>
       </div>
     </div>

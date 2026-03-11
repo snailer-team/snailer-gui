@@ -5,6 +5,7 @@ const DEFAULT_CONTEXT_WINDOW = 200_000
 export function inferModelContextWindow(modelToken: string): number {
   const normalized = String(modelToken || '').trim().toLowerCase()
   if (!normalized) return DEFAULT_CONTEXT_WINDOW
+  if (normalized.includes('gpt-5.4')) return 1_050_000
   if (normalized.includes('gpt-5.3-codex')) return 400_000
   if (normalized.includes('gpt-5')) return 400_000
   if (normalized.includes('claude')) return 200_000

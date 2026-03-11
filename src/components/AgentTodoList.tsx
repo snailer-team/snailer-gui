@@ -1,40 +1,7 @@
-import { useState } from 'react'
+import { useMemo } from 'react'
+
 import { useAppStore } from '../lib/store'
 import type { OrchestratorTask, TeamRole } from '../lib/store'
-
-function IconCheck({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none">
-      <path d="M3 8.5l3.5 3.5 6.5-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function IconSpinner({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 16 16" className={className} fill="none">
-      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.5" strokeDasharray="20 14" />
-    </svg>
-  )
-}
-
-function IconDot({ className }: { className?: string }) {
-  return <span className={`inline-block h-1.5 w-1.5 rounded-full ${className}`} />
-}
-
-function IconChevron({ open }: { open: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-black/30" fill="none">
-      <path
-        d={open ? 'M4 10l4-4 4 4' : 'M4 6l4 4 4-4'}
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
-}
 
 const ROLE_LABELS: Partial<Record<TeamRole, string>> = {
   Oracle: 'Oracle',
@@ -46,169 +13,321 @@ const ROLE_LABELS: Partial<Record<TeamRole, string>> = {
   Tester: 'Tester',
 }
 
-interface TaskItemProps {
-  task: OrchestratorTask
+function statusWidth(task: OrchestratorTask) {
+  if (typeof task.progress === 'number' && Number.isFinite(task.progress)) {
+    return Math.max(6, Math.min(100, task.progress))
+  }
+  if (task.status === 'verified' || task.status === 'merged') return 100
+  if (task.status === 'needs_review') return 88
+  if (task.status === 'running') return 72
+  if (task.status === 'queued') return 10
+  if (task.status === 'failed' || task.status === 'cancelled') return 100
+  return 0
 }
 
-function TaskItem({ task }: TaskItemProps) {
-  const { status, title, assignedTo, progress } = task
+function statusTone(task: OrchestratorTask) {
+  if (task.status === 'verified' || task.status === 'merged') {
+    return {
+      line: 'bg-emerald-400',
+      text: 'text-emerald-300',
+      marker: '✓',
+    }
+  }
+  if (task.status === 'needs_review') {
+    return {
+      line: 'bg-amber-400',
+      text: 'text-amber-300',
+      marker: '…',
+    }
+  }
+  if (task.status === 'running') {
+    return {
+      line: 'bg-amber-400',
+      text: 'text-amber-300',
+      marker: '…',
+    }
+  }
+  if (task.status === 'failed' || task.status === 'cancelled') {
+    return {
+      line: 'bg-rose-400',
+      text: 'text-rose-300',
+      marker: '×',
+    }
+  }
+  return {
+    line: 'bg-white/18',
+    text: 'text-white/30',
+    marker: '—',
+  }
+}
 
-  const isRunning = status === 'running'
-  const isDone = status === 'verified' || status === 'merged'
-  const isFailed = status === 'failed' || status === 'cancelled'
-  const needsReview = status === 'needs_review'
+type UpdatedPlanLine = {
+  raw: string
+  isDone: boolean
+  isActive: boolean
+}
+
+type UpdatedPlanParseResult = {
+  tasks: UpdatedPlanLine[]
+  notes: string[]
+}
+
+function parseUpdatedPlan(planText: string, allowActive: boolean): UpdatedPlanParseResult {
+  const source = String(planText ?? '').trim()
+  if (!source) return { tasks: [], notes: [] }
+  const lines = source
+    .split(/\r?\n/g)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+
+  const hasPlanMarker = (line: string) => {
+    const trimmed = line.trimStart()
+    return trimmed.includes('✔') || trimmed.includes('▢') || trimmed.includes('○')
+  }
+
+  const body = lines.filter((line) => !line.trimStart().startsWith('• Updated Plan'))
+  let activeAssigned = false
+
+  const tasks: UpdatedPlanLine[] = []
+  const notes: string[] = []
+
+  for (const line of body) {
+    const trimmed = line.trimStart()
+    if (!hasPlanMarker(trimmed)) {
+      notes.push(trimmed)
+      continue
+    }
+    const isDone = trimmed.includes('✔')
+    const isPending = trimmed.includes('○') || trimmed.includes('▢')
+    const isActive = allowActive && !isDone && isPending && !activeAssigned
+    if (isActive) activeAssigned = true
+    tasks.push({
+      raw: trimmed,
+      isDone,
+      isActive,
+    })
+  }
+
+  return { tasks, notes }
+}
+
+function UpdatedPlanCard({
+  planText,
+  runCompleted,
+}: {
+  planText: string
+  runCompleted: boolean
+}) {
+  const parsed = useMemo(() => parseUpdatedPlan(planText, !runCompleted), [planText, runCompleted])
+  const pendingCount = useMemo(() => parsed.tasks.filter((line) => !line.isDone).length, [parsed.tasks])
+
+  if (parsed.tasks.length === 0 && parsed.notes.length === 0) return null
 
   return (
-    <div
-      className={[
-        'flex items-start gap-2.5 rounded-lg px-3 py-2 transition-colors',
-        isRunning ? 'bg-blue-50' : isDone ? 'bg-transparent' : 'bg-transparent',
-      ].join(' ')}
-    >
-      {/* Status icon */}
-      <div className="mt-0.5 shrink-0">
-        {isDone ? (
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500">
-            <IconCheck className="h-2.5 w-2.5 text-white" />
-          </span>
-        ) : isRunning ? (
-          <IconSpinner className="h-4 w-4 animate-spin text-blue-500" />
-        ) : isFailed ? (
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-rose-500">
-            <svg viewBox="0 0 16 16" className="h-2.5 w-2.5 text-white" fill="none">
-              <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </span>
-        ) : needsReview ? (
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-amber-400">
-            <svg viewBox="0 0 16 16" className="h-2.5 w-2.5 text-white" fill="none">
-              <path d="M8 4v5M8 11v1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-          </span>
-        ) : (
-          <span className="flex h-4 w-4 items-center justify-center rounded-full border-2 border-black/15">
-          </span>
-        )}
+    <div className="overflow-hidden rounded-[20px] border border-[color:var(--color-border)] bg-white text-slate-800 shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-3">
+        <div className="text-[12px] font-medium text-slate-500">
+          {runCompleted ? '마지막 계획 스냅샷' : '업데이트된 계획'} {parsed.tasks.length}개
+          {runCompleted && pendingCount > 0 ? (
+            <span className="ml-2 text-slate-400">· 미완료 {pendingCount}개</span>
+          ) : null}
+        </div>
+        <div className="text-[12px] font-medium text-slate-400">{runCompleted ? 'Plan Snapshot' : 'Updated Plan'}</div>
       </div>
 
-      {/* Content */}
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span
+      <div className="divide-y divide-slate-200/80">
+        {parsed.tasks.map((line, index) => (
+          <div
+            key={`${line.raw}-${index}`}
             className={[
-              'text-xs leading-relaxed',
-              isDone ? 'text-black/40 line-through' : isFailed ? 'text-rose-600/70 line-through' : isRunning ? 'font-medium text-black/80' : 'text-black/65',
+              'flex items-start gap-3 px-4 py-3 transition-colors duration-200',
+              line.isActive ? 'bg-slate-50' : '',
             ].join(' ')}
           >
-            {title}
-          </span>
-
-          {/* Status badge */}
-          {isRunning && (
-            <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-blue-600">
-              running
-            </span>
-          )}
-          {needsReview && (
-            <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-600">
-              review
-            </span>
-          )}
-          {isFailed && (
-            <span className="shrink-0 rounded-full bg-rose-100 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-rose-600">
-              failed
-            </span>
-          )}
-        </div>
-
-        {/* Progress bar (only when running) */}
-        {isRunning && progress !== undefined && progress > 0 && (
-          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-black/10">
-            <div
-              className="h-full rounded-full bg-blue-500 transition-all duration-500"
-              style={{ width: `${Math.min(100, progress)}%` }}
-            />
+            <div className="flex items-center gap-3 pt-0.5">
+              <span
+                className={[
+                  'h-4 w-4 shrink-0 rounded-full border',
+                  line.isActive
+                    ? 'border-slate-400 bg-slate-400'
+                    : line.isDone
+                    ? 'border-emerald-500 bg-emerald-500'
+                    : 'border-slate-300 bg-white',
+                ].join(' ')}
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div
+                className={[
+                  'font-mono text-[12px] leading-6',
+                  line.isDone ? 'text-slate-500' : line.isActive ? 'text-slate-800' : 'text-slate-600',
+                ].join(' ')}
+              >
+                <span className="whitespace-pre-wrap break-words">{line.raw}</span>
+              </div>
+            </div>
+            {line.isActive ? (
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-500">
+                현재
+              </span>
+            ) : runCompleted && !line.isDone ? (
+              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-400">
+                미완료
+              </span>
+            ) : null}
           </div>
-        )}
+        ))}
 
-        {/* Assigned role */}
-        {assignedTo && (
-          <div className="mt-0.5 text-[10px] text-black/30">
-            {ROLE_LABELS[assignedTo] ?? assignedTo}
+        {parsed.notes.length > 0 ? (
+          <div className="space-y-2 bg-slate-50/70 px-4 py-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400">Summary</div>
+            <div className="space-y-1.5">
+              {parsed.notes.map((note, index) => (
+                <div key={`${note}-${index}`} className="text-[13px] leading-6 text-slate-500">
+                  {note}
+                </div>
+              ))}
+            </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   )
 }
 
-export function AgentTodoList() {
-  const tasks = useAppStore((s) => s.orchestrator.tasks)
-  const currentRunStatus = useAppStore((s) => s.currentRunStatus)
-  const [collapsed, setCollapsed] = useState(false)
+export function AgentTodoList({ runId }: { runId?: string }) {
+  const currentRunId = useAppStore((state) => state.currentRunId)
+  const resolvedRunId = runId ?? currentRunId ?? ''
+  const planText = useAppStore((state) => (resolvedRunId ? state.runPlansById[resolvedRunId] ?? '' : ''))
+  const tasks = useAppStore((state) => state.orchestrator.tasks)
+  const maxParallel = useAppStore((state) => state.orchestrator.maxParallel)
+  const currentRunStatus = useAppStore((state) => state.currentRunStatus)
+  const modifiedCount = useAppStore((state) => Object.keys(state.modifiedFilesByPath).length)
 
-  const isActive = currentRunStatus === 'running' || currentRunStatus === 'queued'
-  const visibleTasks = tasks.filter((t) => t.title)
+  const visibleTasks = useMemo(
+    () => tasks.filter((task) => task.title?.trim()),
+    [tasks],
+  )
 
-  if (visibleTasks.length === 0) return null
+  const sortedTasks = useMemo(() => {
+    const order: Record<OrchestratorTask['status'], number> = {
+      running: 0,
+      needs_review: 1,
+      queued: 2,
+      verified: 3,
+      merged: 3,
+      failed: 4,
+      cancelled: 4,
+    }
+    return [...visibleTasks].sort((left, right) => (order[left.status] ?? 9) - (order[right.status] ?? 9))
+  }, [visibleTasks])
 
-  const done = visibleTasks.filter((t) => t.status === 'verified' || t.status === 'merged').length
-  const running = visibleTasks.filter((t) => t.status === 'running').length
-  const total = visibleTasks.length
+  const hasPlanText = planText.trim().length > 0
+  if (!hasPlanText && sortedTasks.length === 0) return null
 
-  // Sort: running first, then queued, then done/failed
-  const sorted = [...visibleTasks].sort((a, b) => {
-    const order = { running: 0, queued: 1, needs_review: 2, verified: 3, merged: 3, failed: 4, cancelled: 4 }
-    return (order[a.status] ?? 5) - (order[b.status] ?? 5)
-  })
+  const runningCount = sortedTasks.filter((task) => task.status === 'running' || task.status === 'needs_review').length
+  const completedCount = sortedTasks.filter((task) => task.status === 'verified' || task.status === 'merged').length
+  const allQueued = sortedTasks.every((task) => task.status === 'queued')
+  const showParallel = (currentRunStatus === 'running' || currentRunStatus === 'queued') && maxParallel > 1 && runningCount + completedCount > 1
+  const showPlan = !showParallel && (currentRunStatus === 'queued' || currentRunStatus === 'running') && (allQueued || runningCount === 0)
+  const runCompleted =
+    resolvedRunId.length > 0 &&
+    resolvedRunId === currentRunId &&
+    (currentRunStatus === 'completed' || currentRunStatus === 'failed' || currentRunStatus === 'cancelled')
 
   return (
-    <div className="overflow-hidden rounded-xl border border-black/[0.07] bg-[#f9fafb]">
-      {/* Header */}
-      <button
-        className="flex w-full items-center justify-between px-3 py-2 hover:bg-black/[0.02] transition-colors"
-        onClick={() => setCollapsed((v) => !v)}
-      >
-        <div className="flex items-center gap-2">
-          <svg viewBox="0 0 16 16" className="h-3.5 w-3.5 text-black/40" fill="none">
-            <rect x="2" y="3" width="10" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="7" width="10" height="1.5" rx="0.75" fill="currentColor" />
-            <rect x="2" y="11" width="7" height="1.5" rx="0.75" fill="currentColor" />
-          </svg>
-          <span className="text-[11px] font-semibold text-black/50 uppercase tracking-wide">Tasks</span>
-          <span className="text-[10px] text-black/30">
-            {done}/{total}
-          </span>
-          {running > 0 && (
-            <span className="flex items-center gap-1 text-[10px] text-blue-500">
-              <IconDot className="bg-blue-500 animate-pulse" />
-              {running} running
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Mini progress bar */}
-          <div className="w-20 h-1.5 rounded-full bg-black/10 overflow-hidden">
-            <div
-              className={[
-                'h-full rounded-full transition-all duration-500',
-                isActive ? 'bg-blue-500' : done === total ? 'bg-emerald-500' : 'bg-black/20',
-              ].join(' ')}
-              style={{ width: total > 0 ? `${Math.round((done / total) * 100)}%` : '0%' }}
-            />
-          </div>
-          <IconChevron open={!collapsed} />
-        </div>
-      </button>
+    <div className="space-y-2.5">
+      {hasPlanText ? <UpdatedPlanCard planText={planText} runCompleted={runCompleted} /> : null}
 
-      {/* Task list */}
-      {!collapsed && (
-        <div className="border-t border-black/[0.05] px-1 py-1 space-y-0.5">
-          {sorted.map((task) => (
-            <TaskItem key={task.id} task={task} />
-          ))}
+      {sortedTasks.length > 0 ? (
+        <div className="overflow-hidden rounded-[30px] border border-white/10 bg-[#101216] text-white shadow-[0_28px_80px_rgba(15,23,42,0.18)]">
+          <div className="border-b border-white/8 px-6 py-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-white/28">
+              {showParallel ? 'Running in Parallel' : showPlan ? 'Proposed Plan' : 'Todo'}
+            </div>
+          </div>
+
+          <div className="space-y-5 px-6 py-6">
+            {showPlan ? (
+              <>
+                <div className="text-[26px] font-semibold tracking-tight text-white">{sortedTasks[0]?.title ?? 'Task plan'}</div>
+                <div className="space-y-4 pl-4">
+                  {sortedTasks.map((task, index) => (
+                    <div key={task.id} className="flex items-start gap-4">
+                      <div className="mt-1 flex w-14 items-center justify-center text-white/26">
+                        <span>{index === sortedTasks.length - 1 ? '└──' : '├──'}</span>
+                      </div>
+                      <div>
+                        <div className="text-[17px] text-white/72">{task.title}</div>
+                        {task.assignedTo ? (
+                          <div className="mt-1 text-xs uppercase tracking-[0.18em] text-white/28">
+                            {ROLE_LABELS[task.assignedTo] ?? task.assignedTo}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="pt-1 text-[15px] text-white/28">
+                  {sortedTasks.length} tasks
+                  {modifiedCount > 0 ? ` · ${modifiedCount} files affected` : ''}
+                </div>
+              </>
+            ) : showParallel ? (
+              <div className="space-y-5">
+                {sortedTasks.map((task) => {
+                  const tone = statusTone(task)
+                  const width = statusWidth(task)
+                  return (
+                    <div key={task.id} className="grid grid-cols-[minmax(0,260px)_1fr_40px] items-center gap-4">
+                      <div className="min-w-0">
+                        <div className="truncate text-[17px] text-white/72">{task.title}</div>
+                        {task.assignedTo ? (
+                          <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-white/28">
+                            {ROLE_LABELS[task.assignedTo] ?? task.assignedTo}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-white/10">
+                        <div
+                          className={[
+                            'h-full rounded-full transition-all duration-700',
+                            tone.line,
+                            task.status === 'running' ? 'animate-pulse' : '',
+                          ].join(' ')}
+                          style={{ width: `${width}%` }}
+                        />
+                      </div>
+                      <div className={`text-right text-[22px] ${tone.text}`}>{tone.marker}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {sortedTasks.map((task) => {
+                  const tone = statusTone(task)
+                  return (
+                    <div key={task.id} className="rounded-[22px] border border-white/8 bg-white/[0.03] px-4 py-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="text-base text-white/78">{task.title}</div>
+                          {task.assignedTo ? (
+                            <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-white/28">
+                              {ROLE_LABELS[task.assignedTo] ?? task.assignedTo}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className={`text-lg ${tone.text}`}>{tone.marker}</div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

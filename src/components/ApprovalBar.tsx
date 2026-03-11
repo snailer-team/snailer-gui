@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAppStore } from '../lib/store'
-import { Button } from './ui/button'
 import { ProposedChangesList } from './ProposedChange'
+
+function IconCheck({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
 
 export function ApprovalBar() {
   const { pendingApprovals, approve, currentRunStatus } = useAppStore()
@@ -10,8 +17,8 @@ export function ApprovalBar() {
 
   useEffect(() => {
     if (currentRunStatus !== 'awaiting_approval') return
-    const t = window.setInterval(() => setNowMs(Date.now()), 250)
-    return () => window.clearInterval(t)
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250)
+    return () => window.clearInterval(timer)
   }, [currentRunStatus])
 
   const active = useMemo(() => pendingApprovals[0] ?? null, [pendingApprovals])
@@ -19,50 +26,75 @@ export function ApprovalBar() {
 
   const secsLeft =
     typeof active.deadlineMs === 'number' ? Math.max(0, Math.floor((active.deadlineMs - nowMs) / 1000)) : null
+  const isApplyReview = active.kind === 'apply_changes'
 
   return (
-    <div className="mx-auto w-full max-w-4xl px-6 pt-6 space-y-3">
-      {/* Approval card */}
-      <div className="snailer-card rounded-2xl border border-[color:var(--color-border)] bg-[#f8fafc] px-4 py-3 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold tracking-tight">Approval Required</div>
-            <div className="mt-1 line-clamp-3 whitespace-pre-wrap text-xs text-[color:var(--color-text-secondary)]">
-              {active.prompt}
+    <div className="mx-auto w-full max-w-[760px] space-y-3">
+      <div className="overflow-hidden rounded-[20px] border border-[color:var(--color-border)] bg-white shadow-sm">
+        <div className="border-b border-slate-200/80 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                {isApplyReview ? 'Review Complete' : 'Approval Required'}
+              </div>
+              <div className="mt-1 text-[20px] font-semibold tracking-tight text-slate-900">
+                {isApplyReview ? '변경 사항을 적용할까요?' : '계속 진행하려면 승인해 주세요'}
+              </div>
+              <div className="mt-1 max-w-[560px] whitespace-pre-wrap text-[13px] leading-5 text-slate-500">
+                {active.prompt}
+              </div>
             </div>
+            {secsLeft != null ? (
+              <div className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-mono text-slate-400">
+                {secsLeft}s
+              </div>
+            ) : null}
           </div>
-          {secsLeft != null ? <div className="shrink-0 text-xs text-slate-500">{secsLeft}s</div> : null}
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" onClick={() => void approve(active.approvalId, 'approve_once')}>
-            한 번 승인
-          </Button>
-          <Button size="sm" variant="default" onClick={() => void approve(active.approvalId, 'approve_always')}>
-            항상 승인
-          </Button>
-          <Button
-            size="sm"
-            variant="default"
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          <button
+            type="button"
+            onClick={() => void approve(active.approvalId, 'approve_once')}
+            className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3.5 py-2 text-[13px] font-semibold text-white transition hover:bg-slate-700"
+          >
+            <IconCheck className="h-4 w-4" />
+            <span>Approve &amp; apply</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
-              const feedback = window.prompt('변경 요청 내용을 입력하세요')?.trim()
+              const feedback = window.prompt('수정 요청 내용을 입력하세요')?.trim()
               if (!feedback) return
               void approve(active.approvalId, 'request_change', feedback)
             }}
+            className="rounded-full border border-slate-200 bg-white px-3.5 py-2 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
           >
-            변경 요청
-          </Button>
-          <Button size="sm" variant="destructive" onClick={() => void approve(active.approvalId, 'reject')}>
-            거절
-          </Button>
+            Request revision
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void approve(active.approvalId, 'approve_always')}
+            className="rounded-full px-2.5 py-2 text-[12px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+          >
+            Always approve
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void approve(active.approvalId, 'reject')}
+            className="rounded-full px-2.5 py-2 text-[12px] font-medium text-rose-500 transition hover:bg-rose-50"
+          >
+            Reject
+          </button>
         </div>
       </div>
 
-      {/* Show diffs if available */}
-      {active.diffs && active.diffs.length > 0 && (
+      {active.diffs && active.diffs.length > 0 ? (
         <ProposedChangesList files={active.diffs} title="Proposed Changes" />
-      )}
+      ) : null}
     </div>
   )
 }
-

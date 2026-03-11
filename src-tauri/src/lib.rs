@@ -71,6 +71,7 @@ pub fn run() {
       commands::git_branch_checkout,
       commands::git_branch_create,
       commands::git_commit_and_push,
+      commands::git_rollback_files,
       commands::gh_pr_create,
       commands::gh_pr_list,
       commands::gh_pr_checks,

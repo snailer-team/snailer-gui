@@ -15,6 +15,10 @@ function msg(content: string): ChatMessage {
 }
 
 describe('contextUsage helpers', () => {
+  test('infers context window for gpt-5.4', () => {
+    expect(inferModelContextWindow('gpt-5.4')).toBe(1_050_000)
+  })
+
   test('infers context window for gpt-5.3-codex', () => {
     expect(inferModelContextWindow('gpt-5.3-codex')).toBe(400_000)
   })
