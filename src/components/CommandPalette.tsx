@@ -20,6 +20,7 @@ export function CommandPalette() {
     appendToDraftPrompt,
     createSession,
     selectSession,
+    sendPrompt,
     daemon,
   } = useAppStore()
 
@@ -126,6 +127,28 @@ export function CommandPalette() {
                 className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
               >
                 New Session
+              </Command.Item>
+              <Command.Item
+                value="clear conversation"
+                onSelect={() => {
+                  setOpen(false)
+                  void sendPrompt('/clear')
+                }}
+                className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
+              >
+                <div className="font-mono">/clear</div>
+                <div className="text-xs text-[color:var(--color-text-muted)]">Clear conversation history</div>
+              </Command.Item>
+              <Command.Item
+                value="compact context compress"
+                onSelect={() => {
+                  setOpen(false)
+                  appendToDraftPrompt('/compact ')
+                }}
+                className="cursor-pointer rounded-xl px-3 py-2 text-sm hover:bg-slate-100"
+              >
+                <div className="font-mono">/compact</div>
+                <div className="text-xs text-[color:var(--color-text-muted)]">Compact conversation context (add instruction after command)</div>
               </Command.Item>
             </Command.Group>
 

@@ -398,4 +398,14 @@ export class DaemonClient {
   async queueClear(): Promise<{ status: 'ok' }> {
     return this.request('queue.clear')
   }
+
+  async conversationClear(): Promise<{ status: 'ok' }> {
+    return this.request('conversation.clear')
+  }
+
+  async conversationCompact(params?: {
+    instruction?: string
+  }): Promise<{ status: 'ok'; summary?: string }> {
+    return this.request('conversation.compact', params)
+  }
 }

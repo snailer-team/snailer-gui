@@ -2427,6 +2427,60 @@ export const useAppStore = create<AppState>()(
           }
         }
 
+        // ── /clear: reset conversation history ──
+        if (trimmed === '/clear') {
+          try {
+            await daemon.conversationClear()
+          } catch (e) {
+            console.warn('[store] conversation.clear failed:', e)
+          }
+          set((st) => ({
+            sessions: st.sessions.map((s) =>
+              s.id === sessionId
+                ? { ...s, messages: [], agentEvents: [], updatedAt: now() }
+                : s,
+            ),
+            currentRunId: null,
+            currentRunStatus: 'idle',
+            modifiedFilesByPath: {},
+            pendingApprovals: [],
+            clarifyingQuestions: [],
+            lastToast: { title: 'Conversation cleared', message: 'All messages have been removed from this session.' },
+          }))
+          return
+        }
+
+        // ── /compact: compress conversation context ──
+        if (trimmed === '/compact' || trimmed.startsWith('/compact ')) {
+          const instruction = trimmed === '/compact' ? undefined : trimmed.slice('/compact '.length).trim() || undefined
+          const userMsg: ChatMessage = {
+            id: crypto.randomUUID(),
+            role: 'user',
+            content: trimmed,
+            createdAt: now(),
+          }
+          set((st) => ({ sessions: appendMessage(st.sessions, sessionId, userMsg) }))
+
+          try {
+            const res = await daemon.conversationCompact({ instruction })
+            const summaryText = res.summary
+              ? `Context compacted.\n\n**Summary preserved:**\n${res.summary}`
+              : 'Context compacted successfully.'
+            appendAssistantMessage(summaryText)
+            set({
+              lastToast: {
+                title: 'Context compacted',
+                message: instruction ? `Custom instruction applied: "${instruction}"` : 'Conversation context has been compressed.',
+              },
+            })
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e)
+            appendAssistantMessage(`Failed to compact context:\n${msg}`)
+            set({ error: msg })
+          }
+          return
+        }
+
         const queueLocalItem = (value: string, prepend = false) => {
           const item = value.trim()
           if (!item) return
