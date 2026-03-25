@@ -45,6 +45,7 @@ export function CommandPalette() {
   }, [createSession, selectSession])
 
   useEffect(() => {
+    if (typeof authService.subscribe !== 'function') return
     return authService.subscribe((auth) => {
       setIsLoggedIn(Boolean(auth && authService.isLoggedIn()))
       setUserEmail(auth?.email ?? null)
