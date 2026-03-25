@@ -362,12 +362,21 @@ export function SettingsView() {
 
   const refreshAccount = async () => {
     if (!daemon) return
+    if (!authService.isLoggedIn()) {
+      setAccount(null)
+      return
+    }
     setAccountLoading(true)
     try {
       const res = await daemon.accountGet()
       setAccount(res)
     } catch (e) {
-      setAccount({ planError: e instanceof Error ? e.message : 'Failed to load account' })
+      const msg = e instanceof Error ? e.message : 'Failed to load account'
+      // Provide a user-friendly message for gRPC connection errors.
+      const friendly = msg.includes('content-type mismatch') || msg.includes('grpc')
+        ? 'Unable to reach account server. Please check your network connection and try again.'
+        : msg
+      setAccount({ planError: friendly })
     } finally {
       setAccountLoading(false)
     }

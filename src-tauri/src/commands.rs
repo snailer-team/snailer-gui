@@ -785,17 +785,70 @@ struct StoredAuth {
     expires_at: Option<i64>,
 }
 
+// ── In-memory + file cache for keychain credentials ──
+// Avoids repeated macOS keychain password prompts on every access.
+
+fn auth_cache() -> &'static Mutex<Option<StoredAuth>> {
+    static CACHE: OnceLock<Mutex<Option<StoredAuth>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn auth_file_cache_path() -> PathBuf {
+    snailer_home_dir().join("auth_cache.json")
+}
+
+fn auth_file_cache_read() -> Option<StoredAuth> {
+    let path = auth_file_cache_path();
+    let text = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<StoredAuth>(&text).ok()
+}
+
+fn auth_file_cache_write(value: &StoredAuth) {
+    let path = auth_file_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string(value) {
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+fn auth_file_cache_clear() {
+    let _ = std::fs::remove_file(auth_file_cache_path());
+}
+
 fn auth_keychain_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_AUTH_KEY)
         .map_err(|e| format!("keychain init failed: {}", e))
 }
 
 fn auth_keychain_get() -> Result<Option<StoredAuth>, String> {
+    // 1. Check in-memory cache first (no keychain prompt).
+    if let Ok(guard) = auth_cache().lock() {
+        if let Some(ref cached) = *guard {
+            return Ok(Some(cached.clone()));
+        }
+    }
+
+    // 2. Check file cache (no keychain prompt).
+    if let Some(cached) = auth_file_cache_read() {
+        if let Ok(mut guard) = auth_cache().lock() {
+            *guard = Some(cached.clone());
+        }
+        return Ok(Some(cached));
+    }
+
+    // 3. Fall back to keychain (may prompt once).
     let entry = auth_keychain_entry()?;
     match entry.get_password() {
         Ok(text) => {
             let v = serde_json::from_str::<StoredAuth>(&text)
                 .map_err(|e| format!("keychain data invalid: {}", e))?;
+            // Populate both caches so we never prompt again.
+            auth_file_cache_write(&v);
+            if let Ok(mut guard) = auth_cache().lock() {
+                *guard = Some(v.clone());
+            }
             Ok(Some(v))
         }
         Err(e) => {
@@ -810,15 +863,25 @@ fn auth_keychain_get() -> Result<Option<StoredAuth>, String> {
 }
 
 fn auth_keychain_set(value: &StoredAuth) -> Result<(), String> {
+    // Update all three: keychain, file cache, memory cache.
     let entry = auth_keychain_entry()?;
     let text = serde_json::to_string(value).map_err(|e| format!("serialize failed: {}", e))?;
     entry
         .set_password(&text)
         .map_err(|e| format!("keychain write failed: {}", e))?;
+    auth_file_cache_write(value);
+    if let Ok(mut guard) = auth_cache().lock() {
+        *guard = Some(value.clone());
+    }
     Ok(())
 }
 
 fn auth_keychain_clear() -> Result<(), String> {
+    // Clear all three: keychain, file cache, memory cache.
+    if let Ok(mut guard) = auth_cache().lock() {
+        *guard = None;
+    }
+    auth_file_cache_clear();
     let entry = auth_keychain_entry()?;
     match entry.delete_password() {
         Ok(()) => Ok(()),
