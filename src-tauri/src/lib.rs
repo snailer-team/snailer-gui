@@ -39,6 +39,7 @@ pub fn run() {
       commands::auth_addr_get,
       commands::auth_addr_set,
       commands::auth_addr_resolve,
+      commands::account_get_fallback,
       commands::attachment_save_image,
       commands::attachment_save_image_from_path,
       commands::gitignore_ensure_line,

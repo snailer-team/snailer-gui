@@ -152,6 +152,14 @@ export function Sidebar() {
     }
   }, [])
 
+  useEffect(() => {
+    return authService.subscribe((auth) => {
+      setIsLoggedIn(Boolean(auth && authService.isLoggedIn()))
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
+    })
+  }, [])
+
   const handleDeleteSession = async (sessionId: string) => {
     setOpenSessionMenuId(null)
     setDeletingSessionId(sessionId)

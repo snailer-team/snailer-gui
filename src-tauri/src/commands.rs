@@ -692,7 +692,7 @@ fn resolve_auth_addr() -> Result<String, String> {
     Ok(DEFAULT_AUTH_ADDR.to_string())
 }
 
-const DEFAULT_AUTH_ADDR: &str = "https://grpc.snailer.ai:443";
+const DEFAULT_AUTH_ADDR: &str = "https://grpc.snailer.ai";
 
 fn normalize_legacy_auth_addr(input: &str) -> String {
     let raw = input.trim();
@@ -701,13 +701,15 @@ fn normalize_legacy_auth_addr(input: &str) -> String {
     }
 
     if raw.contains("://") {
-        if let Ok(mut url) = Url::parse(raw) {
+        if let Ok(url) = Url::parse(raw) {
             if matches!(
                 url.host_str(),
                 Some("snailer.ai") | Some("www.snailer.ai") | Some("auth.snailer.dev")
             ) {
-                let _ = url.set_host(Some("grpc.snailer.ai"));
-                return url.to_string();
+                return DEFAULT_AUTH_ADDR.to_string();
+            }
+            if matches!(url.host_str(), Some("grpc.snailer.ai")) {
+                return DEFAULT_AUTH_ADDR.to_string();
             }
             return raw.to_string();
         }
@@ -720,10 +722,11 @@ fn normalize_legacy_auth_addr(input: &str) -> String {
         || raw == "auth.snailer.dev"
         || raw.starts_with("auth.snailer.dev:")
     {
-        return raw
-            .replacen("auth.snailer.dev", "grpc.snailer.ai", 1)
-            .replacen("www.snailer.ai", "grpc.snailer.ai", 1)
-            .replacen("snailer.ai", "grpc.snailer.ai", 1);
+        return DEFAULT_AUTH_ADDR.to_string();
+    }
+
+    if raw == "grpc.snailer.ai" || raw.starts_with("grpc.snailer.ai:") {
+        return DEFAULT_AUTH_ADDR.to_string();
     }
 
     raw.to_string()
@@ -744,6 +747,7 @@ fn candidate_auth_addrs(input: &str) -> Vec<String> {
             out.push(fallback);
         }
     }
+    out.dedup();
     out
 }
 
@@ -817,6 +821,42 @@ fn auth_file_cache_clear() {
     let _ = std::fs::remove_file(auth_file_cache_path());
 }
 
+fn daemon_auth_json_path() -> PathBuf {
+    user_config_dir().join("snailer").join("auth.json")
+}
+
+fn daemon_auth_read() -> Option<StoredAuth> {
+    let path = daemon_auth_json_path();
+    let text = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str::<StoredAuth>(&text).ok()
+}
+
+fn daemon_auth_write(value: &StoredAuth) {
+    let path = daemon_auth_json_path();
+    let pretty = match serde_json::to_string_pretty(value) {
+        Ok(text) => text,
+        Err(_) => return,
+    };
+    let _ = write_secure_text_file(&path, &pretty);
+}
+
+fn daemon_auth_clear() {
+    let _ = std::fs::remove_file(daemon_auth_json_path());
+}
+
+fn cli_account_config_write(value: &StoredAuth) {
+    let path = snailer_home_dir().join("config");
+    let text = format!(
+        "account_id={}\naccount_email={}\naccount_token={}\nmode=cloud\n",
+        value.account_id, value.email, value.access_token
+    );
+    let _ = write_secure_text_file(&path, &text);
+}
+
+fn cli_account_config_clear() {
+    let _ = std::fs::remove_file(snailer_home_dir().join("config"));
+}
+
 fn auth_keychain_entry() -> Result<keyring::Entry, String> {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_AUTH_KEY)
         .map_err(|e| format!("keychain init failed: {}", e))
@@ -838,7 +878,16 @@ fn auth_keychain_get() -> Result<Option<StoredAuth>, String> {
         return Ok(Some(cached));
     }
 
-    // 3. Fall back to keychain (may prompt once).
+    // 3. Check daemon/CLI auth file so GUI can restore sessions created via daemon login.
+    if let Some(cached) = daemon_auth_read() {
+        auth_file_cache_write(&cached);
+        if let Ok(mut guard) = auth_cache().lock() {
+            *guard = Some(cached.clone());
+        }
+        return Ok(Some(cached));
+    }
+
+    // 4. Fall back to keychain (may prompt once).
     let entry = auth_keychain_entry()?;
     match entry.get_password() {
         Ok(text) => {
@@ -846,6 +895,8 @@ fn auth_keychain_get() -> Result<Option<StoredAuth>, String> {
                 .map_err(|e| format!("keychain data invalid: {}", e))?;
             // Populate both caches so we never prompt again.
             auth_file_cache_write(&v);
+            daemon_auth_write(&v);
+            cli_account_config_write(&v);
             if let Ok(mut guard) = auth_cache().lock() {
                 *guard = Some(v.clone());
             }
@@ -870,6 +921,8 @@ fn auth_keychain_set(value: &StoredAuth) -> Result<(), String> {
         .set_password(&text)
         .map_err(|e| format!("keychain write failed: {}", e))?;
     auth_file_cache_write(value);
+    daemon_auth_write(value);
+    cli_account_config_write(value);
     if let Ok(mut guard) = auth_cache().lock() {
         *guard = Some(value.clone());
     }
@@ -882,6 +935,8 @@ fn auth_keychain_clear() -> Result<(), String> {
         *guard = None;
     }
     auth_file_cache_clear();
+    daemon_auth_clear();
+    cli_account_config_clear();
     let entry = auth_keychain_entry()?;
     match entry.delete_password() {
         Ok(()) => Ok(()),
@@ -967,6 +1022,29 @@ pub struct OpenAiLoginStartResponse {
     pub status: OpenAiLoginStatusResponse,
 }
 
+#[derive(Debug, Clone, Default)]
+struct CliAccountConfig {
+    account_id: Option<String>,
+    account_email: Option<String>,
+    account_token: Option<String>,
+    supabase_url: String,
+    supabase_key: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountGetFallbackResponse {
+    pub email: String,
+    pub has_account_token: bool,
+    pub plan_name: String,
+    pub status: Option<String>,
+    pub usage_used: Option<i64>,
+    pub usage_limit: Option<i64>,
+    pub period: Option<String>,
+    pub is_starter: bool,
+    pub is_premium: bool,
+}
+
 fn user_config_dir() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -994,6 +1072,73 @@ fn user_config_dir() -> PathBuf {
 
 fn openai_provider_auth_dir() -> PathBuf {
     user_config_dir().join("snailer").join("provider_auth")
+}
+
+fn read_cli_account_config() -> CliAccountConfig {
+    let mut cfg = CliAccountConfig::default();
+    let path = snailer_home_dir().join("config");
+
+    if let Ok(text) = std::fs::read_to_string(path) {
+        for line in text
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
+            if let Some(v) = line.strip_prefix("account_id=") {
+                cfg.account_id = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("account_email=") {
+                cfg.account_email = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("account_token=") {
+                cfg.account_token = Some(v.to_string());
+            } else if let Some(v) = line.strip_prefix("supabase_url=") {
+                cfg.supabase_url = v.to_string();
+            } else if let Some(v) = line.strip_prefix("supabase_key=") {
+                cfg.supabase_key = v.to_string();
+            }
+        }
+    }
+
+    if cfg.supabase_url.trim().is_empty() {
+        cfg.supabase_url = "https://jvfgasvbqebiwnprcjqx.supabase.co".to_string();
+    }
+    if cfg.supabase_key.trim().is_empty() {
+        cfg.supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2Zmdhc3ZicWViaXducHJjanF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4NDU1OTEsImV4cCI6MjA3NDQyMTU5MX0.JIQInh9dMvcSTxoQ6kDTWNSTgN0JwZkcz5ym6oBuA7A".to_string();
+    }
+
+    cfg
+}
+
+fn infer_plan_flags(plan_name: &str) -> (bool, bool) {
+    let plan_lower = plan_name.to_lowercase();
+    let is_starter = plan_lower.contains("starter");
+    let is_premium = matches!(
+        plan_lower.as_str(),
+        "max" | "heavy" | "super rich" | "superrich" | "super rich v" | "superrichv"
+    );
+    (is_starter, is_premium)
+}
+
+fn supabase_task_count(base: &str, key: &str, user_id: &str) -> Result<i64, String> {
+    let mut url = Url::parse(&format!("{}/rest/v1/tasks", base.trim_end_matches('/')))
+        .map_err(|e| format!("invalid supabase url: {}", e))?;
+    {
+        let mut qp = url.query_pairs_mut();
+        qp.append_pair("select", "id");
+        qp.append_pair("user_id", &format!("eq.{}", user_id));
+    }
+
+    let resp = ureq::get(url.as_str())
+        .set("apikey", key)
+        .set("Authorization", &format!("Bearer {}", key))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("supabase request failed: {}", e))?;
+    let body = resp
+        .into_string()
+        .map_err(|e| format!("supabase response read failed: {}", e))?;
+    let rows: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("supabase json parse failed: {}", e))?;
+    Ok(rows.as_array().map(|it| it.len() as i64).unwrap_or(0))
 }
 
 fn openai_oauth_session_path() -> PathBuf {
@@ -1038,47 +1183,52 @@ fn chmod_600(path: &PathBuf) {
     }
 }
 
+fn write_secure_text_file(path: &PathBuf, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
+    }
+    std::fs::write(path, text).map_err(|e| format!("write failed: {}", e))?;
+    chmod_600(path);
+    Ok(())
+}
+
 fn load_openai_oauth_session() -> Result<Option<(OpenAiOAuthSession, String)>, String> {
+    let path = openai_oauth_session_path();
+    if path.exists() {
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read OpenAI OAuth session file: {}", e))?;
+        let sess = serde_json::from_str::<OpenAiOAuthSession>(&raw)
+            .map_err(|e| format!("Invalid OpenAI OAuth session file: {}", e))?;
+        if !sess.access_token.trim().is_empty() {
+            return Ok(Some((sess, "file".to_string())));
+        }
+    }
+
     if let Some(raw) = openai_keyring_get(OPENAI_KEYRING_OAUTH_ENTRY) {
         if let Ok(sess) = serde_json::from_str::<OpenAiOAuthSession>(&raw) {
             if !sess.access_token.trim().is_empty() {
+                let pretty = serde_json::to_string_pretty(&sess)
+                    .map_err(|e| format!("serialize session failed: {}", e))?;
+                let _ = write_secure_text_file(&path, &pretty);
                 return Ok(Some((sess, "keyring".to_string())));
             }
         }
     }
 
-    let path = openai_oauth_session_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let raw = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read OpenAI OAuth session file: {}", e))?;
-    let sess = serde_json::from_str::<OpenAiOAuthSession>(&raw)
-        .map_err(|e| format!("Invalid OpenAI OAuth session file: {}", e))?;
-    if sess.access_token.trim().is_empty() {
-        return Ok(None);
-    }
-    Ok(Some((sess, "file".to_string())))
+    Ok(None)
 }
 
 fn save_openai_oauth_session(sess: &OpenAiOAuthSession) -> Result<String, String> {
     let raw = serde_json::to_string(sess).map_err(|e| format!("serialize session failed: {}", e))?;
-    if openai_keyring_set(OPENAI_KEYRING_OAUTH_ENTRY, &raw) {
-        let path = openai_oauth_session_path();
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
-        return Ok("keyring".to_string());
-    }
-
     let path = openai_oauth_session_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
-    }
     let pretty = serde_json::to_string_pretty(sess).map_err(|e| format!("serialize session failed: {}", e))?;
-    std::fs::write(&path, pretty).map_err(|e| format!("session write failed: {}", e))?;
-    chmod_600(&path);
-    Ok("file".to_string())
+    write_secure_text_file(&path, &pretty).map_err(|e| format!("session write failed: {}", e))?;
+
+    if openai_keyring_set(OPENAI_KEYRING_OAUTH_ENTRY, &raw) {
+        Ok("keyring".to_string())
+    } else {
+        Ok("file".to_string())
+    }
 }
 
 fn clear_openai_oauth_session() {
@@ -1090,25 +1240,26 @@ fn clear_openai_oauth_session() {
 }
 
 fn load_openai_legacy_api_key() -> Result<Option<(String, String)>, String> {
+    let path = openai_api_key_path();
+    if path.exists() {
+        let key = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read OpenAI API key file: {}", e))?
+            .trim()
+            .to_string();
+        if !key.is_empty() {
+            return Ok(Some((key, "file".to_string())));
+        }
+    }
+
     if let Some(v) = openai_keyring_get(OPENAI_KEYRING_API_KEY_ENTRY) {
         let key = v.trim().to_string();
         if !key.is_empty() {
+            let _ = write_secure_text_file(&path, &key);
             return Ok(Some((key, "keyring".to_string())));
         }
     }
 
-    let path = openai_api_key_path();
-    if !path.exists() {
-        return Ok(None);
-    }
-    let key = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read OpenAI API key file: {}", e))?
-        .trim()
-        .to_string();
-    if key.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some((key, "file".to_string())))
+    Ok(None)
 }
 
 fn clear_openai_legacy_api_key() {
@@ -1641,6 +1792,73 @@ pub async fn auth_addr_set(addr: Option<String>) -> Result<Option<String>, Strin
 #[tauri::command]
 pub async fn auth_addr_resolve() -> Result<String, String> {
     Ok(resolve_auth_addr()?)
+}
+
+#[tauri::command]
+pub async fn account_get_fallback() -> Result<AccountGetFallbackResponse, String> {
+    let stored_auth = auth_keychain_get().ok().flatten();
+    let cli_cfg = read_cli_account_config();
+
+    let email = stored_auth
+        .as_ref()
+        .map(|auth| auth.email.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            cli_cfg
+                .account_email
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| "-".to_string());
+
+    let account_id = stored_auth
+        .as_ref()
+        .map(|auth| auth.account_id.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            cli_cfg
+                .account_id
+                .as_ref()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        });
+
+    let has_account_token = stored_auth
+        .as_ref()
+        .map(|auth| !auth.access_token.trim().is_empty())
+        .unwrap_or(false)
+        || cli_cfg
+            .account_token
+            .as_ref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+
+    let plan_name = std::env::var("SNAILER_PLAN")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Starter".to_string());
+    let (is_starter, is_premium) = infer_plan_flags(&plan_name);
+
+    let usage_used = account_id
+        .as_deref()
+        .map(|user_id| supabase_task_count(&cli_cfg.supabase_url, &cli_cfg.supabase_key, user_id))
+        .transpose()
+        .unwrap_or(None)
+        .or(Some(0));
+
+    Ok(AccountGetFallbackResponse {
+        email,
+        has_account_token,
+        plan_name,
+        status: Some("Unknown".to_string()),
+        usage_used,
+        usage_limit: None,
+        period: None,
+        is_starter,
+        is_premium,
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -4605,11 +4823,15 @@ mod tests {
     fn normalizes_legacy_auth_host_to_grpc_host() {
         assert_eq!(
             normalize_legacy_auth_addr("auth.snailer.dev:443"),
-            "grpc.snailer.ai:443"
+            "https://grpc.snailer.ai"
         );
         assert_eq!(
             normalize_legacy_auth_addr("https://auth.snailer.dev:443"),
-            "https://grpc.snailer.ai/"
+            "https://grpc.snailer.ai"
+        );
+        assert_eq!(
+            normalize_legacy_auth_addr("https://grpc.snailer.ai:443"),
+            "https://grpc.snailer.ai"
         );
     }
 
@@ -4617,6 +4839,7 @@ mod tests {
     fn auth_candidates_do_not_include_legacy_auth_host_by_default() {
         let candidates = candidate_auth_addrs("https://grpc.snailer.ai:443");
         assert!(!candidates.iter().any(|a| a.contains("auth.snailer.dev")));
+        assert_eq!(candidates, vec!["https://grpc.snailer.ai".to_string()]);
     }
 
     #[test]

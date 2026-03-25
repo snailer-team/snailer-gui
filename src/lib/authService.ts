@@ -43,6 +43,7 @@ class AuthService {
   private cachedAuth: UserAuth | null = null
   private daemonClient: DaemonClient | null = null
   private refreshInFlight: Promise<UserAuth | null> | null = null
+  private listeners = new Set<(auth: UserAuth | null) => void>()
 
   constructor() {
     this.cachedAuth = this.readCache()
@@ -50,6 +51,17 @@ class AuthService {
 
   setDaemonClient(client: DaemonClient | null) {
     this.daemonClient = client
+  }
+
+  subscribe(listener: (auth: UserAuth | null) => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private emitChange() {
+    for (const listener of this.listeners) {
+      listener(this.cachedAuth)
+    }
   }
 
   private hasTauri(): boolean {
@@ -134,6 +146,7 @@ class AuthService {
   private setCachedAuth(auth: UserAuth | null) {
     this.cachedAuth = auth
     this.writeCache(auth)
+    this.emitChange()
   }
 
   async refresh(opts?: { skipSecureStore?: boolean }): Promise<UserAuth | null> {

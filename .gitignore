@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .snailer/sessions.db
 .snailer/*.db
+
+# Snailer CLI data
+.snailer/

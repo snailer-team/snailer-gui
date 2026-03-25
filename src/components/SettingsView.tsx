@@ -22,6 +22,17 @@ type AccountGetResult = {
   planError?: string
 }
 
+const shouldUseAccountFallback = (message: string): boolean => {
+  const msg = message.toLowerCase()
+  return (
+    msg.includes('content-type mismatch') ||
+    msg.includes('grpc response') ||
+    msg.includes('not gprc') ||
+    msg.includes('not grpc') ||
+    msg.includes('grpc connect failed')
+  )
+}
+
 type EnvStatus = {
   exists: boolean
   path?: string | null
@@ -360,23 +371,68 @@ export function SettingsView() {
     }
   }
 
-  const refreshAccount = async () => {
-    if (!daemon) return
+  const loadAccount = async (daemonClient = useAppStore.getState().daemon) => {
+    if (!daemonClient) return
     if (!authService.isLoggedIn()) {
       setAccount(null)
       return
     }
-    setAccountLoading(true)
+
     try {
-      const res = await daemon.accountGet()
-      setAccount(res)
+      const res = await daemonClient.accountGet()
+      if (res?.planError && shouldUseAccountFallback(String(res.planError))) {
+        const fallback = await invoke<AccountGetResult>('account_get_fallback')
+        setAccount(fallback)
+      } else {
+        setAccount(res)
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load account'
-      // Provide a user-friendly message for gRPC connection errors.
+      if (shouldUseAccountFallback(msg)) {
+        try {
+          const fallback = await invoke<AccountGetResult>('account_get_fallback')
+          setAccount(fallback)
+          return
+        } catch {
+          // fall through to friendly error
+        }
+      }
       const friendly = msg.includes('content-type mismatch') || msg.includes('grpc')
-        ? 'Unable to reach account server. Please check your network connection and try again.'
+        ? 'Unable to reach account server right now. Showing live plan data is temporarily unavailable.'
         : msg
       setAccount({ planError: friendly })
+    }
+  }
+
+  const refreshAccount = async () => {
+    setAccountLoading(true)
+    try {
+      await loadAccount()
+    } finally {
+      setAccountLoading(false)
+    }
+  }
+
+  const handleRefreshAccount = async () => {
+    if (!daemon) return
+    setAccountLoading(true)
+    try {
+      await invoke('engine_kill')
+      daemon.disconnect()
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      await connect()
+
+      const auth = await authService.refresh()
+      setIsLoggedIn(authService.isLoggedIn())
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
+
+      await loadAccount(useAppStore.getState().daemon)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      setAccount({
+        planError: msg || 'Failed to refresh account state.',
+      })
     } finally {
       setAccountLoading(false)
     }
@@ -566,6 +622,14 @@ export function SettingsView() {
   }, [daemon, projectPath])
 
   useEffect(() => {
+    return authService.subscribe((auth) => {
+      setIsLoggedIn(Boolean(auth && authService.isLoggedIn()))
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
+    })
+  }, [])
+
+  useEffect(() => {
     void refreshSelectedKeyTail()
   }, [refreshSelectedKeyTail])
 
@@ -683,7 +747,7 @@ export function SettingsView() {
                     variant="ghost"
                     size="sm"
                     disabled={!daemon || accountLoading}
-                    onClick={() => void refreshAccount()}
+                    onClick={() => void handleRefreshAccount()}
                   >
                     {accountLoading ? 'Refreshing…' : 'Refresh'}
                   </Button>

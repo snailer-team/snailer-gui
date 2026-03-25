@@ -44,6 +44,14 @@ export function CommandPalette() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [createSession, selectSession])
 
+  useEffect(() => {
+    return authService.subscribe((auth) => {
+      setIsLoggedIn(Boolean(auth && authService.isLoggedIn()))
+      setUserEmail(auth?.email ?? null)
+      setUserName(auth?.name ?? null)
+    })
+  }, [])
+
   const modeCommands = useMemo(
     () =>
       (modeItems.length ? modeItems : [{ label: 'Classic', token: 'classic' }]).map((m) => ({
